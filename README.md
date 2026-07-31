@@ -5,7 +5,7 @@ A cowyo-class capture door over an on-disk scripture note pack.
 - **Address = passage.** `/note/jhn.3.16` (verse), `/note/jhn.3.16-18` (range), `/note/1jn.1` (chapter). Type "John 3:16" in the box on `/` and you're there.
 - **Open → type → saved.** Autofocus editor, 400ms-debounce autosave, no save button, no account.
 - **The folder is the truth.** Every note is plain JSON in `pack/notes/<slug>.json`. Kill the server; the pack is still complete and readable. The server is just a door.
-- **Every note is a miniature outline.** Content is a flat list of line-blocks `{id, indent, text}` (dotflowy-style: flat rows canonical, tree derived from indent). You still edit a plain textarea — two spaces of indent nests a line. Block ids survive edits (LCS line matching), so blocks stay addressable for future merge/transclusion.
+- **Every note is a miniature outline.** Content is a flat list of line-blocks `{id, indent, text}` (dotflowy-style: flat rows canonical, tree derived from indent). The editor is an outliner: **Enter** new item, **Tab** nest, **Shift-Tab** unnest — no indent syntax to learn. Block ids survive edits, so blocks stay addressable for future merge/transclusion. (curl still uses the 2-space text interchange form.)
 - **Broader passages compose, never absorb.** Open `/note/jhn.3.16-18` and your independent note on `jhn.3.16` renders beneath it under "Within John 3:16-18" — projected there by canonical containment (computed from OSIS geometry, never stored). Editing the range note can't touch the verse note; each keeps its own address, file, and block ids. The verse page links back to the broader note ("Part of broader notes").
 
 Try it: open `/note/jhn.3` — both seeded notes compose into the chapter view.

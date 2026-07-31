@@ -1,4 +1,5 @@
 node_modules/
+pack/text/
 pack/notes/*.json
 !pack/notes/1jn.1.json
 !pack/notes/jhn.3.16.json
