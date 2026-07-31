@@ -1,0 +1,15 @@
+{
+  "name": "versepack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "versepack demo: cowyo-frictionless scripture note door over an on-disk pack (OSIS-addressed).",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "check": "node --check server.mjs"
+  },
+  "dependencies": {
+    "grab-bcv": "^0.1.7"
+  }
+}

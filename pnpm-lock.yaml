@@ -1,0 +1,23 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      grab-bcv:
+        specifier: ^0.1.7
+        version: 0.1.7
+
+packages:
+
+  grab-bcv@0.1.7:
+    resolution: {integrity: sha512-0cg5ee6xA4tCc0LDTg56uMf28hM1oidog7VKy2g2D56ZXu3sYL4s4i6tG86Src35Nt2lFAjp3DXclSMZaYXQsg==}
+    engines: {node: '>=18.0.0'}
+
+snapshots:
+
+  grab-bcv@0.1.7: {}
