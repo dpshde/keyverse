@@ -323,15 +323,12 @@ const CSS = `
   .vnotes {
     display: none;
     margin: .2rem 0 .4rem 1.35rem;
-    /* dotflowy: 16px bullet box, ~7px (size-1.75) filled dot */
-    --note-gutter: 1rem; --bullet: 0.4375rem;
   }
   .verse.notes-open .vnotes,
   .verse.editing .vnotes { display: block; }
 
   /* plain note block in reader (no per-note collapse) */
   .note {
-    --note-gutter: 1rem; --bullet: 0.4375rem;
     font-family: -apple-system, system-ui, sans-serif; font-size: .9rem;
     margin: .35rem 0 .5rem;
     color: color-mix(in srgb, currentColor 78%, transparent);
@@ -346,55 +343,137 @@ const CSS = `
   .note-meta a { text-decoration: underline; text-underline-offset: 2px; }
   .note-edit { margin: .1rem 0; }
   .note.editing .note-body,
-  .note.editing .note-label,
-  .note.editing .note-meta { display: none; }
+  .note.editing .note-label { display: none; }
+  .note .note-body { cursor: text; }
+  .note .note-label { cursor: text; }
 
-  /* editor page: optional related-note expand (kept simple) */
-  .note.foldable .note-toggle {
-    display: flex; align-items: baseline; gap: .35rem; width: 100%;
-    margin: 0; padding: .1rem 0; border: 0; background: none; color: inherit;
-    font: inherit; text-align: left; cursor: pointer;
+  /* passage notes vs this-verse note under a verse */
+  .note-group { margin: 0; }
+  .note-group + .note-group {
+    margin-top: .55rem;
+    padding-top: .55rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
   }
-  .note.foldable .note-sum { flex: 1; min-width: 0; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; }
-  .note.foldable:not([data-state="expanded"]) .note-body,
-  .note.foldable:not([data-state="expanded"]) .note-meta { display: none; }
-  .note.foldable[data-state="expanded"] .note-sum { display: none; }
-  .note.foldable .chev { opacity: .4; font-size: .65rem; width: .75rem; flex: 0 0 auto; }
-  .chapter-note { margin: 0 0 1.25rem; padding-bottom: .75rem;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+  .note-group-title {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .02em;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    margin: 0 0 .3rem;
+  }
+  .note-group .note { margin: .25rem 0 .4rem; }
+  .note-group .note:last-child { margin-bottom: 0; }
 
-  /* valid nested lists — dotflowy-scale dots at every depth */
-  ul.outline { list-style: none; padding: 0; margin: 0; }
-  ul.outline ul.outline { padding-left: var(--note-gutter, 1rem); margin: 0; }
-  ul.outline > li {
-    position: relative;
-    padding: .12rem 0 .12rem var(--note-gutter, 1rem);
+  /* chapter note sits above scripture — outline only, no redundant label/link */
+  .chapter-note {
+    margin: 0 0 1.1rem;
+    padding: 0 0 1rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .chapter-note .note { margin: 0; }
+  /* inbox: contained / related notes as openable items, not inline outlines */
+  .inbox {
+    display: flex; flex-direction: column; gap: .4rem;
+    margin: .4rem 0 0;
+  }
+  .inbox-item {
+    display: block; text-decoration: none; color: inherit;
+    padding: .65rem .75rem;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    border-radius: .5rem;
+    background: color-mix(in srgb, currentColor 3%, transparent);
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .inbox-item:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    border-color: color-mix(in srgb, currentColor 22%, transparent);
+  }
+  .inbox-top {
+    display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap;
+  }
+  .inbox-title { font-weight: 600; font-size: .95rem; letter-spacing: -.01em; }
+  .inbox-kind {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .65rem; font-weight: 500; letter-spacing: .04em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  .inbox-excerpt {
+    margin: .2rem 0 0;
+    font-size: .88rem;
+    color: color-mix(in srgb, currentColor 52%, transparent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /*
+   * One indent geometry everywhere (read outline + edit outliner):
+   *   row starts at depth * gutter; bullet is a fixed gutter-wide column; text follows.
+   */
+  .outline, .outliner {
+    --note-gutter: 1.25rem;
+    --bullet: 0.4375rem;
+    --row-h: 1.55em;
+  }
+  .outline { margin: 0; padding: 0; display: block; }
+  .oline {
+    display: grid;
+    grid-template-columns: var(--note-gutter) minmax(0, 1fr);
+    align-items: start;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--row-h);
+    padding: 0;
+    margin: 0 0 0 calc(var(--depth, 0) * var(--note-gutter));
     line-height: 1.45;
-    min-height: 1.45em;
   }
-  ul.outline > li::before {
+  .oline .odot {
+    box-sizing: border-box;
+    width: var(--note-gutter); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .oline .odot::before {
     content: "";
-    position: absolute;
-    left: calc((var(--note-gutter, 1rem) - var(--bullet, 0.4375rem)) / 2);
-    top: calc(0.12rem + 0.725em - var(--bullet, 0.4375rem) / 2);
-    width: var(--bullet, 0.4375rem); height: var(--bullet, 0.4375rem);
+    width: var(--bullet); height: var(--bullet);
     border-radius: 999px;
     background: color-mix(in srgb, currentColor 28%, transparent);
   }
-  ul.outline > li.blank { min-height: 1.45em; }
-
-  /* outliner — same 16px box + 7px dot as read outline / dotflowy */
-  .outliner {
-    --note-gutter: 1rem; --bullet: 0.4375rem;
-    padding: .1rem 0;
+  .oline .otxt {
+    display: block;
+    min-height: var(--row-h);
+    padding: 0.15em 0;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
+  /* blank rows keep a full row so the next depth never sits beside them */
+  .oline.blank {
+    height: var(--row-h);
+    min-height: var(--row-h);
+  }
+  .oline.blank .otxt {
+    height: var(--row-h);
+    min-height: var(--row-h);
+    padding: 0;
+    overflow: hidden;
+  }
+  .oline.blank .otxt::after { content: "\\00a0"; }
+
+  /* outliner — same grid + depth step as .outline */
+  .outliner { padding: .1rem 0; }
   .outliner.page { min-height: 40vh; }
-  .oblock { display: flex; align-items: flex-start; gap: 0; padding: .05rem 0; }
+  .oblock {
+    display: grid;
+    grid-template-columns: var(--note-gutter) minmax(0, 1fr);
+    align-items: start;
+    min-height: var(--row-h);
+    padding: 0.05rem 0;
+    margin-left: calc(var(--depth, 0) * var(--note-gutter));
+  }
   .obullet {
-    flex: 0 0 var(--note-gutter); width: var(--note-gutter);
-    height: 1.45em; display: flex; align-items: center; justify-content: center;
-    user-select: none; border-radius: 999px;
+    width: var(--note-gutter); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    user-select: none;
   }
   .obullet::before {
     content: "";
@@ -403,11 +482,12 @@ const CSS = `
     background: color-mix(in srgb, currentColor 28%, transparent);
   }
   .otext {
-    flex: 1; min-width: 0; min-height: 1.45em; padding: .05rem 0; outline: none;
-    white-space: pre-wrap; word-break: break-word; font: inherit; line-height: 1.45;
+    min-width: 0; min-height: var(--row-h); padding: 0; outline: none;
+    white-space: pre-wrap; word-break: break-word; font: inherit;
+    line-height: var(--row-h);
   }
   .otext:empty::before { content: attr(data-placeholder); opacity: .35; pointer-events: none; }
-  .outliner.compact { --note-gutter: 1rem; font-size: .9rem; }
+  .outliner.compact { font-size: .9rem; }
   .hint { margin-top: .65rem; }
 `;
 
@@ -452,7 +532,7 @@ function mountOutliner(host, opts) {
       const row = document.createElement("div");
       row.className = "oblock";
       row.dataset.id = b.id;
-      row.style.paddingLeft = (b.indent) + "rem"; // one --note-gutter per level
+      row.style.setProperty("--depth", String(Math.max(0, b.indent|0)));
 
       const bullet = document.createElement("span");
       bullet.className = "obullet";
@@ -739,84 +819,51 @@ function excerpt(note) {
   return line.length > 90 ? line.slice(0, 90) + "…" : line;
 }
 
-// Read-only outline: valid nested <ul>/<li> (children live inside the parent <li>).
-// Blank bullets render as empty <li>s — same structure as the editor.
+// Read-only outline — same depth grid as the outliner (margin-left: depth * gutter).
 function renderOutline(blocks) {
   const items = blocks || [];
   if (!items.length) return "";
-  let html = `<ul class="outline">`;
-  let prev = 0;
-  for (let i = 0; i < items.length; i++) {
-    const ind = Math.max(0, Number(items[i].indent) || 0);
-    const empty = !String(items[i].text || "").trim();
-    const li = `<li title="${esc(items[i].id)}"${empty ? ` class="blank"` : ""}>${esc(items[i].text)}`;
-    if (i === 0) {
-      html += li;
-      prev = ind;
-      continue;
-    }
-    if (ind === prev) html += `</li>${li}`;
-    else if (ind > prev) {
-      for (let s = 0; s < ind - prev; s++) html += `<ul class="outline">`;
-      html += li;
-    } else {
-      html += `</li>`;
-      for (let s = 0; s < prev - ind; s++) html += `</ul></li>`;
-      html += li;
-    }
-    prev = ind;
-  }
-  html += `</li>`;
-  for (let s = 0; s < prev; s++) html += `</ul></li>`;
-  html += `</ul>`;
-  return html;
+  return `<div class="outline">${items.map((b) => {
+    const depth = Math.max(0, Number(b.indent) || 0);
+    const empty = !String(b.text || "").trim();
+    return `<div class="oline${empty ? " blank" : ""}" style="--depth:${depth}" title="${esc(b.id)}">
+      <span class="odot" aria-hidden="true"></span>
+      <span class="otxt">${esc(b.text || "")}</span>
+    </div>`;
+  }).join("")}</div>`;
 }
 
-function noteSummary(blocks, max = 80) {
-  const first = (blocks || []).find((b) => b.text.trim())?.text || "";
-  if (!first) return "";
-  return first.length > max ? first.slice(0, max) + "\u2026" : first;
+// Editor page: related notes as inbox items (open the note — don't embed it).
+function inboxItem({ scope, note }) {
+  const display = formatPassageForDisplay(scope.parsed);
+  const line = excerpt(note);
+  return `<a class="inbox-item" href="/note/${esc(scope.slug)}">
+    <div class="inbox-top">
+      <span class="inbox-title">${esc(display)}</span>
+      <span class="inbox-kind">${esc(scope.kind)}</span>
+    </div>
+    <div class="inbox-excerpt">${esc(line) || "empty"}</div>
+  </a>`;
 }
 
-// Editor page: related notes (foldable list). Reader uses readerNoteHtml instead.
-function noteHtml({ scope, note, collapsed = true }) {
+function inboxList(entries) {
+  if (!entries?.length) return "";
+  return `<div class="inbox">${entries.map((e) => inboxItem(e)).join("\n")}</div>`;
+}
+
+// Reader: plain outline; click body to edit inline (any scope). Show/hide is verse-level.
+// label: false for the page chapter note (title already names the passage).
+function readerNoteHtml({ scope, note, label = true }) {
   const display = formatPassageForDisplay(scope.parsed);
   const blocks = note?.blocks || [];
-  const has = blocks.some((b) => b.text.trim());
-  if (!has) return "";
-  const state = collapsed ? "collapsed" : "expanded";
-  const sum = scope.kind === "verse"
-    ? noteSummary(blocks)
-    : `${display} \u00b7 ${noteSummary(blocks, 56)}`;
-  return `<div class="note foldable" data-state="${state}" data-slug="${esc(scope.slug)}" data-kind="${esc(scope.kind)}">
-    <button type="button" class="note-toggle" aria-expanded="${!collapsed}">
-      <span class="chev" aria-hidden="true">${collapsed ? "\u25B8" : "\u25BE"}</span>
-      <span class="note-sum">${esc(sum)}</span>
-    </button>
-    <div class="note-body">${renderOutline(blocks)}</div>
-    ${scope.kind !== "verse" ? `<div class="note-meta"><a href="/note/${esc(scope.slug)}">Open ${esc(display)}</a></div>` : ""}
-  </div>`;
-}
-
-// Reader: plain outline only — show/hide is verse-level, not per-note.
-function readerNoteHtml({ scope, note, editable = false }) {
-  const display = formatPassageForDisplay(scope.parsed);
-  const blocks = note?.blocks || [];
-  const has = blocks.some((b) => b.text.trim());
-  if (!has && !editable) return "";
+  const has = blocks.some((b) => b.text.trim()) || blocks.length > 0;
+  if (!has && scope.kind !== "verse") return "";
+  const showLabel = label && scope.kind !== "verse";
   return `<div class="note" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}">
-    ${scope.kind !== "verse" ? `<div class="note-label">${esc(display)}</div>` : ""}
-    <div class="note-body">${has ? renderOutline(blocks) : ""}</div>
-    ${scope.kind !== "verse" ? `<div class="note-meta"><a href="/note/${esc(scope.slug)}">Open ${esc(display)}</a></div>` : ""}
-    ${editable ? `<div class="note-edit" hidden></div>` : ""}
+    ${showLabel ? `<div class="note-label">${esc(display)}</div>` : ""}
+    <div class="note-body">${blocks.length ? renderOutline(blocks) : ""}</div>
+    <div class="note-edit" hidden></div>
   </div>`;
-}
-
-function linkRow(entry) {
-  const display = formatPassageForDisplay(entry.scope.parsed);
-  return `<a class="note-row" href="/note/${esc(entry.scope.slug)}">
-    <span class="ref">${esc(display)}</span>
-    <div class="muted">${esc(excerpt(entry.note)) || "empty"}</div></a>`;
 }
 
 function relTime(iso) {
@@ -859,14 +906,13 @@ function renderEditor(scope, note, rel) {
   const display = formatPassageForDisplay(scope.parsed);
   const sections = [];
   if (rel.contains.length) {
-    sections.push(`<h2 class="ui">Within ${esc(display)}</h2>
-      ${rel.contains.map((e) => noteHtml({ scope: e.scope, note: e.note, collapsed: true })).join("\n")}`);
+    sections.push(`<h2 class="ui">Within ${esc(display)}</h2>${inboxList(rel.contains)}`);
   }
   if (rel.within.length) {
-    sections.push(`<h2 class="ui">Part of</h2>${rel.within.map(linkRow).join("\n")}`);
+    sections.push(`<h2 class="ui">Part of</h2>${inboxList(rel.within)}`);
   }
   if (rel.overlaps.length) {
-    sections.push(`<h2 class="ui">Overlaps</h2>${rel.overlaps.map(linkRow).join("\n")}`);
+    sections.push(`<h2 class="ui">Overlaps</h2>${inboxList(rel.overlaps)}`);
   }
   const initial = note?.blocks?.length ? note.blocks : [{ id: "b_new", indent: 0, text: "" }];
   return page(
@@ -891,18 +937,6 @@ function renderEditor(scope, note, rel) {
         autofocus: true,
         page: true,
         placeholder: "Write\\u2026",
-      });
-      // related notes: expand/collapse only
-      document.addEventListener("click", (e) => {
-        const btn = e.target.closest(".note-toggle");
-        if (!btn) return;
-        const note = btn.closest(".note");
-        if (!note || note.dataset.kind === "verse" && note.closest(".vnotes")) return;
-        const open = note.dataset.state === "expanded";
-        note.dataset.state = open ? "collapsed" : "expanded";
-        const chev = note.querySelector(".chev");
-        if (chev) chev.textContent = open ? "\u25B8" : "\u25BE";
-        btn.setAttribute("aria-expanded", open ? "false" : "true");
       });
     </script>`,
   );
@@ -943,6 +977,7 @@ async function renderRead(scope) {
   }
 
   const seed = {};
+  if (chapterNote?.blocks) seed[chapterScope.slug] = chapterNote.blocks;
   const rows = text.verses
     .map(({ v, text: t }) => {
       const note = verseNotes.get(v);
@@ -950,16 +985,30 @@ async function renderRead(scope) {
       const inHl = hl && pos(chapter, v) >= hl.s && pos(chapter, v) <= hl.e;
       const slug = `${book.toLowerCase()}.${chapter}.${v}`;
       if (note?.blocks) seed[slug] = note.blocks;
+      for (const e of ranges) seed[e.scope.slug] = e.note.blocks || [];
       const vScope = parseScope(slug);
       const hasVerse = !!(note?.blocks?.some((b) => b.text.trim()));
       const hasNotes = hasVerse || ranges.length > 0;
-      const rangeHtml = ranges.map((e) => readerNoteHtml({ scope: e.scope, note: e.note })).join("\n");
+      const rangeHtml = ranges
+        .map((e) => readerNoteHtml({ scope: e.scope, note: e.note }))
+        .join("\n");
       const verseHtml = hasVerse
-        ? readerNoteHtml({ scope: vScope, note, editable: true })
+        ? readerNoteHtml({ scope: vScope, note })
         : "";
+      // separate passage-scope notes from this-verse notes when both appear
+      let notesInner = "";
+      if (rangeHtml) {
+        notesInner += `<div class="note-group passage">${rangeHtml}</div>`;
+      }
+      if (verseHtml) {
+        notesInner += `<div class="note-group verse-local">
+          ${ranges.length ? `<div class="note-group-title">This verse</div>` : ""}
+          ${verseHtml}
+        </div>`;
+      }
       return `<div class="verse${inHl ? " hl" : ""}${hasNotes ? " has-notes" : ""}" data-slug="${esc(slug)}" id="v${v}">
         <p class="vtext"><sup>${v}</sup>${esc(t)}<span class="vstatus"></span></p>
-        <div class="vnotes">${rangeHtml}${verseHtml}</div>
+        <div class="vnotes">${notesInner}</div>
       </div>`;
     })
     .join("\n");
@@ -971,12 +1020,13 @@ async function renderRead(scope) {
       <h1>${esc(display)}</h1>
       <a class="muted" href="/note/${esc(chapterScope.slug)}">chapter note</a>
     </header>
-    ${chapterNote ? `<div class="chapter-note">${readerNoteHtml({ scope: chapterScope, note: chapterNote })}</div>` : ""}
+    ${chapterNote ? `<div class="chapter-note">${readerNoteHtml({ scope: chapterScope, note: chapterNote, label: false })}</div>` : ""}
     ${rows}
     <script type="application/json" id="verse-seeds">${blocksJson(seed)}</script>
     <script>
       ${OUTLINER_JS}
       const seeds = JSON.parse(document.getElementById("verse-seeds").textContent);
+      // slug → { api, noteEl }
       const editors = new Map();
       document.querySelector(".verse.hl")?.scrollIntoView({ block: "center" });
 
@@ -987,134 +1037,145 @@ async function renderRead(scope) {
       function outlineHtml(blocks) {
         const items = blocks || [];
         if (!items.length) return "";
-        let html = '<ul class="outline">';
-        let prev = 0;
-        for (let i = 0; i < items.length; i++) {
-          const ind = Math.max(0, items[i].indent|0);
-          const empty = !(items[i].text && items[i].text.trim());
-          const li = "<li" + (empty ? ' class="blank"' : "") + ">" + escHtml(items[i].text || "");
-          if (i === 0) { html += li; prev = ind; continue; }
-          if (ind === prev) html += "</li>" + li;
-          else if (ind > prev) {
-            for (let s = 0; s < ind - prev; s++) html += '<ul class="outline">';
-            html += li;
-          } else {
-            html += "</li>";
-            for (let s = 0; s < prev - ind; s++) html += "</ul></li>";
-            html += li;
-          }
-          prev = ind;
-        }
-        html += "</li>";
-        for (let s = 0; s < prev; s++) html += "</ul></li>";
-        html += "</ul>";
-        return html;
+        return '<div class="outline">' + items.map(b => {
+          const depth = Math.max(0, b.indent|0);
+          const empty = !(b.text && b.text.trim());
+          return '<div class="oline' + (empty ? ' blank' : '') + '" style="--depth:' + depth + '">' +
+            '<span class="odot" aria-hidden="true"></span>' +
+            '<span class="otxt">' + escHtml(b.text || "") + '</span></div>';
+        }).join("") + '</div>';
       }
 
-      function verseNoteEl(verse) {
-        return verse.querySelector('.note[data-kind="verse"]');
+      function statusElFor(noteEl) {
+        const verse = noteEl.closest(".verse");
+        if (verse) return verse.querySelector(".vstatus");
+        return null;
       }
 
       function syncHasNotes(verse) {
-        const slug = verse.dataset.slug;
-        const hasVerse = !!(seeds[slug] && seeds[slug].some(b => b.text.trim()));
-        const hasRange = !!verse.querySelector('.note[data-kind="range"], .note[data-kind="chapter"]');
-        verse.classList.toggle("has-notes", hasVerse || hasRange);
+        if (!verse) return;
+        const vslug = verse.dataset.slug;
+        const hasVerse = !!(seeds[vslug] && seeds[vslug].some(b => b.text.trim()));
+        const hasOther = [...verse.querySelectorAll(".note")].some((n) => {
+          if (n.dataset.kind === "verse") return false;
+          const blocks = seeds[n.dataset.slug];
+          return blocks ? blocks.some(b => b.text.trim()) : !!n.querySelector(".oline, .otxt");
+        });
+        verse.classList.toggle("has-notes", hasVerse || hasOther);
       }
 
-      async function closeEditor(verse) {
-        const api = editors.get(verse);
-        if (!api) return;
+      async function closeNoteEditor(slug) {
+        const ed = editors.get(slug);
+        if (!ed) return;
+        const { api, noteEl } = ed;
         await api.flush();
         const blocks = api.getBlocks();
-        const slug = verse.dataset.slug;
         api.destroy();
-        editors.delete(verse);
-        verse.classList.remove("editing");
-        verse.querySelector(".vstatus").textContent = "";
-        const el = verseNoteEl(verse);
-        const edit = el.querySelector(".note-edit");
-        const body = el.querySelector(".note-body");
-        el.classList.remove("editing");
-        edit.hidden = true;
-        edit.innerHTML = "";
-        if (blocks.every(b => !b.text.trim())) {
+        editors.delete(slug);
+        noteEl.classList.remove("editing");
+        const verse = noteEl.closest(".verse");
+        if (verse && ![...editors.values()].some(e => e.noteEl.closest(".verse") === verse)) {
+          verse.classList.remove("editing");
+        }
+        const status = statusElFor(noteEl);
+        if (status) status.textContent = "";
+        const host = noteEl.querySelector(".note-edit");
+        const body = noteEl.querySelector(".note-body");
+        host.hidden = true;
+        host.innerHTML = "";
+        if (!blocks.some(b => b.text.trim())) {
           delete seeds[slug];
-          body.innerHTML = "";
-          // drop empty verse note node if no ranges either
-          if (!verse.querySelector('.note[data-kind="range"]')) el.remove();
+          noteEl.remove();
         } else {
           seeds[slug] = blocks;
           body.innerHTML = outlineHtml(blocks);
-          verse.classList.add("notes-open", "has-notes");
+          if (verse) verse.classList.add("notes-open", "has-notes");
         }
         syncHasNotes(verse);
       }
 
-      function openEditor(verse) {
-        if (editors.has(verse)) { editors.get(verse).focus(); return; }
-        const slug = verse.dataset.slug;
-        let el = verseNoteEl(verse);
-        if (!el) {
-          // create empty verse-note shell
-          const wrap = verse.querySelector(".vnotes");
-          wrap.insertAdjacentHTML("beforeend",
-            '<div class="note" data-kind="verse" data-slug="' + slug + '">' +
-            '<div class="note-body"></div><div class="note-edit" hidden></div></div>');
-          el = verseNoteEl(verse);
-        }
-        verse.classList.add("notes-open", "editing");
-        el.classList.add("editing");
-        const host = el.querySelector(".note-edit");
+      async function closeAllOnVerse(verse) {
+        const slugs = [...editors.entries()]
+          .filter(([, ed]) => ed.noteEl.closest(".verse") === verse)
+          .map(([slug]) => slug);
+        for (const slug of slugs) await closeNoteEditor(slug);
+      }
+
+      function openNoteEditor(noteEl) {
+        const slug = noteEl.dataset.slug;
+        if (editors.has(slug)) { editors.get(slug).api.focus(); return; }
+        const verse = noteEl.closest(".verse");
+        if (verse) verse.classList.add("notes-open", "editing");
+        noteEl.classList.add("editing");
+        const host = noteEl.querySelector(".note-edit");
         host.hidden = false;
         host.innerHTML = "";
         const api = mountOutliner(host, {
           slug,
           blocks: seeds[slug] || [{ id: newId(), indent: 0, text: "" }],
-          statusEl: verse.querySelector(".vstatus"),
+          statusEl: statusElFor(noteEl),
           compact: true,
           autofocus: true,
           placeholder: "Write\\u2026",
         });
-        editors.set(verse, api);
+        editors.set(slug, { api, noteEl });
+      }
+
+      function openVerseNoteEditor(verse) {
+        let el = verse.querySelector('.note[data-kind="verse"]');
+        if (!el) {
+          verse.querySelector(".vnotes").insertAdjacentHTML("beforeend",
+            '<div class="note" data-kind="verse" data-slug="' + verse.dataset.slug + '">' +
+            '<div class="note-body"></div><div class="note-edit" hidden></div></div>');
+          el = verse.querySelector('.note[data-kind="verse"]');
+        }
+        openNoteEditor(el);
       }
 
       document.addEventListener("click", (e) => {
         if (e.target.closest("a")) return;
         if (e.target.closest(".otext, .obullet, .outliner, .note-edit")) return;
 
-        // click verse-note outline → edit (only path into the editor from open notes)
-        const vbody = e.target.closest('.note[data-kind="verse"] .note-body');
-        if (vbody && !editors.has(vbody.closest(".verse"))) {
-          openEditor(vbody.closest(".verse"));
+        // click any note outline (verse / range / chapter) → edit that note inline
+        const body = e.target.closest(".note .note-body");
+        if (body) {
+          const noteEl = body.closest(".note");
+          if (!editors.has(noteEl.dataset.slug)) openNoteEditor(noteEl);
+          return;
+        }
+        // click range/chapter label → edit too
+        const label = e.target.closest(".note .note-label");
+        if (label) {
+          openNoteEditor(label.closest(".note"));
           return;
         }
 
         const verse = e.target.closest(".verse");
         if (!verse || !e.target.closest(".vtext")) return;
 
-        // verse text = all-or-none toggle only (edit is note-body click)
-        if (editors.has(verse)) {
-          closeEditor(verse).then(() => verse.classList.remove("notes-open"));
+        // verse text = all-or-none toggle; while editing, finish + hide
+        const editingHere = [...editors.values()].some(ed => ed.noteEl.closest(".verse") === verse);
+        if (editingHere) {
+          closeAllOnVerse(verse).then(() => verse.classList.remove("notes-open"));
           return;
         }
         if (verse.classList.contains("notes-open")) {
           verse.classList.remove("notes-open");
           return;
         }
-        if (verse.classList.contains("has-notes") || verse.querySelector(".note .note-body li")) {
+        if (verse.classList.contains("has-notes") || verse.querySelector(".note .oline, .note .otxt")) {
           verse.classList.add("notes-open");
           return;
         }
-        openEditor(verse);
+        openVerseNoteEditor(verse);
       });
 
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
-        const editing = document.querySelector(".verse.editing");
-        if (editing) {
+        if (editors.size) {
           e.preventDefault();
-          closeEditor(editing);
+          const last = [...editors.keys()].pop();
+          closeNoteEditor(last);
           return;
         }
         const open = document.querySelector(".verse.notes-open");
