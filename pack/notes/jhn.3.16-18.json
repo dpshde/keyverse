@@ -6,11 +6,28 @@
     "slug": "jhn.3.16-18"
   },
   "blocks": [
-    { "id": "b_r1618a", "indent": 0, "text": "The unit is 16-18: love (16), purpose (17), verdict (18)." },
-    { "id": "b_r1618b", "indent": 1, "text": "v17 negates the expected reading of v16 — sending is *not* for judgment." },
-    { "id": "b_r1618c", "indent": 1, "text": "v18 makes belief the hinge; judgment is self-selected, present tense." },
-    { "id": "b_r1618d", "indent": 0, "text": "My verse-level note on 3:16 still stands on its own below." }
+    {
+      "id": "b_r1618a",
+      "indent": 0,
+      "text": "The unit is 16-18: love (16), purpose (17), verdict (18)."
+    },
+    {
+      "id": "b_r1618b",
+      "indent": 1,
+      "text": "v17 negates the expected reading of v16 — sending is *not* for judgment."
+    },
+    {
+      "id": "b_r1618c",
+      "indent": 1,
+      "text": "v18 makes belief the hinge; judgment is self-selected, present tense."
+    },
+    {
+      "id": "b_r1618d",
+      "indent": 0,
+      "text": "My verse-level note on [[John 3:16]] still stands on its own below."
+    }
   ],
   "created_at": "2026-07-31T09:10:00.000Z",
-  "updated_at": "2026-07-31T09:10:00.000Z"
+  "updated_at": "2026-07-31T09:10:00.000Z",
+  "attachments": []
 }

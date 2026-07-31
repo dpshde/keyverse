@@ -1,7 +1,8 @@
 // versepack demo — a cowyo-class capture door over an on-disk pack.
 // The pack directory (./pack) is the source of truth; this server is just a door.
 import http from "node:http";
-import { readFile, writeFile, readdir, mkdir, unlink } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { readFile, writeFile, readdir, mkdir, unlink, access } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -11,16 +12,115 @@ import {
 } from "grab-bcv";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PACK_DIR = path.join(ROOT, "pack");
+// PACK_DIR: absolute or relative path to the pack directory (default ./pack).
+const PACK_DIR = process.env.PACK_DIR
+  ? path.resolve(process.env.PACK_DIR)
+  : path.join(ROOT, "pack");
 const NOTES_DIR = path.join(PACK_DIR, "notes");
 const TEXT_DIR = path.join(PACK_DIR, "text", "bsb");
+const ATTACH_DIR = path.join(PACK_DIR, "attachments");
 const PORT = Number(process.env.PORT || 4180);
+const HOST = process.env.HOST || "0.0.0.0";
+const MAX_ATTACH_BYTES = Number(process.env.MAX_ATTACH_BYTES || 50 * 1024 * 1024);
+// Multiword door (cowyo-style): the URL *is* the key. No passwords, no accounts.
+// DOOR=quiet-river-lantern  or auto-written to pack/door
+// DOOR_OPEN=1 disables the door (open LAN demo only).
+const DOOR_OPEN = process.env.DOOR_OPEN === "1" || process.env.DOOR_OPEN === "true";
+const DOOR_FILE = path.join(PACK_DIR, "door");
+
+// ---------- multiword door (frictionless access) ----------
+
+let DOOR = ""; // hyphenated multiword, e.g. quiet-river-lantern
+
+function basePath() {
+  return DOOR && !DOOR_OPEN ? `/${DOOR}` : "";
+}
+
+/** Prefix an absolute app path with the door segment. */
+function u(p) {
+  const pathOnly = p.startsWith("/") ? p : `/${p}`;
+  return basePath() + pathOnly;
+}
+
+function normalizeDoorPhrase(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+async function loadWordList() {
+  try {
+    const raw = await readFile(path.join(ROOT, "words-door.txt"), "utf8");
+    const words = raw.split(/\s+/).map((w) => w.trim().toLowerCase()).filter((w) => /^[a-z]{3,8}$/.test(w));
+    if (words.length >= 64) return words;
+  } catch { /* fall through */ }
+  return "able acid also aqua arch area atom auto axis baby ball band bank bare base beam bean bear bell bird blue boat body bold bone book boot born bowl burn cake calm camp card care case cash cast cave cell chat chip city clay clip cold cook cool corn cost crab crew crow cube cure curl cute damp dark data dawn deal dear deep desk dial diet door down draw drop drum dual duck dusk dust duty each earn east easy echo edge edit even ever exit face fact fail fair fall fame farm fast fate fear feed feel file film find fine fire firm fish five flag flat flow foam fold food foot fork form fort four free frog from fuel full gain game gate gear gift girl give glad glow glue goal gold good grab gray grew grid grow hard harm hate have head heal heap heat help herb hero high hill hint hold hole home hope horn host hour huge hunt idea idle inch into iron item jade join joke jump just keen keep kept kick kind king kite knee knew know lace lack lake lamp land lane last late lawn lead leaf lean leap left less life lift like limb lime line link lion list live load loan lock long look loop lord lose loss lost loud love luck lung made maid mail main make male many mark mask mass mate maze meal mean meat meet melt menu mild mile milk mill mind mine mint miss mist mode mood moon more most move much must navy near neat need nest news next nice nine node none noon nose note once only open oven over pace pack page paid pain pair pale palm park part pass past path peak pear pick pile pine pink plan play plot plus poem pole pond pool port pose post pour pull pure push queen quiet quiz race raft rain rake rank rare rate read real rest rice rich ride ring rise risk road rock roll roof room root rose ruin rule rush rust safe said sail sale salt same sand save seal seat seed seek seem seen self sell send ship shop show shut sick side sign silk sing sink site size skin skip slow snow soap sock soft soil sold some song soon sort soul soup spin spot star stay stem step stop such suit sure swan swim tack tail take talk tall tank tape task team tear tell tend tent term test text than that them then they thin this tide tidy time tiny told tone took tool tour town trap tray tree trim trip true tube tuna turn twin type unit upon used user vain vary vast veil verb very vest view vine void vote wage wait wake walk wall want ward warm warn wave ways weak wear week well went were west what when wide wife wild will wind wine wing wipe wire wise wish with wolf wood wool word work yard yarn year your zero zone zoom".split(/\s+/);
+}
+
+async function generateDoorPhrase() {
+  const words = await loadWordList();
+  const parts = [];
+  for (let i = 0; i < 4; i++) {
+    parts.push(words[randomBytes(2).readUInt16BE(0) % words.length]);
+  }
+  return parts.join("-");
+}
+
+async function ensureDoor() {
+  if (DOOR_OPEN) {
+    DOOR = "";
+    return;
+  }
+  const fromEnv = normalizeDoorPhrase(process.env.DOOR || process.env.PACK_DOOR || "");
+  if (fromEnv) {
+    DOOR = fromEnv;
+    return;
+  }
+  try {
+    const existing = normalizeDoorPhrase(await readFile(DOOR_FILE, "utf8"));
+    if (existing && existing.split("-").length >= 3) {
+      DOOR = existing;
+      return;
+    }
+  } catch { /* generate */ }
+  DOOR = await generateDoorPhrase();
+  await mkdir(PACK_DIR, { recursive: true });
+  await writeFile(DOOR_FILE, DOOR + "\n", { mode: 0o600 });
+}
+
+function doorMatches(segment) {
+  if (DOOR_OPEN) return true;
+  return normalizeDoorPhrase(segment) === DOOR;
+}
+
+/** Strip /{door}/… prefix; returns null if door required and missing/wrong. */
+function routePath(pathname) {
+  const raw = pathname || "/";
+  if (DOOR_OPEN) return { ok: true, path: raw === "" ? "/" : raw };
+
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 0) return { ok: false, path: "/", needDoor: true };
+
+  const head = parts[0].toLowerCase();
+  // reserved top-level words that are never doors
+  if (head === "enter") return { ok: false, path: raw, needDoor: true };
+
+  if (!doorMatches(head)) return { ok: false, path: raw, badDoor: true };
+
+  const rest = "/" + parts.slice(1).join("/");
+  return { ok: true, path: rest === "/" ? "/" : rest.replace(/\/$/, "") || "/" };
+}
 
 // ---------- pack (storage) ----------
 
 async function ensurePack() {
   await mkdir(NOTES_DIR, { recursive: true });
   await mkdir(TEXT_DIR, { recursive: true });
+  await mkdir(ATTACH_DIR, { recursive: true });
   const protocolPath = path.join(PACK_DIR, "protocol.json");
   try {
     await readFile(protocolPath);
@@ -30,6 +130,64 @@ async function ensurePack() {
       JSON.stringify({ protocol: "versepack", version: "0.1-demo" }, null, 2) + "\n",
     );
   }
+  await ensureDoor();
+}
+
+const newAttId = () => `att_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
+
+function attachBlobPath(sha256) {
+  const hex = String(sha256 || "").toLowerCase().replace(/[^a-f0-9]/g, "");
+  if (hex.length !== 64) return null;
+  return path.join(ATTACH_DIR, hex);
+}
+
+async function writeAttachmentBlob(buf) {
+  const sha256 = createHash("sha256").update(buf).digest("hex");
+  const p = attachBlobPath(sha256);
+  try {
+    await access(p);
+  } catch {
+    await writeFile(p, buf);
+  }
+  return sha256;
+}
+
+function normalizeAttachments(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const kind = raw.kind === "url" ? "url" : raw.kind === "file" ? "file" : null;
+    if (!kind) continue;
+    let id = typeof raw.id === "string" && /^[\w.-]+$/.test(raw.id) ? raw.id : newAttId();
+    if (seen.has(id)) id = newAttId();
+    seen.add(id);
+    if (kind === "url") {
+      const url = String(raw.url || "").trim();
+      if (!/^https?:\/\//i.test(url)) continue;
+      out.push({
+        id,
+        kind: "url",
+        url,
+        title: raw.title != null ? String(raw.title).slice(0, 500) : undefined,
+        created_at: raw.created_at || new Date().toISOString(),
+      });
+    } else {
+      const sha256 = String(raw.sha256 || "").toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(sha256)) continue;
+      out.push({
+        id,
+        kind: "file",
+        name: String(raw.name || "file").slice(0, 500),
+        mime: String(raw.mime || "application/octet-stream").slice(0, 200),
+        sha256,
+        bytes: Math.max(0, Number(raw.bytes) || 0),
+        created_at: raw.created_at || new Date().toISOString(),
+      });
+    }
+  }
+  return out;
 }
 
 function notePath(slug) {
@@ -154,12 +312,44 @@ function blocksAreEmpty(blocks) {
 // Legacy demo notes stored one flat `body` string; hydrate them into blocks
 // with deterministic ids so repeated reads agree until the next save persists.
 function hydrate(note) {
-  if (note && !Array.isArray(note.blocks)) {
+  if (!note) return note;
+  // Client-side encrypted envelope: no plaintext blocks on disk
+  if (note.encrypted && note.cipher && typeof note.cipher === "object") {
+    if (!Array.isArray(note.blocks)) note.blocks = [];
+    if (!Array.isArray(note.attachments)) note.attachments = [];
+    return note;
+  }
+  if (!Array.isArray(note.blocks)) {
     note.blocks = linesOf(typeof note.body === "string" ? note.body : "")
       .map((l, i) => ({ id: `${note.id}_l${i}`, indent: l.indent, text: l.text }));
     delete note.body;
   }
+  if (!Array.isArray(note.attachments)) note.attachments = [];
+  else note.attachments = normalizeAttachments(note.attachments);
   return note;
+}
+
+function isEncryptedNote(note) {
+  return !!(note && note.encrypted && note.cipher && note.cipher.ct);
+}
+
+/** Validate client-side AES-GCM envelope (opaque to server). */
+function normalizeCipher(cipher) {
+  if (!cipher || typeof cipher !== "object") return null;
+  const ct = typeof cipher.ct === "string" ? cipher.ct : "";
+  const salt = typeof cipher.salt === "string" ? cipher.salt : "";
+  const iv = typeof cipher.iv === "string" ? cipher.iv : "";
+  if (!ct || !salt || !iv) return null;
+  if (ct.length > 8_000_000) return null; // ~6MB b64 cap
+  return {
+    v: Number(cipher.v) || 1,
+    alg: typeof cipher.alg === "string" ? cipher.alg : "AES-GCM",
+    kdf: typeof cipher.kdf === "string" ? cipher.kdf : "PBKDF2",
+    iter: Number(cipher.iter) || 210000,
+    salt,
+    iv,
+    ct,
+  };
 }
 
 // ---------- addressing (OSIS spine via grab-bcv) ----------
@@ -257,16 +447,201 @@ async function getChapterText(book, chapter) {
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+// Wiki links: [[target]] or [[target|label]] — see PROTOCOL §4.1 / ADR 0009.
+// Prefer canonical /note/<slug> when parseable; else /go?q= for human recovery.
+function resolveWikiTarget(raw) {
+  const target = String(raw || "").trim();
+  if (!target) return null;
+  const scope = parseScope(target);
+  if (scope) {
+    return {
+      href: u(`/note/${scope.slug}`),
+      label: formatPassageForDisplay(scope.parsed),
+      slug: scope.slug,
+    };
+  }
+  return { href: u(`/go?q=${encodeURIComponent(target)}`), label: target, slug: null };
+}
+
+function renderEmbed(target, label, attachments = []) {
+  const t = String(target || "").trim();
+  const lab = (label != null && String(label).trim() !== "" ? String(label).trim() : null);
+  // attachment pointer
+  const attM = t.match(/^att:(.+)$/i);
+  if (attM) {
+    const att = (attachments || []).find((a) => a.id === attM[1].trim());
+    if (!att) return `<span class="att-missing">${esc(lab || t)}</span>`;
+    if (att.kind === "url") {
+      return `<a class="attlink" href="${esc(att.url)}" target="_blank" rel="noopener noreferrer">${esc(lab || att.title || att.url)}</a>`;
+    }
+    const href = u(`/api/attachments/${att.sha256}?name=${encodeURIComponent(att.name || "file")}`);
+    if ((att.mime || "").startsWith("image/")) {
+      return `<a class="attlink att-image" href="${esc(href)}" target="_blank" rel="noopener"><img src="${esc(href)}" alt="${esc(lab || att.name || "")}" loading="lazy"></a>`;
+    }
+    return `<a class="attlink" href="${esc(href)}" download="${esc(att.name || "file")}">${esc(lab || att.name || "file")}</a>`;
+  }
+  // bare URL embed
+  if (/^https?:\/\//i.test(t)) {
+    return `<a class="attlink" href="${esc(t)}" target="_blank" rel="noopener noreferrer">${esc(lab || t)}</a>`;
+  }
+  return null;
+}
+
+function linkifyText(text, attachments = []) {
+  const s = String(text ?? "");
+  // embeds ![[…]] then wiki [[…]]
+  const re = /(!?)\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(s))) {
+    out += esc(s.slice(last, m.index));
+    const isEmbed = m[1] === "!";
+    const target = m[2].trim();
+    const label = m[3] != null ? m[3].trim() : null;
+    if (isEmbed) {
+      const emb = renderEmbed(target, label, attachments);
+      out += emb != null ? emb : esc(m[0]);
+    } else {
+      const resolved = resolveWikiTarget(target);
+      const lab = label || resolved?.label || target;
+      if (resolved) {
+        out += `<a class="wikilink" href="${esc(resolved.href)}" data-wiki="${esc(target)}">${esc(lab)}</a>`;
+      } else {
+        out += esc(m[0]);
+      }
+    }
+    last = m.index + m[0].length;
+  }
+  out += esc(s.slice(last));
+  return out;
+}
+
+/** @deprecated use linkifyText */
+const linkifyWiki = (text) => linkifyText(text);
+
 const CSS = `
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-    max-width: 38rem; margin: 0 auto; padding: 1.5rem 1.1rem 5rem;
+    max-width: 38rem; margin: 0 auto;
+    padding: 1.5rem 1.1rem calc(5rem + env(safe-area-inset-bottom, 0px));
+    padding-left: max(1.1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1.1rem, env(safe-area-inset-right, 0px));
     line-height: 1.55; font-size: 1.05rem;
   }
-  a { color: inherit; }
+  a { color: inherit; text-decoration: none; }
+  a:hover { opacity: .72; }
+  /* body-copy / explicit text links only */
+  a.underline, .note-meta a, .prose a, a.wikilink, a.attlink {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  }
+  a.underline:hover, .note-meta a:hover, .prose a:hover, a.wikilink:hover, a.attlink:hover { opacity: 1;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+  a.wikilink, a.attlink { border-radius: .15rem; }
+  a.wikilink:hover, a.attlink:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  /* attachments: files and links as two first-class kinds */
+  .att-board {
+    margin: 1.1rem 0 1.35rem;
+    display: flex; flex-direction: column; gap: .85rem;
+  }
+  .att-kind-panel {
+    margin: 0;
+    padding: 0;
+  }
+  .att-kind-panel + .att-kind-panel {
+    padding-top: .75rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .att-kind-title {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .72rem; font-weight: 500; letter-spacing: .02em;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    margin: 0 0 .35rem;
+  }
+  .att-list { list-style: none; margin: 0; padding: 0; }
+  .att-row {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    padding: .5rem 0;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+    font-family: -apple-system, system-ui, sans-serif; font-size: .88rem;
+    min-height: 2.5rem;
+  }
+  .att-row:last-child { border-bottom: 0; }
+  .att-icon {
+    flex: 0 0 auto; width: 1.5rem; text-align: center;
+    opacity: .4; font-size: .85rem; user-select: none;
+  }
+  .att-row .attlink { flex: 1 1 8rem; min-width: 0; word-break: break-word; }
+  .att-meta {
+    flex: 0 1 auto;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    font-size: .78rem;
+  }
+  .att-empty {
+    margin: 0 0 .35rem;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .85rem;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  .att-remove {
+    flex: 0 0 auto;
+    border: 0; background: transparent; cursor: pointer;
+    color: color-mix(in srgb, currentColor 45%, transparent);
+    font-size: .85rem; line-height: 1; padding: .35rem .45rem;
+    min-height: 2.25rem; min-width: 2.25rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .att-remove:hover { color: inherit; }
+  .att-actions {
+    display: flex; flex-wrap: wrap; gap: .4rem; align-items: stretch;
+    margin-top: .35rem;
+  }
+  .att-actions input[type=url] {
+    flex: 1 1 12rem; min-width: 0; font-size: 16px;
+    padding: .55rem .65rem; border-radius: .35rem;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    background: transparent; color: inherit;
+  }
+  .att-actions button,
+  .att-actions label.att-file-btn {
+    flex: 0 1 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: -apple-system, system-ui, sans-serif; font-size: .85rem;
+    padding: .55rem .85rem; border-radius: .35rem; cursor: pointer;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    background: transparent; color: color-mix(in srgb, currentColor 55%, transparent);
+    min-height: 2.6rem;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .att-actions button:hover,
+  .att-actions label.att-file-btn:hover { color: inherit; background: color-mix(in srgb, currentColor 4%, transparent); }
+  .att-actions input[type=file] { display: none; }
+  .att-image img {
+    display: block; max-width: min(100%, 22rem); max-height: 14rem;
+    margin: .25rem 0; border-radius: .35rem;
+  }
+  .att-missing { opacity: .45; text-decoration: line-through; }
+  .att-thumb {
+    display: block; width: 2.25rem; height: 2.25rem; object-fit: cover;
+    border-radius: .3rem; flex: 0 0 auto;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  @media (max-width: 640px) {
+    .att-board { gap: 1rem; }
+    .att-actions { flex-direction: column; }
+    .att-actions input[type=url],
+    .att-actions button,
+    .att-actions label.att-file-btn { flex: 1 1 auto; width: 100%; }
+    .att-row { min-height: 2.85rem; }
+  }
   code, kbd, .ui { font-family: -apple-system, system-ui, sans-serif; }
+  button { font: inherit; color: inherit; }
   input[type=text] {
     width: 100%; font: inherit; font-size: 1rem; padding: .55rem .7rem;
     border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
@@ -276,16 +651,50 @@ const CSS = `
     border-color: color-mix(in srgb, currentColor 45%, transparent); }
   .muted { color: color-mix(in srgb, currentColor 48%, transparent); font-size: .88rem; }
   .ui { font-family: -apple-system, system-ui, sans-serif; font-size: .88rem; }
-  header { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  header h1 { font-size: 1.2rem; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  .crypto-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem;
+    margin: 0 0 1rem; padding: .45rem 0 .55rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-size: .82rem;
+    color: color-mix(in srgb, currentColor 50%, transparent);
+  }
+  .crypto-bar[data-on="1"] { color: color-mix(in srgb, currentColor 62%, transparent); }
+  .crypto-status { flex: 1 1 12rem; min-width: 0; line-height: 1.35; }
+  .crypto-btn {
+    border: 0; background: transparent; padding: .2rem 0; cursor: pointer;
+    font: inherit; color: color-mix(in srgb, currentColor 48%, transparent);
+  }
+  .crypto-btn:hover { color: inherit; }
+  .crypto-lock {
+    margin: 2rem 0; padding: 1.25rem 0;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .crypto-lock h2 { font-size: 1.05rem; margin: 0 0 .5rem; font-weight: 600; }
+  .crypto-lock p { margin: 0 0 .85rem; color: color-mix(in srgb, currentColor 55%, transparent); max-width: 28rem; line-height: 1.45; }
+  .crypto-lock input {
+    width: min(100%, 20rem); font-size: 16px; padding: .55rem .65rem;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    border-radius: .35rem; background: transparent; color: inherit;
+  }
+  .crypto-lock button {
+    margin-left: .4rem; padding: .55rem .85rem; font-size: .88rem;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    border-radius: .35rem; background: transparent; cursor: pointer; color: inherit;
+    min-height: 2.6rem;
+  }
+  header { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; margin-bottom: 1rem;
+    row-gap: .35rem; }
+  header h1 { font-size: 1.2rem; font-weight: 600; margin: 0; letter-spacing: -.01em;
+    min-width: 0; flex: 1 1 auto; }
   #status { margin-left: auto; font-size: .8rem; color: color-mix(in srgb, currentColor 45%, transparent); }
   h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
        font-family: -apple-system, system-ui, sans-serif; }
   .note-row {
-    display: block; padding: .55rem 0; text-decoration: none;
+    display: block; padding: .55rem 0; text-decoration: none; color: inherit;
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   }
-  .note-row:hover { opacity: .85; }
+  .note-row:hover { background: color-mix(in srgb, currentColor 4%, transparent);
+    margin: 0 -.35rem; padding-left: .35rem; padding-right: .35rem; border-radius: .25rem; }
   .ref { font-weight: 600; margin-right: .4rem; }
   kbd {
     font-family: inherit; font-size: .8em; padding: .05rem .3rem;
@@ -340,7 +749,6 @@ const CSS = `
   }
   .note-meta { margin: .2rem 0 0; font-size: .8rem;
     color: color-mix(in srgb, currentColor 45%, transparent); }
-  .note-meta a { text-decoration: underline; text-underline-offset: 2px; }
   .note-edit { margin: .1rem 0; }
   .note.editing .note-body,
   .note.editing .note-label { display: none; }
@@ -372,37 +780,30 @@ const CSS = `
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   }
   .chapter-note .note { margin: 0; }
-  /* inbox: contained / related notes as openable items, not inline outlines */
-  .inbox {
-    display: flex; flex-direction: column; gap: .4rem;
-    margin: .4rem 0 0;
-  }
+  /* inbox: same list language as the index (flat rows, not filled cards) */
+  .inbox { margin: .15rem 0 0; }
   .inbox-item {
     display: block; text-decoration: none; color: inherit;
-    padding: .65rem .75rem;
-    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-    border-radius: .5rem;
-    background: color-mix(in srgb, currentColor 3%, transparent);
-    transition: background .12s ease, border-color .12s ease;
+    padding: .55rem 0;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   }
   .inbox-item:hover {
-    background: color-mix(in srgb, currentColor 6%, transparent);
-    border-color: color-mix(in srgb, currentColor 22%, transparent);
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    margin: 0 -.35rem; padding-left: .35rem; padding-right: .35rem; border-radius: .25rem;
   }
   .inbox-top {
-    display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap;
+    display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap;
   }
-  .inbox-title { font-weight: 600; font-size: .95rem; letter-spacing: -.01em; }
+  .inbox-title { font-weight: 600; margin-right: .1rem; }
   .inbox-kind {
     font-family: -apple-system, system-ui, sans-serif;
-    font-size: .65rem; font-weight: 500; letter-spacing: .04em;
-    text-transform: uppercase;
-    color: color-mix(in srgb, currentColor 42%, transparent);
+    font-size: .78rem;
+    color: color-mix(in srgb, currentColor 45%, transparent);
   }
   .inbox-excerpt {
-    margin: .2rem 0 0;
+    margin: .15rem 0 0;
     font-size: .88rem;
-    color: color-mix(in srgb, currentColor 52%, transparent);
+    color: color-mix(in srgb, currentColor 48%, transparent);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
@@ -485,10 +886,97 @@ const CSS = `
     min-width: 0; min-height: var(--row-h); padding: 0; outline: none;
     white-space: pre-wrap; word-break: break-word; font: inherit;
     line-height: var(--row-h);
+    /* 16px minimum prevents iOS focus-zoom */
+    font-size: max(1em, 16px);
   }
   .otext:empty::before { content: attr(data-placeholder); opacity: .35; pointer-events: none; }
   .outliner.compact { font-size: .9rem; }
+  .outliner.compact .otext { font-size: max(0.9rem, 16px); }
   .hint { margin-top: .65rem; }
+
+  /* nest / unnest — same quiet chrome as header links / muted UI, not filled cards */
+  .outliner-shell { margin: 0; }
+  .otoolbar {
+    display: flex; gap: 1rem; align-items: center;
+    margin: .45rem 0 0;
+    padding: .35rem 0 0;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .otool-btn {
+    flex: 0 0 auto;
+    margin: 0; padding: .15rem 0;
+    border: 0; background: transparent;
+    font-family: inherit; font-size: .85rem; font-weight: 400;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .otool-btn:hover:not(:disabled) { color: inherit; }
+  .otool-btn:active:not(:disabled) { opacity: .7; }
+  .otool-btn:disabled { opacity: .28; cursor: default; }
+  .otool-ico {
+    display: inline-block; margin-right: .3rem;
+    opacity: .55; font-size: .95em; letter-spacing: -.02em;
+  }
+
+  @media (max-width: 640px) {
+    body {
+      padding-top: 1rem;
+      padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+      font-size: 1.02rem;
+    }
+    header { margin-bottom: .85rem; gap: .4rem .55rem; }
+    header h1 { font-size: 1.12rem; line-height: 1.25; }
+    header a, #status { font-size: .82rem; }
+    input[type=text] { font-size: 16px; padding: .7rem .75rem; }
+    .note-row, .inbox-item { padding: .7rem 0; min-height: 2.75rem; }
+    .verse {
+      padding: .4rem 0 .4rem 0.85rem;
+      margin-left: -0.5rem;
+    }
+    .vnotes { margin-left: .75rem; }
+    .vtext { line-height: 1.5; }
+    .outline, .outliner { --note-gutter: 1.15rem; --row-h: 1.7em; }
+    .outliner.page { min-height: 30vh; }
+    .hint { display: none; }
+    .otoolbar {
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      gap: 0;
+      margin: .55rem -0.85rem 0;
+      padding: 0 .25rem calc(env(safe-area-inset-bottom, 0px));
+      border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+      background: color-mix(in srgb, Canvas 94%, transparent);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .outliner-shell.compact .otoolbar {
+      margin-left: 0; margin-right: 0;
+    }
+    .otool-btn {
+      flex: 1 1 0;
+      min-height: 2.85rem;
+      padding: .55rem .5rem;
+      font-size: .88rem;
+      text-align: center;
+    }
+    .otool-btn + .otool-btn {
+      border-left: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    }
+    .otool-btn:hover:not(:disabled) {
+      background: color-mix(in srgb, currentColor 4%, transparent);
+    }
+    .inbox-excerpt { white-space: normal; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  }
+
+  @media (pointer: coarse) {
+    .otool-btn { min-height: 2.5rem; padding: .4rem .35rem; }
+    .note-row, .inbox-item { padding-top: .65rem; padding-bottom: .65rem; }
+  }
 `;
 
 // Shared client outliner — sibling/nested rows, no indent syntax to learn.
@@ -510,6 +998,22 @@ function mountOutliner(host, opts) {
   let timer = null;
   let inflight = null;
   let dirty = false;
+  let activeId = blocks[0] ? blocks[0].id : null;
+
+  // shell + nest toolbar (mobile-friendly Tab stand-in)
+  const shell = document.createElement("div");
+  shell.className = "outliner-shell" + (compact ? " compact" : "");
+  host.replaceWith(shell);
+  shell.appendChild(host);
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "otoolbar";
+  toolbar.innerHTML =
+    '<button type="button" class="otool-btn" data-act="outdent" aria-label="Unnest">' +
+      '<span class="otool-ico" aria-hidden="true">\\u21E4</span>unnest</button>' +
+    '<button type="button" class="otool-btn" data-act="indent" aria-label="Nest">' +
+      '<span class="otool-ico" aria-hidden="true">\\u21E5</span>nest</button>';
+  shell.appendChild(toolbar);
 
   host.classList.add("outliner");
   if (compact) host.classList.add("compact");
@@ -525,6 +1029,22 @@ function mountOutliner(host, opts) {
     return j;
   }
 
+  function activeIndex() {
+    let i = blocks.findIndex(b => b.id === activeId);
+    return i < 0 ? 0 : i;
+  }
+
+  function refreshToolbar() {
+    const i = activeIndex();
+    const outBtn = toolbar.querySelector('[data-act="outdent"]');
+    const inBtn = toolbar.querySelector('[data-act="indent"]');
+    if (outBtn) outBtn.disabled = !blocks[i] || blocks[i].indent <= 0;
+    if (inBtn) {
+      const max = i === 0 ? 0 : blocks[i - 1].indent + 1;
+      inBtn.disabled = !blocks[i] || blocks[i].indent >= max;
+    }
+  }
+
   function render(focusId, caret) {
     host.innerHTML = "";
     const fresh = blocks.length === 1 && !blocks[0].text.trim();
@@ -536,12 +1056,14 @@ function mountOutliner(host, opts) {
 
       const bullet = document.createElement("span");
       bullet.className = "obullet";
-      bullet.title = "Tab nest \\u00b7 Shift-Tab unnest";
+      bullet.title = "Nest / Unnest";
 
       const text = document.createElement("div");
       text.className = "otext";
       text.contentEditable = "true";
       text.spellcheck = true;
+      text.inputMode = "text";
+      text.enterKeyHint = "enter";
       // placeholder only on a brand-new empty note — blank bullets stay silent
       if (fresh) text.dataset.placeholder = placeholder;
       text.textContent = b.text;
@@ -551,12 +1073,14 @@ function mountOutliner(host, opts) {
       host.appendChild(row);
     }
     if (focusId) {
+      activeId = focusId;
       const el = host.querySelector('.oblock[data-id="' + CSS.escape(focusId) + '"] .otext');
       if (el) {
         el.focus();
         placeCaret(el, caret == null ? endOf(el) : caret);
       }
     }
+    refreshToolbar();
   }
 
   function endOf(el) {
@@ -609,11 +1133,27 @@ function mountOutliner(host, opts) {
   async function save() {
     syncFromDom();
     // keep blank bullets; server clears the address only if nothing has text
-    const payload = {
+    let payload = {
       blocks: blocks.map(b => ({ id: b.id, indent: b.indent, text: b.text })),
     };
+    // optional client-side encryption (cowyo-style); passphrase never sent
+    try {
+      if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+        const atts = (opts.getAttachments && opts.getAttachments()) || opts.attachments || [];
+        const cipher = await VP_CRYPTO.encryptPayload({
+          blocks: payload.blocks,
+          attachments: atts,
+        }, VP_CRYPTO.getPassphrase());
+        payload = { encrypted: true, cipher };
+      } else if (opts.attachments) {
+        // when not encrypting, only send blocks (preserve server attachments)
+      }
+    } catch (err) {
+      setStatus("encrypt error");
+      return;
+    }
     if (inflight) await inflight;
-    inflight = fetch("/api/note/" + slug, {
+    inflight = fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -622,7 +1162,7 @@ function mountOutliner(host, opts) {
         if (!r.ok) { setStatus("error"); return; }
         const data = await r.json().catch(() => null);
         if (data && data.deleted) setStatus("cleared");
-        else setStatus("saved");
+        else setStatus(payload.encrypted ? "saved · encrypted" : "saved");
         dirty = false;
       })
       .catch(() => setStatus("offline"))
@@ -648,11 +1188,39 @@ function mountOutliner(host, opts) {
     return true;
   }
 
+  function applyIndent(delta) {
+    syncFromDom();
+    const i = activeIndex();
+    const focusEl = document.activeElement;
+    const caret = (focusEl && focusEl.classList && focusEl.classList.contains("otext"))
+      ? caretOffset(focusEl) : endOf({ textContent: blocks[i] ? blocks[i].text : "" });
+    if (!indentBlock(i, delta)) { refreshToolbar(); return; }
+    render(blocks[i].id, caret);
+    scheduleSave();
+  }
+
+  // keep focus in editor when tapping toolbar (mousedown before blur)
+  toolbar.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".otool-btn")) e.preventDefault();
+  });
+  toolbar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    applyIndent(btn.dataset.act === "indent" ? 1 : -1);
+  });
+
+  host.addEventListener("focusin", (e) => {
+    const row = e.target.closest(".oblock");
+    if (row) { activeId = row.dataset.id; refreshToolbar(); }
+  });
+
   host.addEventListener("input", (e) => {
     if (!e.target.classList.contains("otext")) return;
     const row = e.target.closest(".oblock");
     const b = blocks.find(x => x.id === row.dataset.id);
     if (b) b.text = e.target.textContent.replace(/\\u00a0/g, " ");
+    if (row) activeId = row.dataset.id;
     scheduleSave();
   });
 
@@ -681,11 +1249,8 @@ function mountOutliner(host, opts) {
 
     if (e.key === "Tab") {
       e.preventDefault();
-      syncFromDom();
-      if (indentBlock(i, e.shiftKey ? -1 : 1)) {
-        render(blocks[i].id, caretOffset(textEl));
-        scheduleSave();
-      }
+      activeId = blocks[i].id;
+      applyIndent(e.shiftKey ? -1 : 1);
       return;
     }
 
@@ -794,33 +1359,211 @@ function mountOutliner(host, opts) {
       syncFromDom();
       return blocks.map(b => ({ id: b.id, indent: b.indent, text: b.text }));
     },
-    async flush() {
+    setAttachments(list) {
+      if (opts.getAttachments) { /* live via getAttachments */ }
+      opts.attachments = list || [];
+    },
+    async flush(force) {
       clearTimeout(timer);
-      if (dirty) await save();
+      if (dirty || force) await save();
       else if (inflight) await inflight;
     },
     destroy() {
       clearTimeout(timer);
       host.innerHTML = "";
       host.classList.remove("outliner", "compact", "page");
+      if (shell.parentNode) {
+        shell.parentNode.insertBefore(host, shell);
+        shell.remove();
+      }
     },
   };
 }
 `;
 
+// Client-side pack passphrase encryption (cowyo-style).
+// Passphrase never leaves the browser; URL hash #pw=… is stripped after load.
+const CRYPTO_JS = `
+const VP_CRYPTO = (() => {
+  const ITER = 210000;
+  const storageKey = () => "vp_pw_" + (typeof BASE === "string" ? BASE : location.pathname.split("/")[1] || "local");
+
+  function b64(buf) {
+    const bytes = new Uint8Array(buf);
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+  function unb64(s) {
+    const bin = atob(s);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function getPassphrase() {
+    try { return sessionStorage.getItem(storageKey()) || ""; } catch { return ""; }
+  }
+  function setPassphrase(pw) {
+    try {
+      if (pw) sessionStorage.setItem(storageKey(), pw);
+      else sessionStorage.removeItem(storageKey());
+    } catch { /* private mode */ }
+  }
+  function clearPassphrase() { setPassphrase(""); }
+
+  // Read #pw=… or #password=… once, store, strip from URL (never hits server)
+  function ingestHash() {
+    const h = location.hash.replace(/^#/, "");
+    if (!h) return;
+    const params = new URLSearchParams(h.includes("=") ? h : ("pw=" + h));
+    const pw = params.get("pw") || params.get("password") || params.get("key") || "";
+    if (pw) {
+      setPassphrase(pw);
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+  }
+
+  async function deriveKey(passphrase, saltBytes) {
+    const enc = new TextEncoder();
+    const baseKey = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: saltBytes, iterations: ITER, hash: "SHA-256" },
+      baseKey,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+  }
+
+  async function encryptPayload(obj, passphrase) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(passphrase, salt);
+    const pt = new TextEncoder().encode(JSON.stringify(obj));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+    return {
+      v: 1,
+      alg: "AES-GCM",
+      kdf: "PBKDF2",
+      iter: ITER,
+      salt: b64(salt),
+      iv: b64(iv),
+      ct: b64(ct),
+    };
+  }
+
+  async function decryptPayload(cipher, passphrase) {
+    if (!cipher || !cipher.ct) throw new Error("missing cipher");
+    const salt = unb64(cipher.salt);
+    const iv = unb64(cipher.iv);
+    const key = await deriveKey(passphrase, salt);
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, unb64(cipher.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+
+  function hasPassphrase() { return !!getPassphrase(); }
+
+  return {
+    ingestHash, getPassphrase, setPassphrase, clearPassphrase, hasPassphrase,
+    encryptPayload, decryptPayload, ITER,
+  };
+})();
+`;
+
 function page(title, body) {
+  const base = basePath();
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)}</title><style>${CSS}</style></head><body>${body}</body></html>`;
+<title>${esc(title)}</title><style>${CSS}</style>
+<script>window.BASE=${JSON.stringify(base)};var BASE=window.BASE;</script>
+<script>${CRYPTO_JS}</script>
+<script>VP_CRYPTO.ingestHash();</script>
+</head><body>${body}</body></html>`;
+}
+
+function cryptoBarHtml({ locked = false } = {}) {
+  return `<div class="crypto-bar ui" id="crypto-bar" data-locked="${locked ? "1" : "0"}">
+    <span class="crypto-status" id="crypto-status"></span>
+    <button type="button" class="crypto-btn" id="crypto-unlock" hidden>Unlock</button>
+    <button type="button" class="crypto-btn" id="crypto-set" hidden>Set passphrase</button>
+    <button type="button" class="crypto-btn" id="crypto-clear" hidden>Lock</button>
+  </div>
+  <script>
+  (function () {
+    const bar = document.getElementById("crypto-bar");
+    if (!bar || !window.VP_CRYPTO) return;
+    const status = document.getElementById("crypto-status");
+    const btnUnlock = document.getElementById("crypto-unlock");
+    const btnSet = document.getElementById("crypto-set");
+    const btnClear = document.getElementById("crypto-clear");
+    function refresh() {
+      const on = VP_CRYPTO.hasPassphrase();
+      status.textContent = on
+        ? "Encryption on — notes save encrypted (passphrase never leaves this browser)"
+        : "Optional encryption off — set a passphrase to encrypt notes like cowyo";
+      btnUnlock.hidden = on;
+      btnSet.hidden = on;
+      btnClear.hidden = !on;
+      bar.dataset.on = on ? "1" : "0";
+      document.dispatchEvent(new CustomEvent("vpcrypto", { detail: { on } }));
+    }
+    btnUnlock.addEventListener("click", () => {
+      const pw = prompt("Pack passphrase (never sent to the server):");
+      if (pw == null || pw === "") return;
+      VP_CRYPTO.setPassphrase(pw);
+      refresh();
+      location.reload();
+    });
+    btnSet.addEventListener("click", () => {
+      const pw = prompt("New pack passphrase (client-side only):");
+      if (pw == null || pw === "") return;
+      const pw2 = prompt("Repeat passphrase:");
+      if (pw !== pw2) { alert("Passphrases did not match."); return; }
+      VP_CRYPTO.setPassphrase(pw);
+      refresh();
+      alert("Passphrase set for this browser session. Saves will encrypt. Tip: open with #pw=… in the URL (hash is never sent to the server).");
+    });
+    btnClear.addEventListener("click", () => {
+      VP_CRYPTO.clearPassphrase();
+      refresh();
+      location.reload();
+    });
+    refresh();
+  })();
+  </script>`;
+}
+
+function renderEnterDoor(error = "") {
+  return page(
+    "versepack",
+    `<header><h1>versepack</h1></header>
+    <p class="ui" style="max-width:28rem;line-height:1.5">
+      Your notes open at a <strong>multiword URL</strong> — same idea as cowyo.
+      There is no account. <em>Knowing the words is access</em> (optional client-side
+      passphrase encryption is separate, set inside the pack).
+    </p>
+    <form class="ui" method="get" action="/enter" style="margin:1.25rem 0;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center">
+      <input type="text" name="door" placeholder="quiet-river-lantern"
+        autocomplete="off" autocapitalize="off" spellcheck="false"
+        style="flex:1 1 14rem;font-size:16px" required>
+      <button type="submit" class="ui" style="flex:0 0 auto;padding:.55rem .75rem;border:1px solid color-mix(in srgb,currentColor 16%,transparent);border-radius:.35rem;background:transparent;cursor:pointer">Open door</button>
+    </form>
+    ${error ? `<p class="muted ui">${esc(error)}</p>` : ""}
+    <p class="muted ui">Bookmark the full URL after you open it. Share the words only with people who should edit this pack.</p>`,
+  );
 }
 
 function excerpt(note) {
-  const line = (note.blocks || []).find((b) => b.text.trim())?.text || "";
+  if (isEncryptedNote(note)) return "encrypted";
+  let line = (note.blocks || []).find((b) => b.text.trim())?.text || "";
+  // show wiki-link labels, not raw [[…]] brackets
+  line = line.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, l) => (l && l.trim()) || t.trim());
   return line.length > 90 ? line.slice(0, 90) + "…" : line;
 }
 
 // Read-only outline — same depth grid as the outliner (margin-left: depth * gutter).
-function renderOutline(blocks) {
+// Block text is linkified: wiki [[passage]] + embeds ![[att:…]] / ![[https://…]].
+function renderOutline(blocks, attachments = []) {
   const items = blocks || [];
   if (!items.length) return "";
   return `<div class="outline">${items.map((b) => {
@@ -828,18 +1571,87 @@ function renderOutline(blocks) {
     const empty = !String(b.text || "").trim();
     return `<div class="oline${empty ? " blank" : ""}" style="--depth:${depth}" title="${esc(b.id)}">
       <span class="odot" aria-hidden="true"></span>
-      <span class="otxt">${esc(b.text || "")}</span>
+      <span class="otxt">${empty ? "" : linkifyText(b.text, attachments)}</span>
     </div>`;
   }).join("")}</div>`;
+}
+
+function fmtBytes(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Files and links as two separate kinds (editor: editable; reader: read-only). */
+function renderAttachmentsBoard(attachments = [], { editable = false } = {}) {
+  const files = (attachments || []).filter((a) => a.kind === "file");
+  const links = (attachments || []).filter((a) => a.kind === "url");
+  if (!editable && !files.length && !links.length) return "";
+
+  const removeBtn = (id) =>
+    editable
+      ? `<button type="button" class="att-remove" data-att="${esc(id)}" title="Remove" aria-label="Remove">\u00d7</button>`
+      : "";
+
+  const fileRows = files.length
+    ? files.map((a) => {
+      const href = u(`/api/attachments/${a.sha256}?name=${encodeURIComponent(a.name || "file")}`);
+      const isImg = (a.mime || "").startsWith("image/");
+      const icon = isImg
+        ? `<img class="att-thumb" src="${esc(href)}" alt="">`
+        : `<span class="att-icon" aria-hidden="true">\u25A1</span>`;
+      return `<li class="att-row" data-att="${esc(a.id)}" data-kind="file">
+        ${icon}
+        <a class="attlink" href="${esc(href)}" ${isImg ? 'target="_blank" rel="noopener"' : `download="${esc(a.name || "file")}"`}>${esc(a.name || "file")}</a>
+        <span class="att-meta">${esc((a.mime || "file").split(";")[0] || "file")} \u00b7 ${fmtBytes(a.bytes)}</span>
+        ${removeBtn(a.id)}
+      </li>`;
+    }).join("")
+    : (editable ? `<p class="att-empty">No files yet</p>` : "");
+
+  const linkRows = links.length
+    ? links.map((a) => `<li class="att-row" data-att="${esc(a.id)}" data-kind="url">
+        <span class="att-icon" aria-hidden="true">\u2197</span>
+        <a class="attlink" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title || a.url)}</a>
+        <span class="att-meta">link</span>
+        ${removeBtn(a.id)}
+      </li>`).join("")
+    : (editable ? `<p class="att-empty">No links yet</p>` : "");
+
+  const filePanel = (editable || files.length)
+    ? `<div class="att-kind-panel" data-kind="file">
+        <div class="att-kind-title">Files</div>
+        <ul class="att-list">${fileRows}</ul>
+        ${editable ? `<div class="att-actions">
+          <label class="att-file-btn">Add file
+            <input type="file" id="att-file" multiple accept="*/*">
+          </label>
+        </div>` : ""}
+      </div>`
+    : "";
+
+  const linkPanel = (editable || links.length)
+    ? `<div class="att-kind-panel" data-kind="url">
+        <div class="att-kind-title">Links</div>
+        <ul class="att-list">${linkRows}</ul>
+        ${editable ? `<form class="att-actions" id="att-url-form">
+          <input type="url" id="att-url" name="url" placeholder="https://\u2026" inputmode="url" autocomplete="url" required>
+          <button type="submit">Add link</button>
+        </form>` : ""}
+      </div>`
+    : "";
+
+  return `<div class="att-board" id="att-board">${filePanel}${linkPanel}</div>`;
 }
 
 // Editor page: related notes as inbox items (open the note — don't embed it).
 function inboxItem({ scope, note }) {
   const display = formatPassageForDisplay(scope.parsed);
   const line = excerpt(note);
-  return `<a class="inbox-item" href="/note/${esc(scope.slug)}">
+  return `<a class="inbox-item" href="${u(`/note/${scope.slug}`)}">
     <div class="inbox-top">
-      <span class="inbox-title">${esc(display)}</span>
+      <span class="inbox-title ref">${esc(display)}</span>
       <span class="inbox-kind">${esc(scope.kind)}</span>
     </div>
     <div class="inbox-excerpt">${esc(line) || "empty"}</div>
@@ -855,13 +1667,23 @@ function inboxList(entries) {
 // label: false for the page chapter note (title already names the passage).
 function readerNoteHtml({ scope, note, label = true }) {
   const display = formatPassageForDisplay(scope.parsed);
+  if (isEncryptedNote(note)) {
+    const showLabel = label && scope.kind !== "verse";
+    return `<div class="note encrypted" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}" data-encrypted="1">
+      ${showLabel ? `<div class="note-label">${esc(display)}</div>` : ""}
+      <div class="note-body"><p class="muted ui" style="margin:.35rem 0">Encrypted — <a href="${u(`/note/${scope.slug}`)}">open to unlock</a></p></div>
+      <div class="note-edit" hidden></div>
+    </div>`;
+  }
   const blocks = note?.blocks || [];
   const has = blocks.some((b) => b.text.trim()) || blocks.length > 0;
   if (!has && scope.kind !== "verse") return "";
   const showLabel = label && scope.kind !== "verse";
+  const attHtml = renderAttachmentsBoard(note?.attachments || [], { editable: false });
   return `<div class="note" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}">
     ${showLabel ? `<div class="note-label">${esc(display)}</div>` : ""}
-    <div class="note-body">${blocks.length ? renderOutline(blocks) : ""}</div>
+    <div class="note-body">${blocks.length ? renderOutline(blocks, note?.attachments) : ""}</div>
+    ${attHtml}
     <div class="note-edit" hidden></div>
   </div>`;
 }
@@ -885,7 +1707,7 @@ async function renderIndex() {
     .map((n) => {
       const scope = parseScope(n.scope.osis);
       const display = scope ? formatPassageForDisplay(scope.parsed) : n.scope.osis;
-      return `<a class="note-row" href="/note/${esc(n.scope.slug)}">
+      return `<a class="note-row" href="${u(`/note/${n.scope.slug}`)}">
         <span class="ref">${esc(display)}</span>
         <span class="muted" style="float:right">${esc(relTime(n.updated_at))}</span>
         <div class="muted">${esc(excerpt(n)) || "empty"}</div></a>`;
@@ -893,8 +1715,11 @@ async function renderIndex() {
     .join("\n");
   return page(
     "versepack",
-    `<header><h1>versepack</h1></header>
-    <form action="/go" method="get">
+    `<header><h1>versepack</h1>
+      ${!DOOR_OPEN && DOOR ? `<span class="muted ui" title="Your multiword door — bookmark this site">${esc(DOOR)}</span>` : ""}
+    </header>
+    ${cryptoBarHtml()}
+    <form action="${u("/go")}" method="get">
       <input class="ui" type="text" name="q" placeholder="John 3:16" autofocus autocomplete="off">
     </form>
     <p class="muted ui" style="margin-top:.75rem">${notes.length} note${notes.length === 1 ? "" : "s"}</p>
@@ -914,30 +1739,282 @@ function renderEditor(scope, note, rel) {
   if (rel.overlaps.length) {
     sections.push(`<h2 class="ui">Overlaps</h2>${inboxList(rel.overlaps)}`);
   }
-  const initial = note?.blocks?.length ? note.blocks : [{ id: "b_new", indent: 0, text: "" }];
+  const locked = isEncryptedNote(note);
+  const initial = !locked && note?.blocks?.length ? note.blocks : [{ id: "b_new", indent: 0, text: "" }];
+  const atts = !locked ? (note?.attachments || []) : [];
+  const cipherJson = locked ? JSON.stringify(note.cipher) : "null";
   return page(
     display,
     `<header class="ui">
-      <a href="/" class="muted">&larr;</a>
+      <a href="${u("/")}" class="muted">&larr;</a>
       <h1>${esc(display)}</h1>
-      <a class="muted" href="/read/${esc(scope.slug)}">read</a>
+      <a class="muted" href="${u(`/read/${scope.slug}`)}">read</a>
       <span id="status"></span>
     </header>
+    ${cryptoBarHtml({ locked })}
+    <div id="note-main" ${locked ? "hidden" : ""}>
     <div id="editor"></div>
-    <p class="muted ui hint"><kbd>Enter</kbd> <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd></p>
+    <p class="muted ui hint">Enter new item &middot; nest / unnest &middot; [[John 3:16]] links</p>
+    <div id="att-root">${renderAttachmentsBoard(atts, { editable: true })}</div>
+    </div>
+    <div id="crypto-gate" class="crypto-lock" ${locked ? "" : "hidden"}>
+      <h2>Encrypted note</h2>
+      <p>This note is sealed with a client-side passphrase (cowyo-style). The server only stores ciphertext. Enter the passphrase or open with <code>#pw=…</code> in the URL.</p>
+      <form id="crypto-unlock-form">
+        <input type="password" id="crypto-pw" placeholder="Passphrase" autocomplete="current-password" required>
+        <button type="submit">Unlock</button>
+      </form>
+      <p class="muted" id="crypto-err" hidden>Could not decrypt — wrong passphrase?</p>
+    </div>
     ${sections.join("\n")}
     <script type="application/json" id="initial-blocks">${blocksJson(initial)}</script>
+    <script type="application/json" id="initial-atts">${JSON.stringify(atts)}</script>
+    <script type="application/json" id="initial-cipher">${cipherJson}</script>
     <script>
       ${OUTLINER_JS}
-      const blocks = JSON.parse(document.getElementById("initial-blocks").textContent);
-      mountOutliner(document.getElementById("editor"), {
-        slug: ${JSON.stringify(scope.slug)},
-        blocks,
-        statusEl: document.getElementById("status"),
-        autofocus: true,
-        page: true,
-        placeholder: "Write\\u2026",
+      const slug = ${JSON.stringify(scope.slug)};
+      let blocks = JSON.parse(document.getElementById("initial-blocks").textContent);
+      let attachments = JSON.parse(document.getElementById("initial-atts").textContent);
+      const cipher = JSON.parse(document.getElementById("initial-cipher").textContent);
+      let outlinerApi = null;
+
+      function startEditor() {
+        const host = document.getElementById("editor");
+        host.innerHTML = "";
+        outlinerApi = mountOutliner(host, {
+          slug,
+          blocks,
+          attachments,
+          getAttachments: () => attachments,
+          statusEl: document.getElementById("status"),
+          autofocus: true,
+          page: true,
+          placeholder: "Write\\u2026",
+        });
+        renderAtts();
+      }
+
+      async function tryUnlock(pw) {
+        if (!cipher) return true;
+        try {
+          const payload = await VP_CRYPTO.decryptPayload(cipher, pw);
+          blocks = payload.blocks || [{ id: "b_new", indent: 0, text: "" }];
+          attachments = payload.attachments || [];
+          VP_CRYPTO.setPassphrase(pw);
+          document.getElementById("crypto-gate").hidden = true;
+          document.getElementById("note-main").hidden = false;
+          document.getElementById("crypto-err").hidden = true;
+          startEditor();
+          document.getElementById("crypto-status") && document.dispatchEvent(new CustomEvent("vpcrypto", { detail: { on: true } }));
+          return true;
+        } catch {
+          document.getElementById("crypto-err").hidden = false;
+          return false;
+        }
+      }
+
+      if (cipher) {
+        if (VP_CRYPTO.hasPassphrase()) {
+          tryUnlock(VP_CRYPTO.getPassphrase()).then(ok => {
+            if (!ok) { /* stay on gate */ }
+          });
+        }
+        document.getElementById("crypto-unlock-form").addEventListener("submit", (e) => {
+          e.preventDefault();
+          tryUnlock(document.getElementById("crypto-pw").value);
+        });
+      } else {
+        startEditor();
+      }
+
+      const attRoot = document.getElementById("att-root");
+
+      function escH(s) {
+        return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
+      }
+      function fmtSize(n) {
+        n = Number(n) || 0;
+        if (n < 1024) return n + " B";
+        if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+        return (n / 1048576).toFixed(1) + " MB";
+      }
+      function renderAtts() {
+        const files = attachments.filter(a => a.kind === "file");
+        const links = attachments.filter(a => a.kind === "url");
+        function fileRows() {
+          if (!files.length) return '<p class="att-empty">No files yet</p>';
+          return '<ul class="att-list">' + files.map(a => {
+            const href = BASE + "/api/attachments/" + a.sha256 + "?name=" + encodeURIComponent(a.name || "file");
+            const isImg = (a.mime || "").indexOf("image/") === 0;
+            const icon = isImg
+              ? '<img class="att-thumb" src="' + href + '" alt="">'
+              : '<span class="att-icon" aria-hidden="true">\\u25A1</span>';
+            return '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="file">' +
+              icon +
+              '<a class="attlink" href="' + href + '"' + (isImg ? ' target="_blank" rel="noopener"' : " download") + '>' +
+              escH(a.name || "file") + '</a>' +
+              '<span class="att-meta">' + escH((a.mime || "file").split(";")[0]) + " \\u00b7 " + fmtSize(a.bytes) + '</span>' +
+              '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">\\u00d7</button></li>';
+          }).join("") + "</ul>";
+        }
+        function linkRows() {
+          if (!links.length) return '<p class="att-empty">No links yet</p>';
+          return '<ul class="att-list">' + links.map(a =>
+            '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="url">' +
+            '<span class="att-icon" aria-hidden="true">\\u2197</span>' +
+            '<a class="attlink" href="' + escH(a.url) + '" target="_blank" rel="noopener noreferrer">' +
+            escH(a.title || a.url) + '</a>' +
+            '<span class="att-meta">link</span>' +
+            '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">\\u00d7</button></li>'
+          ).join("") + "</ul>";
+        }
+        attRoot.innerHTML =
+          '<div class="att-board" id="att-board">' +
+            '<div class="att-kind-panel" data-kind="file">' +
+              '<div class="att-kind-title">Files</div>' + fileRows() +
+              '<div class="att-actions"><label class="att-file-btn">Add file' +
+              '<input type="file" id="att-file" multiple accept="*/*"></label></div>' +
+            '</div>' +
+            '<div class="att-kind-panel" data-kind="url">' +
+              '<div class="att-kind-title">Links</div>' + linkRows() +
+              '<form class="att-actions" id="att-url-form">' +
+              '<input type="url" id="att-url" placeholder="https://\\u2026" inputmode="url" autocomplete="url" required>' +
+              '<button type="submit">Add link</button></form>' +
+            '</div>' +
+          '</div>';
+        wireAttControls();
+      }
+
+      function newAttIdLocal() {
+        return "att_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      }
+
+      async function reencryptIfNeeded() {
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase() && outlinerApi) {
+          await outlinerApi.flush(true);
+        }
+      }
+
+      async function postUrl(url) {
+        const status = document.getElementById("status");
+        // With a pack passphrase, fold URL into the encrypted envelope (no plaintext on disk).
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+          attachments = attachments.concat([{
+            id: newAttIdLocal(), kind: "url", url, created_at: new Date().toISOString(),
+          }]);
+          renderAtts();
+          status.textContent = "\\u2026";
+          await reencryptIfNeeded();
+          return;
+        }
+        status.textContent = "\\u2026";
+        try {
+          const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind: "url", url }),
+          });
+          if (!r.ok) { status.textContent = "error"; return; }
+          const data = await r.json();
+          if (data.encrypted && data.attachment) {
+            attachments = attachments.concat([data.attachment]);
+          } else {
+            attachments = data.attachments || [];
+          }
+          renderAtts();
+          status.textContent = "saved";
+        } catch { status.textContent = "offline"; }
+      }
+
+      async function postFiles(fileList) {
+        const status = document.getElementById("status");
+        for (const file of fileList) {
+          status.textContent = "\\u2026";
+          try {
+            const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
+              method: "POST",
+              headers: {
+                "content-type": file.type || "application/octet-stream",
+                "x-filename": file.name || "file",
+              },
+              body: file,
+            });
+            if (!r.ok) { status.textContent = "error"; return; }
+            const data = await r.json();
+            if (data.encrypted && data.attachment) {
+              attachments = attachments.concat([data.attachment]);
+            } else {
+              attachments = data.attachments || [];
+            }
+            renderAtts();
+            // File bytes are content-addressed on disk; metadata goes into cipher when encrypting.
+            if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+              await reencryptIfNeeded();
+            } else {
+              status.textContent = "saved";
+            }
+          } catch { status.textContent = "offline"; }
+        }
+      }
+
+      function wireAttControls() {
+        const form = document.getElementById("att-url-form");
+        if (form) {
+          form.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const input = document.getElementById("att-url");
+            const url = (input && input.value || "").trim();
+            if (!url) return;
+            postUrl(url).then(() => { if (input) input.value = ""; });
+          });
+        }
+        const fileInput = document.getElementById("att-file");
+        if (fileInput) {
+          fileInput.addEventListener("change", (e) => {
+            const files = [...(e.target.files || [])];
+            e.target.value = "";
+            if (files.length) postFiles(files);
+          });
+        }
+      }
+
+      attRoot.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".att-remove");
+        if (!btn) return;
+        e.preventDefault();
+        const id = btn.dataset.att;
+        const status = document.getElementById("status");
+        const removed = attachments.find(a => a.id === id);
+        status.textContent = "\\u2026";
+        // Encrypted / encrypting: drop locally, re-seal note, optionally GC blob.
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+          attachments = attachments.filter(a => a.id !== id);
+          renderAtts();
+          try {
+            let delUrl = BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id);
+            if (removed && removed.kind === "file" && removed.sha256) {
+              delUrl += "?sha256=" + encodeURIComponent(removed.sha256);
+            }
+            await fetch(delUrl, { method: "DELETE" });
+          } catch { /* GC best-effort */ }
+          await reencryptIfNeeded();
+          return;
+        }
+        try {
+          const r = await fetch(BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id), { method: "DELETE" });
+          if (!r.ok) { status.textContent = "error"; return; }
+          const data = await r.json();
+          if (data.encrypted) {
+            attachments = attachments.filter(a => a.id !== id);
+          } else {
+            attachments = data.attachments || [];
+          }
+          renderAtts();
+          status.textContent = "saved";
+        } catch { status.textContent = "offline"; }
       });
+
+      wireAttControls();
     </script>`,
   );
 }
@@ -953,7 +2030,7 @@ async function renderRead(scope) {
     text = await getChapterText(book, chapter);
   } catch (err) {
     return page("versepack", `<p>Could not fetch text (${esc(err?.message || err)}).
-      <a href="/note/${esc(scope.slug)}">Open note editor</a>.</p>`);
+      <a href="${u(`/note/${scope.slug}`)}">Open note editor</a>.</p>`);
   }
   const chapterScope = parseScope(`${book}.${chapter}`);
   const display = formatPassageForDisplay(chapterScope.parsed);
@@ -977,17 +2054,21 @@ async function renderRead(scope) {
   }
 
   const seed = {};
-  if (chapterNote?.blocks) seed[chapterScope.slug] = chapterNote.blocks;
+  if (chapterNote && !isEncryptedNote(chapterNote) && chapterNote.blocks) {
+    seed[chapterScope.slug] = chapterNote.blocks;
+  }
   const rows = text.verses
     .map(({ v, text: t }) => {
       const note = verseNotes.get(v);
       const ranges = rangeNotes.get(v) || [];
       const inHl = hl && pos(chapter, v) >= hl.s && pos(chapter, v) <= hl.e;
       const slug = `${book.toLowerCase()}.${chapter}.${v}`;
-      if (note?.blocks) seed[slug] = note.blocks;
-      for (const e of ranges) seed[e.scope.slug] = e.note.blocks || [];
+      if (note && !isEncryptedNote(note) && note.blocks) seed[slug] = note.blocks;
+      for (const e of ranges) {
+        if (!isEncryptedNote(e.note)) seed[e.scope.slug] = e.note.blocks || [];
+      }
       const vScope = parseScope(slug);
-      const hasVerse = !!(note?.blocks?.some((b) => b.text.trim()));
+      const hasVerse = !!(note && (isEncryptedNote(note) || note?.blocks?.some((b) => b.text.trim())));
       const hasNotes = hasVerse || ranges.length > 0;
       const rangeHtml = ranges
         .map((e) => readerNoteHtml({ scope: e.scope, note: e.note }))
@@ -1016,9 +2097,9 @@ async function renderRead(scope) {
   return page(
     display,
     `<header class="ui">
-      <a href="/" class="muted">&larr;</a>
+      <a href="${u("/")}" class="muted">&larr;</a>
       <h1>${esc(display)}</h1>
-      <a class="muted" href="/note/${esc(chapterScope.slug)}">chapter note</a>
+      <a class="muted" href="${u(`/note/${chapterScope.slug}`)}">chapter note</a>
     </header>
     ${chapterNote ? `<div class="chapter-note">${readerNoteHtml({ scope: chapterScope, note: chapterNote, label: false })}</div>` : ""}
     ${rows}
@@ -1034,6 +2115,29 @@ async function renderRead(scope) {
         return String(s).replace(/[&<>"']/g, c =>
           ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
       }
+      function linkifyWikiClient(text) {
+        const s = String(text || "");
+        let out = "", i = 0;
+        while (i < s.length) {
+          if (s[i] === "[" && s[i + 1] === "[") {
+            const end = s.indexOf("]]", i + 2);
+            if (end < 0) { out += escHtml(s[i]); i++; continue; }
+            const inner = s.slice(i + 2, end);
+            const pipe = inner.indexOf("|");
+            const target = (pipe < 0 ? inner : inner.slice(0, pipe)).trim();
+            const label = (pipe < 0 ? target : inner.slice(pipe + 1).trim()) || target;
+            out += '<a class="wikilink" href="' + BASE + "/go?q=" + encodeURIComponent(target) + '">' +
+              escHtml(label) + "</a>";
+            i = end + 2;
+          } else {
+            let j = i + 1;
+            while (j < s.length && !(s[j] === "[" && s[j + 1] === "[")) j++;
+            out += escHtml(s.slice(i, j));
+            i = j;
+          }
+        }
+        return out;
+      }
       function outlineHtml(blocks) {
         const items = blocks || [];
         if (!items.length) return "";
@@ -1042,7 +2146,7 @@ async function renderRead(scope) {
           const empty = !(b.text && b.text.trim());
           return '<div class="oline' + (empty ? ' blank' : '') + '" style="--depth:' + depth + '">' +
             '<span class="odot" aria-hidden="true"></span>' +
-            '<span class="otxt">' + escHtml(b.text || "") + '</span></div>';
+            '<span class="otxt">' + (empty ? "" : linkifyWikiClient(b.text)) + '</span></div>';
         }).join("") + '</div>';
       }
 
@@ -1055,9 +2159,11 @@ async function renderRead(scope) {
       function syncHasNotes(verse) {
         if (!verse) return;
         const vslug = verse.dataset.slug;
-        const hasVerse = !!(seeds[vslug] && seeds[vslug].some(b => b.text.trim()));
+        const hasVerse = !!(seeds[vslug] && seeds[vslug].some(b => b.text.trim()))
+          || !!verse.querySelector('.note[data-kind="verse"][data-encrypted="1"]');
         const hasOther = [...verse.querySelectorAll(".note")].some((n) => {
           if (n.dataset.kind === "verse") return false;
+          if (n.dataset.encrypted === "1") return true;
           const blocks = seeds[n.dataset.slug];
           return blocks ? blocks.some(b => b.text.trim()) : !!n.querySelector(".oline, .otxt");
         });
@@ -1103,6 +2209,11 @@ async function renderRead(scope) {
 
       function openNoteEditor(noteEl) {
         const slug = noteEl.dataset.slug;
+        // Encrypted notes have no plaintext seeds — open full editor unlock flow.
+        if (noteEl.dataset.encrypted === "1") {
+          location.href = BASE + "/note/" + slug;
+          return;
+        }
         if (editors.has(slug)) { editors.get(slug).api.focus(); return; }
         const verse = noteEl.closest(".verse");
         if (verse) verse.classList.add("notes-open", "editing");
@@ -1199,33 +2310,84 @@ const html = (res, code, body) => {
   res.end(body);
 };
 
-async function readBody(req) {
+async function readBodyBuffer(req, maxBytes = MAX_ATTACH_BYTES) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
-  return Buffer.concat(chunks).toString("utf8");
+  let n = 0;
+  for await (const c of req) {
+    n += c.length;
+    if (n > maxBytes) throw new Error(`body too large (max ${maxBytes} bytes)`);
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function readBody(req) {
+  return (await readBodyBuffer(req)).toString("utf8");
+}
+
+async function attachmentReferenced(sha256, exceptSlug = null) {
+  for (const n of await listNotes()) {
+    if (exceptSlug && n.scope.slug === exceptSlug) continue;
+    if ((n.attachments || []).some((a) => a.kind === "file" && a.sha256 === sha256)) return true;
+  }
+  return false;
 }
 
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
-    const p = url.pathname;
+    let p = url.pathname;
+
+    // ----- multiword door (cowyo-style access) -----
+    // GET /enter?door=quiet-river-lantern  →  /quiet-river-lantern/
+    if (req.method === "GET" && (p === "/enter" || p === "/enter/")) {
+      const phrase = normalizeDoorPhrase(url.searchParams.get("door") || url.searchParams.get("q") || "");
+      if (!phrase) return html(res, 200, renderEnterDoor("Type the multiword door from your host."));
+      if (!DOOR_OPEN && phrase !== DOOR) {
+        return html(res, 200, renderEnterDoor("That door does not open this pack."));
+      }
+      res.writeHead(302, { location: `/${phrase}/` });
+      return res.end();
+    }
+
+    // bare / without door → explain frictionless URL key
+    if (!DOOR_OPEN && (p === "/" || p === "")) {
+      return html(res, 200, renderEnterDoor());
+    }
+
+    const routed = routePath(p);
+    if (!routed.ok) {
+      if (routed.needDoor) return html(res, 200, renderEnterDoor());
+      // wrong multiword: look like a missing pad (do not confirm which doors exist)
+      return html(res, 404, page("not found", `<p class="ui">Nothing here.</p>
+        <p class="muted ui"><a href="/">Open a door</a></p>`));
+    }
+    p = routed.path;
+    // normalize trailing slash on app root inside door
+    if (p === "") p = "/";
 
     if (req.method === "GET" && p === "/") return html(res, 200, await renderIndex());
 
     if (req.method === "GET" && p === "/go") {
       const scope = parseScope(url.searchParams.get("q") || "");
-      if (!scope) return html(res, 200, page("versepack", `<p>Could not parse that passage. <a href="/">Back</a></p>`));
+      if (!scope) {
+        return html(res, 200, page("versepack", `<p>Could not parse that passage. <a href="${u("/")}">Back</a></p>`));
+      }
       // chapters open as readable, annotatable text; verses/ranges as editors
-      res.writeHead(302, { location: `${scope.kind === "chapter" ? "/read" : "/note"}/${scope.slug}` });
+      res.writeHead(302, {
+        location: u(`${scope.kind === "chapter" ? "/read" : "/note"}/${scope.slug}`),
+      });
       return res.end();
     }
 
     const readMatch = p.match(/^\/read\/([a-z0-9.\-]+)$/i);
     if (req.method === "GET" && readMatch) {
       const scope = parseScope(readMatch[1]);
-      if (!scope) return html(res, 404, page("not found", `<p>Not a valid passage address. <a href="/">Back</a></p>`));
+      if (!scope) {
+        return html(res, 404, page("not found", `<p>Not a valid passage address. <a href="${u("/")}">Back</a></p>`));
+      }
       if (scope.slug !== readMatch[1]) {
-        res.writeHead(302, { location: `/read/${scope.slug}` });
+        res.writeHead(302, { location: u(`/read/${scope.slug}`) });
         return res.end();
       }
       return html(res, 200, await renderRead(scope));
@@ -1234,9 +2396,11 @@ const server = http.createServer(async (req, res) => {
     const noteMatch = p.match(/^\/note\/([a-z0-9.\-]+)$/i);
     if (req.method === "GET" && noteMatch) {
       const scope = parseScope(noteMatch[1]);
-      if (!scope) return html(res, 404, page("not found", `<p>Not a valid passage address. <a href="/">Back</a></p>`));
+      if (!scope) {
+        return html(res, 404, page("not found", `<p>Not a valid passage address. <a href="${u("/")}">Back</a></p>`));
+      }
       if (scope.slug !== noteMatch[1]) {
-        res.writeHead(302, { location: `/note/${scope.slug}` });
+        res.writeHead(302, { location: u(`/note/${scope.slug}`) });
         return res.end();
       }
       const [note, rel] = await Promise.all([readNote(scope.slug), relatedNotes(scope)]);
@@ -1254,6 +2418,9 @@ const server = http.createServer(async (req, res) => {
         const note = await readNote(scope.slug);
         if (!note) return json(res, 404, { error: "no note at this address" });
         if ((req.headers.accept || "").includes("text/plain") || url.searchParams.has("raw")) {
+          if (isEncryptedNote(note)) {
+            return json(res, 409, { error: "encrypted", message: "note is encrypted; raw plaintext unavailable" });
+          }
           res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
           return res.end(serializeBlocks(note.blocks) + "\n");
         }
@@ -1265,7 +2432,7 @@ const server = http.createServer(async (req, res) => {
         const existing = await readNote(scope.slug);
         const ct = (req.headers["content-type"] || "").toLowerCase();
 
-        let blocks;
+        // Client-side encrypted envelope (cowyo-style). Server stores ciphertext only.
         if (ct.includes("application/json")) {
           let parsed;
           try {
@@ -1273,20 +2440,108 @@ const server = http.createServer(async (req, res) => {
           } catch {
             return json(res, 400, { error: "invalid json" });
           }
+          if (parsed && parsed.encrypted === true) {
+            const cipher = normalizeCipher(parsed.cipher);
+            if (!cipher) return json(res, 400, { error: "invalid cipher envelope" });
+            const now = new Date().toISOString();
+            const note = {
+              id: existing?.id || `note_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+              scope: { kind: scope.kind, osis: scope.osis, slug: scope.slug },
+              encrypted: true,
+              cipher,
+              blocks: [],
+              attachments: [],
+              created_at: existing?.created_at || now,
+              updated_at: now,
+            };
+            await writeNote(note);
+            return json(res, 200, note);
+          }
+
+          let blocks;
+          let attachments;
           const list = Array.isArray(parsed) ? parsed : parsed?.blocks;
           blocks = normalizeBlocks(list);
-        } else {
-          // plain text interchange (curl): 2 spaces = one indent level
-          if (!raw.trim()) {
-            if (existing) await unlink(notePath(scope.slug)).catch(() => {});
+          // omit attachments key → preserve; explicit array replaces
+          // if previous note was encrypted, do not rehydrate ghost plaintext attachments
+          if (Array.isArray(parsed) || !parsed || !("attachments" in parsed)) {
+            attachments = isEncryptedNote(existing) ? [] : (existing?.attachments || []);
+          } else {
+            attachments = normalizeAttachments(parsed.attachments);
+          }
+
+          if (blocksAreEmpty(blocks) && !(attachments && attachments.length)) {
+            if (existing) {
+              for (const a of existing.attachments || []) {
+                if (a.kind === "file" && a.sha256 && !(await attachmentReferenced(a.sha256, scope.slug))) {
+                  const p = attachBlobPath(a.sha256);
+                  if (p) await unlink(p).catch(() => {});
+                }
+              }
+              await unlink(notePath(scope.slug)).catch(() => {});
+            }
             return json(res, 200, { deleted: true, slug: scope.slug });
           }
-          blocks = reconcileBlocks(raw, existing?.blocks);
+
+          if (blocksAreEmpty(blocks)) {
+            blocks = [{ id: newBlockId(), indent: 0, text: "" }];
+          }
+
+          const now = new Date().toISOString();
+          const note = {
+            id: existing?.id || `note_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            scope: { kind: scope.kind, osis: scope.osis, slug: scope.slug },
+            blocks,
+            attachments,
+            created_at: existing?.created_at || now,
+            updated_at: now,
+          };
+          await writeNote(note);
+          return json(res, 200, note);
         }
 
-        if (blocksAreEmpty(blocks)) {
-          if (existing) await unlink(notePath(scope.slug)).catch(() => {});
+        // plain text interchange (curl): 2 spaces = one indent level
+        // cannot update encrypted notes via raw text without wiping the seal
+        if (isEncryptedNote(existing)) {
+          return json(res, 409, {
+            error: "encrypted",
+            message: "note is encrypted; send application/json {encrypted:true,cipher} or unlock client-side and save plaintext",
+          });
+        }
+
+        let blocks;
+        let attachments;
+        if (!raw.trim()) {
+          if (existing) {
+            for (const a of existing.attachments || []) {
+              if (a.kind === "file" && a.sha256 && !(await attachmentReferenced(a.sha256, scope.slug))) {
+                const p = attachBlobPath(a.sha256);
+                if (p) await unlink(p).catch(() => {});
+              }
+            }
+            await unlink(notePath(scope.slug)).catch(() => {});
+          }
           return json(res, 200, { deleted: true, slug: scope.slug });
+        }
+        blocks = reconcileBlocks(raw, existing?.blocks);
+        attachments = existing?.attachments || [];
+
+        if (blocksAreEmpty(blocks) && !(attachments && attachments.length)) {
+          if (existing) {
+            for (const a of existing.attachments || []) {
+              if (a.kind === "file" && a.sha256 && !(await attachmentReferenced(a.sha256, scope.slug))) {
+                const p = attachBlobPath(a.sha256);
+                if (p) await unlink(p).catch(() => {});
+              }
+            }
+            await unlink(notePath(scope.slug)).catch(() => {});
+          }
+          return json(res, 200, { deleted: true, slug: scope.slug });
+        }
+
+        // empty blocks but has attachments: keep a single blank bullet so the note stays open
+        if (blocksAreEmpty(blocks)) {
+          blocks = [{ id: newBlockId(), indent: 0, text: "" }];
         }
 
         const now = new Date().toISOString();
@@ -1294,12 +2549,153 @@ const server = http.createServer(async (req, res) => {
           id: existing?.id || `note_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
           scope: { kind: scope.kind, osis: scope.osis, slug: scope.slug },
           blocks,
+          attachments,
           created_at: existing?.created_at || now,
           updated_at: now,
         };
         await writeNote(note);
         return json(res, 200, note);
       }
+    }
+
+    // POST /api/note/:slug/attachments  — file (raw) or URL (json)
+    // When the note is encrypted, store CAS blobs (files) but do not write
+    // plaintext metadata onto the note — client folds att into the next cipher PUT.
+    const attPost = p.match(/^\/api\/note\/([a-z0-9.\-]+)\/attachments$/i);
+    if (req.method === "POST" && attPost) {
+      const scope = parseScope(attPost[1]);
+      if (!scope) return json(res, 400, { error: "invalid passage address" });
+      let note = await readNote(scope.slug);
+      const sealed = isEncryptedNote(note);
+      if (!note) {
+        const now = new Date().toISOString();
+        note = {
+          id: `note_${Date.now().toString(36)}${randomBytes(3).toString("hex")}`,
+          scope: { kind: scope.kind, osis: scope.osis, slug: scope.slug },
+          blocks: [{ id: newBlockId(), indent: 0, text: "" }],
+          attachments: [],
+          created_at: now,
+          updated_at: now,
+        };
+      }
+      const ct = (req.headers["content-type"] || "").toLowerCase();
+      const now = new Date().toISOString();
+      let meta;
+      if (ct.includes("application/json")) {
+        let parsed;
+        try {
+          parsed = JSON.parse(await readBody(req));
+        } catch {
+          return json(res, 400, { error: "invalid json" });
+        }
+        if (parsed?.kind === "url" || parsed?.url) {
+          const url = String(parsed.url || "").trim();
+          if (!/^https?:\/\//i.test(url)) return json(res, 400, { error: "url must be http(s)" });
+          meta = {
+            id: newAttId(),
+            kind: "url",
+            url,
+            title: parsed.title != null ? String(parsed.title) : undefined,
+            created_at: now,
+          };
+        } else {
+          return json(res, 400, { error: "expected {kind:'url', url}" });
+        }
+      } else {
+        // any content-type: store as file
+        let buf;
+        try {
+          buf = await readBodyBuffer(req);
+        } catch (err) {
+          return json(res, 413, { error: String(err.message || err) });
+        }
+        if (!buf.length) return json(res, 400, { error: "empty body" });
+        const sha256 = await writeAttachmentBlob(buf);
+        const name = String(req.headers["x-filename"] || "file").replace(/[/\\]/g, "_").slice(0, 500);
+        const mime = (req.headers["content-type"] || "application/octet-stream").split(";")[0].trim();
+        meta = {
+          id: newAttId(),
+          kind: "file",
+          name,
+          mime,
+          sha256,
+          bytes: buf.length,
+          created_at: now,
+        };
+      }
+      if (sealed) {
+        // ciphertext on disk stays sealed; client merges `attachment` into next encrypt save
+        return json(res, 200, { encrypted: true, attachment: meta });
+      }
+      note.attachments = normalizeAttachments([...(note.attachments || []), meta]);
+      note.updated_at = now;
+      await writeNote(note);
+      return json(res, 200, note);
+    }
+
+    // DELETE /api/note/:slug/attachments/:attId
+    const attDel = p.match(/^\/api\/note\/([a-z0-9.\-]+)\/attachments\/([\w.-]+)$/i);
+    if (req.method === "DELETE" && attDel) {
+      const scope = parseScope(attDel[1]);
+      if (!scope) return json(res, 400, { error: "invalid passage address" });
+      const note = await readNote(scope.slug);
+      if (!note) return json(res, 404, { error: "no note at this address" });
+      if (isEncryptedNote(note)) {
+        // Metadata lives inside the cipher; client removes locally and re-encrypts.
+        // Optional ?sha256= for GC of a known file blob after client-side remove.
+        const sha = String(url.searchParams.get("sha256") || "").toLowerCase();
+        if (/^[a-f0-9]{64}$/.test(sha)) {
+          if (!(await attachmentReferenced(sha))) {
+            const bp = attachBlobPath(sha);
+            if (bp) await unlink(bp).catch(() => {});
+          }
+        }
+        return json(res, 200, { encrypted: true, removed: attDel[2] });
+      }
+      const attId = attDel[2];
+      const removed = (note.attachments || []).find((a) => a.id === attId);
+      note.attachments = (note.attachments || []).filter((a) => a.id !== attId);
+      note.updated_at = new Date().toISOString();
+      await writeNote(note);
+      if (removed?.kind === "file" && removed.sha256) {
+        if (!(await attachmentReferenced(removed.sha256))) {
+          const bp = attachBlobPath(removed.sha256);
+          if (bp) await unlink(bp).catch(() => {});
+        }
+      }
+      return json(res, 200, note);
+    }
+
+    // GET /api/attachments/:sha256
+    const attGet = p.match(/^\/api\/attachments\/([a-f0-9]{64})$/i);
+    if (req.method === "GET" && attGet) {
+      const sha = attGet[1].toLowerCase();
+      const bp = attachBlobPath(sha);
+      if (!bp) return json(res, 400, { error: "invalid hash" });
+      let buf;
+      try {
+        buf = await readFile(bp);
+      } catch {
+        return json(res, 404, { error: "attachment not found" });
+      }
+      // find a mime from any note that references this hash
+      let mime = "application/octet-stream";
+      let name = url.searchParams.get("name") || "file";
+      for (const n of await listNotes()) {
+        const a = (n.attachments || []).find((x) => x.kind === "file" && x.sha256 === sha);
+        if (a) {
+          mime = a.mime || mime;
+          if (!url.searchParams.get("name") && a.name) name = a.name;
+          break;
+        }
+      }
+      res.writeHead(200, {
+        "content-type": mime,
+        "content-length": buf.length,
+        "content-disposition": `inline; filename="${String(name).replace(/"/g, "")}"`,
+        "cache-control": "public, max-age=31536000, immutable",
+      });
+      return res.end(buf);
     }
 
     json(res, 404, { error: "not found" });
@@ -1309,7 +2705,16 @@ const server = http.createServer(async (req, res) => {
 });
 
 await ensurePack();
-server.listen(PORT, () => {
-  console.log(`versepack door: http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  const hostLabel = HOST === "0.0.0.0" ? "localhost" : HOST;
+  const root = `http://${hostLabel}:${PORT}`;
+  if (DOOR_OPEN) {
+    console.log(`versepack door: ${root}/  (DOOR_OPEN — no multiword key)`);
+  } else {
+    console.log(`versepack door: ${root}/${DOOR}/`);
+    console.log(`bookmark that URL — the multiword path is your key (cowyo-style).`);
+    console.log(`no account. share the door words only with co-editors.`);
+    console.log(`optional pack passphrase (client-side) seals notes — never sent to this process.`);
+  }
   console.log(`pack on disk:   ${PACK_DIR}`);
 });

@@ -25,15 +25,22 @@ v0.1 — reserved for the op-log extension).
 
 ```
 pack/
-  protocol.json          {"protocol": "versepack", "version": "0.1-demo"}
-  notes/<slug>.json      one record per addressed note
-  text/                  derived scripture-text cache; disposable, never user data
+  protocol.json              {"protocol": "versepack", "version": "0.1-demo"}
+  door                       optional multiword access phrase for HTTP doors (secret)
+  notes/<slug>.json          one record per addressed note
+  attachments/<sha256>       raw file bytes (content-addressed); absent for URL-only refs
+  text/                      derived scripture-text cache; disposable, never user data
 ```
 
 - The pack MUST remain fully readable with no server running: plain JSON,
-  UTF-8, pretty-printed, newline-terminated.
-- Deleting a note = deleting its file. An empty body write MUST delete.
+  UTF-8, pretty-printed, newline-terminated for notes; attachment binaries are
+  opaque bytes named by lowercase hex SHA-256 of their content.
+- Deleting a note = deleting its file. An empty body write MUST delete the note
+  record when there is also no attachment content; clients SHOULD
+  garbage-collect unreferenced `attachments/*` when safe.
 - `text/` MAY be deleted at any time; clients re-fetch on demand.
+- `door` is only for serving clients that use multiword URL access; it is not
+  required to interpret note JSON offline.
 
 ## 3. Note record
 
@@ -42,14 +49,74 @@ pack/
   "id": "note_…",
   "scope": { "kind": "verse", "osis": "JHN.3.16", "slug": "jhn.3.16" },
   "blocks": [ { "id": "b_…", "indent": 0, "text": "…" } ],
+  "attachments": [
+    {
+      "id": "att_…",
+      "kind": "file",
+      "name": "scan.pdf",
+      "mime": "application/pdf",
+      "sha256": "hex…",
+      "bytes": 12345,
+      "created_at": "ISO-8601"
+    },
+    {
+      "id": "att_…",
+      "kind": "url",
+      "url": "https://example.com/essay",
+      "title": "optional label",
+      "created_at": "ISO-8601"
+    }
+  ],
   "created_at": "ISO-8601",
   "updated_at": "ISO-8601"
 }
 ```
 
-Legacy records may carry `body` (a flat string) instead of `blocks`; clients
-MUST hydrate `body` into blocks on read (one block per line, indent = leading
-spaces / 2) and SHOULD write `blocks` on next save.
+- `attachments` is optional; omit or use `[]` when none. Order is display order.
+- Legacy records may carry `body` (a flat string) instead of `blocks`; clients
+  MUST hydrate `body` into blocks on read (one block per line, indent = leading
+  spaces / 2) and SHOULD write `blocks` on next save.
+- Clients that only update `blocks` MUST preserve existing `attachments` unless
+  the write intentionally replaces them.
+
+### 3.1 Encrypted note (optional, client-side)
+
+A note MAY be sealed with a **client-side passphrase** (cowyo-style). The server
+and pack store only ciphertext; the passphrase never leaves the browser.
+
+```json
+{
+  "id": "note_…",
+  "scope": { "kind": "verse", "osis": "JHN.3.16", "slug": "jhn.3.16" },
+  "encrypted": true,
+  "cipher": {
+    "v": 1,
+    "alg": "AES-GCM",
+    "kdf": "PBKDF2",
+    "iter": 210000,
+    "salt": "<base64>",
+    "iv": "<base64>",
+    "ct": "<base64>"
+  },
+  "blocks": [],
+  "attachments": [],
+  "created_at": "ISO-8601",
+  "updated_at": "ISO-8601"
+}
+```
+
+- When `encrypted` is true, `cipher` is required. `blocks` and `attachments` on
+  disk MUST be empty arrays (or omitted); plaintext lives only inside `ct`.
+- Plaintext payload (UTF-8 JSON before AES-GCM) is:
+  `{"blocks":[…], "attachments":[…]}` — same shapes as the unencrypted note.
+- KDF: PBKDF2-HMAC-SHA-256, 210000 iterations, 16-byte salt, AES-256-GCM,
+  12-byte IV. Reference client uses Web Crypto.
+- File **blobs** under `attachments/<sha256>` remain content-addressed bytes;
+  only the metadata that points at them is sealed. Knowing a hash still fetches
+  the blob if the door is open — treat encryption as note privacy, not blob
+  secrecy.
+- Multiword door (URL access) and pack passphrase are independent: door = who
+  can hit the HTTP surface; passphrase = who can read sealed note content.
 
 ## 4. Blocks (miniature outline)
 
@@ -65,7 +132,90 @@ projection of `indent`; it is never stored nested.
 - Interchange form: `"  ".repeat(indent) + text` joined by `\n`. Parsing and
   serializing MUST round-trip.
 
-## 5. Containment (compose, don't absorb)
+### 4.1 Cross-references (wiki links)
+
+Cross-references are **in-band** in block `text`. No separate link table is
+required for v0.1; the address space *is* the link target space.
+
+**Syntax** (one line; no nested brackets):
+
+| Form | Meaning |
+|------|---------|
+| `[[John 3:16]]` | Link to that passage address; label = inner text |
+| `[[jhn.3.16]]` | Same, using slug/OSIS-ish input |
+| `[[John 3:16\|loved the world]]` | Link with explicit display label |
+
+Rules:
+
+- Clients MUST treat `[[…]]` as a cross-ref when rendering human-facing views.
+- The target MUST be resolved with the same passage normalizer as addressing
+  (`grab-bcv` in the reference client). Unresolvable targets SHOULD still render
+  as links to a human “go” entrypoint (or as plain text if the client has none).
+- Resolved targets use the canonical **slug** (`jhn.3.16`) for navigation
+  (`/note/<slug>` or equivalent). Opening a missing note is allowed (empty door).
+- Stored text MAY keep the author’s original inner form; clients MAY rewrite to
+  canonical OSIS/slug on save but are not required to.
+- Pipe (`|`) separates target from label. Targets and labels MUST NOT contain
+  `]` or newlines.
+- Containment projection (section 5) is orthogonal: a wiki link is an explicit
+  pointer; compose-don’t-absorb still never copies note bodies.
+
+Backlinks (notes that link *to* an address) are a derived index; clients MAY
+compute them by scanning block text. Not stored in v0.1.
+
+## 5. Attachments (files and URLs)
+
+Notes MAY attach **any file type** and/or **external URLs**. Attachments are
+first-class pack data, not a separate product.
+
+### 5.1 Kinds
+
+| `kind` | Bytes on disk | Required fields |
+|--------|---------------|-----------------|
+| `file` | `attachments/<sha256>` | `id`, `name`, `mime`, `sha256`, `bytes` |
+| `url`  | none | `id`, `url` |
+
+- `id`: stable attachment id (`att_…`), unique within the note.
+- `sha256`: lowercase hex SHA-256 of file bytes; path segment for the blob.
+- `mime`: IANA media type (or `application/octet-stream`).
+- `name`: original filename for download UX; not used as the storage key.
+- `url`: absolute URL (`http:` / `https:` required in v0.1).
+- `title`: optional display label for URLs (and MAY be used for files).
+- Any other fields are reserved; clients MUST ignore unknown keys.
+
+There is **no** allowlist of MIME types: audio, video, PDF, images, archives,
+office docs, and unknown binaries are all valid. Clients MAY refuse to *render*
+a type inline while still storing and offering download.
+
+### 5.2 Content addressing
+
+File bytes are stored once under `attachments/<sha256>`. Multiple notes (or
+multiple attachment rows) MAY reference the same hash. Deleting a note does not
+require deleting the blob until no note references that hash (GC is optional).
+
+### 5.3 In-band pointers (optional)
+
+Block text MAY reference attachments or bare URLs for inline display:
+
+| Form | Meaning |
+|------|---------|
+| `![[att:att_…]]` | Embed/link the attachment with that id on this note |
+| `![[att:att_…\|caption]]` | Same with caption |
+| `![[https://example.com/x]]` | External URL embed/link |
+| `![[https://…\|title]]` | URL with label |
+
+Clients that do not understand embeds MUST still leave the source text intact.
+The `attachments` array remains the authoritative list of files on the note;
+in-band forms are presentation hints (and for URLs, may stand alone without an
+array entry).
+
+### 5.4 Portability
+
+A conforming pack with attachments is still fully offline-readable: JSON notes
+plus files under `attachments/`. URL attachments need network only when
+followed. Copying a pack copies note metadata and all referenced blobs.
+
+## 6. Containment (compose, don't absorb)
 
 Scripture geometry is computed, never stored. A scope maps to an interval on
 the book's (chapter, verse) line; chapter scopes span the whole chapter.
@@ -76,20 +226,61 @@ page shows the verse notes inside it; a chapter reading view interleaves them
 verse by verse). Clients MUST NOT copy, merge, or reparent records to achieve
 this: every note keeps its own address, file, and block ids.
 
-## 6. HTTP door (optional)
+## 7. HTTP door (optional)
 
-A serving client SHOULD expose:
+### 7.0 Multiword access (recommended for network exposure)
+
+Serving clients SHOULD guard a pack with a **multiword door** path segment
+(cowyo-style): `/{door}/note/jhn.3.16`, not a password form. Knowing the door
+URL is access. The reference client stores the phrase in `pack/door` or env
+`DOOR`. Clients MUST prefix API and page routes with the same door base when
+the door is enabled.
+
+A serving client SHOULD expose (under `/{door}/` when enabled):
 
 - `GET /api/notes` — every record in the pack.
 - `GET /api/note/<slug>` — one record; `?raw` returns the block interchange
   form as `text/plain`.
-- `PUT /api/note/<slug>` — body is either raw interchange text (`text/plain`)
-  or `{"blocks":[...]}` (`application/json`). Empty / all-blank deletes.
-  Response is the stored record (or `{deleted:true}`).
+- `PUT /api/note/<slug>` — body is either:
+  - raw interchange text (`text/plain`), or
+  - `{"blocks":[...], "attachments"?: [...]}` (`application/json`), or
+  - `{"encrypted":true,"cipher":{…}}` (sealed envelope; see §3.1).
+  Empty / all-blank plaintext body (no content blocks, no attachments) deletes
+  the note. Response is the stored record (or `{deleted:true}`). Omitting
+  `attachments` in plaintext JSON MUST preserve existing attachments (unless
+  the previous record was encrypted — then preserve is empty). Encrypted PUT
+  replaces the whole record with ciphertext (no plaintext blocks/attachments).
+  Plaintext PUT to a sealed note is allowed and **unwraps** it (client decrypted
+  and is saving cleartext). Raw text PUT against a sealed note SHOULD return
+  `409 encrypted`.
+- `POST /api/note/<slug>/attachments` — add one attachment:
+  - JSON `{ "kind":"url", "url":"…", "title"?: "…" }`, or
+  - raw body with `Content-Type` + optional `X-Filename` for a file (any type).
+  Creates the note if missing. Response is the updated note. If the note is
+  already encrypted, the server MUST NOT write plaintext metadata onto the note;
+  for files it still stores the CAS blob and returns
+  `{ "encrypted": true, "attachment": {…} }` so the client can fold metadata
+  into the next cipher PUT.
+- `DELETE /api/note/<slug>/attachments/<att_id>` — remove that attachment row
+  from the note (blob GC optional). On encrypted notes, returns
+  `{ "encrypted": true, "removed": "<id>" }` without mutating the cipher; client
+  re-encrypts. Optional `?sha256=` triggers best-effort blob GC.
+- `GET /api/attachments/<sha256>` — raw file bytes (`Content-Type` from a
+  referencing note when known, else `application/octet-stream`).
 
-## 7. Reserved extensions (not in v0.1)
+## 8. Reserved extensions (not fully specified in v0.1)
 
-Op log + deterministic block-level merge, content-addressed attachments,
-envelope encryption, PAKE device pairing, relay sync, Arweave permanence.
-These layer *under* the pack (the pack becomes a materialization); the formats
-above are designed so none of them change the reading surface.
+**In v0.1 already:** attachments (CAS + URLs), multiword door access, client-side
+note encryption (§3.1).
+
+**Reserved / deferred** (layer *under* the pack; must not change addressing or
+the no-account capture surface):
+
+- Op log + deterministic block-level merge  
+- Multi-device envelope key exchange / shared sealed packs  
+- Server-side encryption at rest; full attachment-blob encryption  
+- PAKE device pairing  
+- Relay sync / resumable transfer  
+- Arweave (or similar) permanence  
+
+See ADRs 0008, 0010–0012.
