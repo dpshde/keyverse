@@ -250,14 +250,18 @@ Do **not** set `DOOR_OPEN` in production.
 
 [`railway.json`](../railway.json) uses **RAILPACK** (builds a Mix **release**).
 
-Start the Mix **release** (Railpack builds it under `_build/prod/rel/keyverse`):
+Start the Mix **release** (Railpack ships only the release under `_build/prod/rel/keyverse` —
+repo paths like `bin/*.sh` are **not** in the runtime image):
 
 ```text
-/app/_build/prod/rel/keyverse/bin/keyverse start
+RELEASE_DISTRIBUTION=none /app/_build/prod/rel/keyverse/bin/keyverse start
 ```
 
-Do **not** use `mix run` in the deploy image (Mix tree is not shipped). Current Elixir
-releases run `start` with `--no-halt` (stays in the foreground for containers).
+Do **not** use `mix run` in the deploy image (Mix tree is not shipped). Do **not** point
+`startCommand` at a repo shell script unless that script is copied into the release
+(e.g. via `rel/overlays`). Current Elixir releases run `start` with `--no-halt`
+(stays in the foreground for containers). `RELEASE_DISTRIBUTION=none` avoids needing a
+distributed node name in single-container Railway.
 
 Healthcheck: `GET /health` (expects `"host":"elixir"`).
 
