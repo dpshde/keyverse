@@ -12,40 +12,69 @@ concurrency:
 
 jobs:
   check:
-    name: Check
+    name: Check (Elixir)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
         with:
-          version: 9
+          elixir-version: "1.17"
+          otp-version: "27"
 
-      - uses: actions/setup-node@v4
+      - name: Cache deps and build
+        uses: actions/cache@v4
         with:
-          node-version: "22"
-          cache: pnpm
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
 
-      - name: Install
-        run: pnpm install --frozen-lockfile
+      - name: Install deps
+        run: mix deps.get
 
-      - name: Syntax check
-        run: pnpm check
+      - name: Compile
+        run: mix compile --warnings-as-errors
+        env:
+          MIX_ENV: test
+
+      - name: Test
+        run: mix test
+        env:
+          MIX_ENV: test
 
       - name: Smoke boot
         run: |
-          DOOR_OPEN=1 PORT=4180 HOST=127.0.0.1 node server.mjs &
+          set -euo pipefail
+          export MIX_ENV=prod
+          export HOST=127.0.0.1
+          export PORT=4180
+          export PACK_DIR="${RUNNER_TEMP}/keyverse-packs"
+          export DOOR_OPEN=1
+          export FATHOM_SITE=off
+          mkdir -p "$PACK_DIR"
+          mix deps.get
+          mix compile
+          mix run --no-halt &
           pid=$!
           trap 'kill $pid 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf "http://127.0.0.1:4180/health" >/dev/null; then
               break
             fi
-            sleep 0.2
+            sleep 0.25
           done
           curl -sf "http://127.0.0.1:4180/health" | tee /tmp/health.json
           grep -qE '"ok"[[:space:]]*:[[:space:]]*true' /tmp/health.json
+          grep -qE '"host"[[:space:]]*:[[:space:]]*"elixir"' /tmp/health.json
           code_manifest=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/manifest.webmanifest")
           code_sw=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/sw.js")
           code_icon=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/icons/icon-192.png")
-          test "$code_manifest" = "200" && test "$code_sw" = "200" && test "$code_icon" = "200"
+          code_outliner=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/outliner.js")
+          test "$code_manifest" = "200"
+          test "$code_sw" = "200"
+          test "$code_icon" = "200"
+          test "$code_outliner" = "200"

@@ -7,23 +7,22 @@ product**; the process is only HTTP access to it.
 
 | Item | Notes |
 |------|--------|
-| **Node.js** | 18+ (native `fetch`, ESM). 20+ or 22 LTS recommended. |
-| **Package manager** | `pnpm` preferred; `npm` / `yarn` work. |
-| **Disk** | Writable pack dir (notes + attachments + optional BSB cache). |
+| **Elixir / OTP** | Elixir 1.15+ / OTP 26+ (`brew install elixir` on macOS). |
+| **Disk** | Writable multipack root (`PACK_DIR`, default `./packs`). |
 | **Network** | Outbound HTTPS only for first-time BSB fetch (`bolls.life`). After cache warm-up, offline is fine. |
+| **Node (optional)** | Only for `pnpm legacy:node` or re-running `scripts/extract_client_js.mjs`. |
 
 ## Install
 
 ```sh
 git clone https://github.com/dpshde/keyverse.git
 cd keyverse
-# Primary host is Elixir
 mix deps.get
+mix test
 ```
 
-Requirements: Elixir 1.15+ / OTP 26+ (`brew install elixir` on macOS).
-
 `words-door.txt` / `priv/words-door.txt` ship with the repo (multiword doors).
+
 ## Access model (your key)
 
 **There is no username/password account.** Your four-word **key is your pack**.
@@ -42,7 +41,7 @@ http://localhost:4180/quiet-river-lantern/
 | Another pack | Different key = different notes (create another at `/setup`) |
 | Phone / remote | Visit `/`, type your key, **Open notes** |
 | Lost key | `ls $PACK_DIR` on the host (directory name = key) |
-| Open demo (no key) | `DOOR_OPEN=1 pnpm start` — one shared pack; not for production |
+| Open demo (no key) | `DOOR_OPEN=1 mix run --no-halt` — one shared pack; not for production |
 
 Remote visitors without a valid key only see sign-in. Unknown keys look like a
 dead page (does not confirm packs). Treat the key like a password. See
@@ -67,7 +66,7 @@ Back up both if you care about recovery. File **blobs** under
 
 ```sh
 mix run --no-halt
-# or: pnpm start   # proxies to mix
+# or: pnpm start   # same (calls mix)
 ```
 
 Example log line:
@@ -97,10 +96,10 @@ pack on disk:   /path/to/keyverse/pack
 Examples:
 
 ```sh
-HOST=127.0.0.1 PORT=8080 pnpm start
-PACK_DIR=/Volumes/notes/my-keyverse pnpm start
-DOOR=my-study-garden-notes pnpm start
-DOOR_OPEN=1 pnpm start   # demos only
+HOST=127.0.0.1 PORT=8080 mix run --no-halt
+PACK_DIR=/Volumes/notes/my-keyverse mix run --no-halt
+DOOR=my-study-garden-notes mix run --no-halt
+DOOR_OPEN=1 mix run --no-halt   # demos only
 ```
 
 ## What gets created
@@ -120,7 +119,8 @@ Other note files and all of `attachments/`, `text/`, and `door` are gitignored.
 ## Verify
 
 ```sh
-pnpm check
+mix test
+# or: mix compile --warnings-as-errors
 DOOR=$(tr -d '\n' < pack/door)
 BASE="http://localhost:4180/$DOOR"
 
@@ -159,7 +159,7 @@ Copy the **whole pack** (include `door` or you lose the multiword key):
 tar czf keyverse-backup.tgz -C /var/lib/keyverse pack
 # restore
 tar xzf keyverse-backup.tgz -C /restore
-PACK_DIR=/restore/pack pnpm start
+PACK_DIR=/restore/packs mix run --no-halt
 ```
 
 Unencrypted notes remain readable as plain JSON with the server off. Sealed
@@ -190,7 +190,7 @@ the host operator must not read note text.
 
 | Symptom | Check |
 |---------|--------|
-| Port in use | `PORT=4181 pnpm start` |
+| Port in use | `PORT=4181 mix run --no-halt` |
 | Pack not writable | Permissions / disk on `PACK_DIR` |
 | BSB fetch fails | Network; use `/note/…` editor offline |
 | Notes missing after move | `PACK_DIR` must contain `notes/` + `protocol.json` |

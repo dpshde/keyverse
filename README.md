@@ -98,10 +98,18 @@ server.mjs             # legacy Node reference (not the primary door)
 mix.exs
 ```
 
+## CI / deploy
+
+| | |
+|--|--|
+| **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `mix test` + smoke boot on PR/`main` |
+| **Production** | Railway **auto-deploy from `main`** (no GitHub Actions deploy job) |
+| **Start** | `MIX_ENV=prod mix run --no-halt` (see `railway.json`) |
+
 ## Legacy Node door
 
-`server.mjs` remains as a historical reference. **Production and local default on this branch is Elixir** (`mix run --no-halt`). Do not use `node server.mjs` unless comparing implementations.
+`server.mjs` is historical only (`pnpm legacy:node`). Do not use it for production.
 
 ## License / status
 
-Protocol `0.1-demo`. Demo-era multipack host.
+Protocol `0.1-demo`. Elixir multipack host.

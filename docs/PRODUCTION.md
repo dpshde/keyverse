@@ -148,30 +148,20 @@ server {
 }
 ```
 
-## Docker (sketch)
+## Docker
 
-No official image yet. Pattern:
-
-```dockerfile
-FROM node:22-alpine
-WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile --prod
-COPY server.mjs words-door.txt ./
-ENV HOST=0.0.0.0 PORT=4180 PACK_DIR=/data
-EXPOSE 4180
-CMD ["node", "server.mjs"]
-```
+See root [`Dockerfile`](../Dockerfile) (Elixir multipack door).
 
 ```sh
+docker build -t keyverse .
 docker run --rm -p 4180:4180 \
-  -v /var/lib/keyverse:/data \
+  -v /var/lib/keyverse/packs:/data \
   -e PACK_DIR=/data \
-  -e DOOR=your-fixed-multiword-phrase \
+  -e HOST=0.0.0.0 \
   keyverse
 ```
 
-Mount the pack volume; do not bake notes into the image.
+Mount a **persistent multipack root** at `/data`. Do not bake user packs into the image.
 
 ## Backups
 
@@ -234,7 +224,8 @@ Keep `PACK_DIR` outside the git checkout so deploys never wipe notes.
 
 ## Railway production (reference deploy)
 
-The public demo runs on Railway:
+Deploy is **Railway auto-deploy from `main`** (no GitHub Actions deploy job).
+The public demo:
 
 | | |
 |--|--|
@@ -242,53 +233,41 @@ The public demo runs on Railway:
 | Environment | `production` |
 | Service | `keyverse` |
 | Default URL | `https://keyverse-production.up.railway.app` |
-| Pack volume | mounted at `/data` (`PACK_DIR=/data`) |
+| Pack volume | multipack root at `/data` (`PACK_DIR=/data`) |
 
 ### Required service variables
 
 | Variable | Value |
 |----------|--------|
-| `PACK_DIR` | `/data` |
+| `PACK_DIR` | `/data` (volume) |
 | `HOST` | `0.0.0.0` |
-| `DOOR` | fixed multiword phrase (secret) |
+| `MIX_ENV` | `prod` |
 | `FATHOM_SITE` | site id or `off` |
-| `RAILPACK_NODE_VERSION` | `22` |
+| `DOOR` | optional: seed one pack on boot |
 
 Do **not** set `DOOR_OPEN` in production.
 
-`railway.json` sets `startCommand: node server.mjs` and healthcheck `GET /health`.
+[`railway.json`](../railway.json) starts the **Elixir** door:
 
-### GitHub Actions CI/CD
+```text
+MIX_ENV=prod mix deps.get && MIX_ENV=prod mix compile && MIX_ENV=prod mix run --no-halt
+```
+
+Healthcheck: `GET /health` (expects `"host":"elixir"`).
+
+### CI (GitHub Actions)
 
 | Workflow | When | What |
 |----------|------|------|
-| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | PR + push to `main` | `pnpm check` + smoke `/health` + PWA assets |
-| [`.github/workflows/deploy-railway.yml`](../.github/workflows/deploy-railway.yml) | push to `main` (and manual) | deploy to Railway **production** |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | PR + push to `main` | `mix test` + smoke boot (Elixir) + PWA assets |
 
-**Secret (required for deploy):** create a Railway **project token**
-(Project → Settings → Tokens), then:
-
-```sh
-gh secret set RAILWAY_TOKEN -R dpshde/keyverse
-# paste token (Railway → keyverse project → Settings → Tokens)
-# If deploy uses GitHub Environment "production", also:
-#   gh secret set RAILWAY_TOKEN -R dpshde/keyverse --env production
-```
-
-Optional: GitHub Environment `production` (workflow already references it) for
-approval gates.
-
-Manual deploy from a linked laptop:
-
-```sh
-railway up --ci --service keyverse --environment production -m "manual ship"
-```
+Deploy is **not** driven by Actions — connect the Railway service to `main` and let Railway build/start on push.
 
 ### Health
 
 ```sh
 curl -sf https://keyverse-production.up.railway.app/health
-# {"ok":true,"protocol":"keyverse","version":"0.1-demo","door":true}
+# {"ok":true,"protocol":"keyverse","version":"0.1-demo","host":"elixir","multipack":true,...}
 ```
 
 ## Related

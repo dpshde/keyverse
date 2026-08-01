@@ -1,0 +1,12 @@
+# Railway / Nixpacks: build and run the Elixir multipack door.
+[phases.setup]
+nixPkgs = ["elixir", "erlang"]
+
+[phases.install]
+cmds = ["mix local.hex --force", "mix local.rebar --force", "MIX_ENV=prod mix deps.get"]
+
+[phases.build]
+cmds = ["MIX_ENV=prod mix compile"]
+
+[start]
+cmd = "MIX_ENV=prod mix run --no-halt"

@@ -3,10 +3,10 @@ node_modules
 .grok
 .github
 docs
-scripts
-pack/text
-pack/attachments
-pack/door
-pack/notes
+pack
+packs
+_build
+deps
 *.md
 !package.json
+.elixir_ls
