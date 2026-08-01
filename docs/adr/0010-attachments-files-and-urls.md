@@ -30,5 +30,8 @@ lag real use.
 - **Harder:** pack size grows; clients must stream large files carefully;
   GC of unreferenced blobs is optional and easy to get wrong if shared;
   sealing a note hides names/URLs of attachments but not blob bytes by hash.
+  Hosts SHOULD enforce size caps, per-note counts, filename/MIME hygiene,
+  http(s)-only URL schemes, and `X-Content-Type-Options: nosniff` on blob GET
+  (reference door: `Keyverse.Attach`, `MAX_ATTACH_BYTES`, `MAX_ATTACH_PER_NOTE`).
 - **Implication:** never store file bytes inside note JSON; never require a
   separate media database for conformance.

@@ -33,6 +33,12 @@ defmodule Keyverse.Config do
 
   def max_attach_bytes, do: Application.get_env(:keyverse, :max_attach_bytes, 50 * 1024 * 1024)
 
+  def max_attach_per_note,
+    do: Application.get_env(:keyverse, :max_attach_per_note, 80)
+
+  def max_import_bytes,
+    do: Application.get_env(:keyverse, :max_import_bytes, 200 * 1024 * 1024)
+
   def cors_origin, do: Application.get_env(:keyverse, :cors_origin)
 
   def fathom_site do

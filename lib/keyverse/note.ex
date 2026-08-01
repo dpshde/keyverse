@@ -191,27 +191,49 @@ defmodule Keyverse.Note do
             att =
               case raw["kind"] do
                 "url" ->
+                  url =
+                    case Keyverse.Attach.validate_url(to_string(raw["url"] || "")) do
+                      {:ok, u} -> u
+                      _ -> ""
+                    end
+
                   %{
                     "id" => id,
                     "kind" => "url",
-                    "url" => to_string(raw["url"] || ""),
-                    "title" => raw["title"],
+                    "url" => url,
+                    "title" => Keyverse.Attach.sanitize_title(raw["title"]),
                     "created_at" => raw["created_at"] || iso_now()
                   }
 
                 _ ->
+                  sha =
+                    raw["sha256"]
+                    |> to_string()
+                    |> String.downcase()
+                    |> String.replace(~r/[^a-f0-9]/, "")
+
+                  sha = if String.length(sha) == 64, do: sha, else: ""
+
                   %{
                     "id" => id,
                     "kind" => "file",
-                    "name" => to_string(raw["name"] || "file"),
-                    "mime" => to_string(raw["mime"] || "application/octet-stream"),
-                    "sha256" => String.downcase(to_string(raw["sha256"] || "")),
+                    "name" => Keyverse.Attach.sanitize_filename(raw["name"] || "file"),
+                    "mime" => Keyverse.Attach.sanitize_mime(raw["mime"] || "application/octet-stream"),
+                    "sha256" => sha,
                     "bytes" => max(0, trunc(raw["bytes"] || 0)),
                     "created_at" => raw["created_at"] || iso_now()
                   }
               end
 
-            {out ++ [att], MapSet.put(seen, id)}
+            # drop broken rows
+            keep =
+              case att["kind"] do
+                "url" -> att["url"] != ""
+                "file" -> att["sha256"] != ""
+                _ -> false
+              end
+
+            if keep, do: {out ++ [att], MapSet.put(seen, id)}, else: {out, seen}
           end
       end
     end)
@@ -306,6 +328,78 @@ defmodule Keyverse.Note do
 
     unless File.exists?(path), do: File.write!(path, bin)
     sha
+  end
+
+  @doc "Append attachment metadata on a note (writer-serialized)."
+  def attach_meta!(pack_dir, scope, existing, att) when is_map(att) do
+    Keyverse.Pack.Writer.call(pack_dir, fn ->
+      # re-read under lock
+      existing = read(pack_dir, scope.slug) || existing
+      atts = (existing && existing["attachments"]) || []
+
+      case Keyverse.Attach.check_count(atts) do
+        {:error, msg} ->
+          {:error, msg}
+
+        :ok ->
+          now = iso_now()
+          att = normalize_attachments([att]) |> List.first() || att
+
+          note = %{
+            "id" => (existing && existing["id"]) || new_id(),
+            "scope" => scope_map(scope),
+            "blocks" => (existing && existing["blocks"]) || [],
+            "attachments" => atts ++ [att],
+            "created_at" => (existing && existing["created_at"]) || now,
+            "updated_at" => now
+          }
+
+          write!(pack_dir, note)
+          {:ok, note}
+      end
+    end)
+  end
+
+  @doc "Remove attachment metadata; GC blob if unreferenced."
+  def detach_meta!(pack_dir, scope, note, att_id) do
+    Keyverse.Pack.Writer.call(pack_dir, fn ->
+      note = read(pack_dir, scope.slug) || note
+
+      if is_nil(note) do
+        {:error, :not_found}
+      else
+        removed = Enum.find(note["attachments"] || [], &(&1["id"] == att_id))
+
+        if is_nil(removed) do
+          {:error, :not_found}
+        else
+          atts = Enum.reject(note["attachments"] || [], &(&1["id"] == att_id))
+          note = note |> Map.put("attachments", atts) |> Map.put("updated_at", iso_now())
+          write!(pack_dir, note)
+
+          if removed["kind"] == "file" && removed["sha256"] do
+            unless attachment_referenced?(pack_dir, removed["sha256"], scope.slug) do
+              path = attach_blob_path(pack_dir, removed["sha256"])
+              if path, do: File.rm(path)
+            end
+          end
+
+          {:ok, note}
+        end
+      end
+    end)
+  end
+
+  @doc "Best-effort mime/name lookup for a CAS blob."
+  def attachment_meta_for_sha(pack_dir, sha) do
+    sha = String.downcase(to_string(sha))
+
+    Enum.find_value(list(pack_dir), {"application/octet-stream", "file"}, fn n ->
+      case Enum.find(n["attachments"] || [], &(&1["kind"] == "file" and &1["sha256"] == sha)) do
+        nil -> nil
+        a -> {a["mime"] || "application/octet-stream", a["name"] || "file"}
+      end
+    end)
   end
 
   def attach_blob_path(pack_dir, sha256) do

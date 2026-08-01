@@ -554,7 +554,12 @@ defmodule Keyverse.Html do
       <p class="muted" id="crypto-err" hidden>Could not decrypt — wrong passphrase?</p>
     </div>
     #{rel}
-    <script type="application/json" id="page-meta">#{Jason.encode!(%{slug: scope.slug, display: display})}</script>
+    <script type="application/json" id="page-meta">#{Jason.encode!(%{
+      slug: scope.slug,
+      display: display,
+      max_attach_bytes: Config.max_attach_bytes(),
+      max_attach_per_note: Config.max_attach_per_note()
+    })}</script>
     <script type="application/json" id="initial-blocks">#{Jason.encode!(initial)}</script>
     <script type="application/json" id="initial-atts">#{Jason.encode!(atts)}</script>
     <script type="application/json" id="initial-cipher">#{cipher_json}</script>

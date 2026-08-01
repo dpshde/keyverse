@@ -2,13 +2,15 @@ defmodule Keyverse.Router do
   @moduledoc "HTTP multipack door — Plug router."
   use Plug.Router
 
-  alias Keyverse.{Config, Door, Html, Note, Pack, PackTransfer, Scope}
+  alias Keyverse.{Attach, Config, Door, Html, Note, Pack, PackTransfer, Scope}
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
     json_decoder: Jason,
-    length: 52_428_800
+    length: 52_428_800,
+    read_length: 1_048_576,
+    read_timeout: 60_000
 
   plug :match
   plug :dispatch
@@ -580,24 +582,51 @@ defmodule Keyverse.Router do
 
           cond do
             is_struct(upload, Plug.Upload) ->
-              File.read!(upload.path)
+              case File.stat(upload.path) do
+                {:ok, %{size: size}} ->
+                  if size > Config.max_import_bytes() do
+                    {:too_large, size}
+                  else
+                    File.read!(upload.path)
+                  end
+
+                _ ->
+                  nil
+              end
 
             is_map(upload) and is_binary(upload["path"]) ->
-              File.read!(upload["path"])
+              case File.stat(upload["path"]) do
+                {:ok, %{size: size}} ->
+                  if size > Config.max_import_bytes() do
+                    {:too_large, size}
+                  else
+                    File.read!(upload["path"])
+                  end
+
+                _ ->
+                  nil
+              end
 
             true ->
               nil
           end
 
         true ->
-          case Plug.Conn.read_body(conn, length: Config.max_attach_bytes()) do
-            {:ok, body, _conn} when byte_size(body) > 0 -> body
+          case Attach.read_body_capped(conn, Config.max_import_bytes()) do
+            {:ok, body, _} -> body
+            {:error, :too_large} -> {:too_large, nil}
             _ -> nil
           end
       end
 
     result =
       cond do
+        match?({:too_large, _}, zip_bin) ->
+          send_json(conn, 413, %{
+            error: "import too large (max #{Config.max_import_bytes()} bytes)",
+            max_bytes: Config.max_import_bytes()
+          })
+
         is_nil(zip_bin) or zip_bin == "" ->
           send_json(conn, 400, %{error: "missing pack zip (multipart field pack or raw body)"})
 
@@ -629,58 +658,98 @@ defmodule Keyverse.Router do
   end
 
   defp handle_api_attach(conn, pack_dir, "POST", slug) do
-    case Scope.parse(slug) do
-      nil ->
-        send_json(conn, 400, %{error: "invalid passage address"})
+    t0 = System.monotonic_time(:microsecond)
 
-      scope ->
-        ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
-        existing = Note.read(pack_dir, scope.slug)
+    result =
+      case Scope.parse(slug) do
+        nil ->
+          send_json(conn, 400, %{error: "invalid passage address"})
 
-        cond do
-          String.contains?(ct, "application/json") or
-              (is_map(conn.body_params) and Map.has_key?(conn.body_params, "kind")) ->
-            parsed =
-              if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
-                conn.body_params
-              else
-                {:ok, body, _} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+        scope ->
+          ct =
+            conn
+            |> get_req_header("content-type")
+            |> List.first()
+            |> to_string()
+            |> String.downcase()
 
+          existing = Note.read(pack_dir, scope.slug)
+          existing_atts = (existing && existing["attachments"]) || []
+
+          case Attach.check_count(existing_atts) do
+            {:error, msg} ->
+              send_json(conn, 400, %{error: msg, max: Attach.max_per_note()})
+
+            :ok ->
+              do_attach_post(conn, pack_dir, scope, existing, ct)
+          end
+      end
+
+    err = is_struct(result, Plug.Conn) and result.status >= 400
+    Keyverse.Metrics.record(:http_attach, (System.monotonic_time(:microsecond) - t0) / 1000, %{error: err})
+    result
+  end
+
+  defp handle_api_attach(conn, _, _, _) do
+    send_json(conn, 405, %{error: "method not allowed"})
+  end
+
+  defp do_attach_post(conn, pack_dir, scope, existing, ct) do
+    cond do
+      String.contains?(ct, "application/json") or
+          (is_map(conn.body_params) and Map.has_key?(conn.body_params, "kind")) ->
+        parsed =
+          if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
+            conn.body_params
+          else
+            case Attach.read_body_capped(conn, 64_000) do
+              {:ok, body, _} ->
                 case Jason.decode(body) do
-                  {:ok, p} -> p
+                  {:ok, p} when is_map(p) -> p
                   _ -> %{}
                 end
-              end
 
-            case parsed do
-              %{"kind" => "url", "url" => url} = p ->
+              {:error, reason} ->
+                {:body_error, reason}
+            end
+          end
+
+        case parsed do
+          {:body_error, reason} ->
+            send_json(conn, Attach.error_status(reason), %{error: Attach.error_message(reason)})
+
+          %{"kind" => "url", "url" => url} = p ->
+            case Attach.validate_url(url) do
+              {:ok, safe_url} ->
                 att = %{
                   "id" => Note.new_att_id(),
                   "kind" => "url",
-                  "url" => url,
-                  "title" => p["title"],
+                  "url" => safe_url,
+                  "title" => Attach.sanitize_title(p["title"]),
                   "created_at" => Note.iso_now()
                 }
 
                 attach_to_note(conn, pack_dir, scope, existing, att)
 
-              _ ->
-                send_json(conn, 400, %{error: "invalid attachment json"})
+              {:error, msg} ->
+                send_json(conn, 400, %{error: msg})
             end
 
-          true ->
-            {:ok, body, conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+          _ ->
+            send_json(conn, 400, %{error: "invalid attachment json"})
+        end
 
+      true ->
+        case Attach.read_body_capped(conn) do
+          {:ok, body, conn} ->
             filename =
               conn
               |> get_req_header("x-filename")
               |> List.first()
-              |> case do
-                nil -> "file"
-                f -> f
-              end
+              |> decode_filename_header()
+              |> Attach.sanitize_filename()
 
-            mime = if ct == "", do: "application/octet-stream", else: ct
+            mime = Attach.sanitize_mime(ct)
             sha = Note.write_attachment_blob!(pack_dir, body)
 
             att = %{
@@ -698,33 +767,27 @@ defmodule Keyverse.Router do
             else
               attach_to_note(conn, pack_dir, scope, existing, att)
             end
+
+          {:error, reason} ->
+            send_json(conn, Attach.error_status(reason), %{
+              error: Attach.error_message(reason),
+              max_bytes: Attach.max_bytes()
+            })
         end
     end
-  end
-
-  defp handle_api_attach(conn, _, _, _) do
-    send_json(conn, 405, %{error: "method not allowed"})
   end
 
   defp attach_to_note(conn, pack_dir, scope, existing, att) do
     if existing && Note.encrypted?(existing) do
       send_json(conn, 200, %{encrypted: true, attachment: att})
     else
-      now = Note.iso_now()
-      blocks = (existing && existing["blocks"]) || []
-      atts = ((existing && existing["attachments"]) || []) ++ [att]
+      case Note.attach_meta!(pack_dir, scope, existing, att) do
+        {:ok, note} ->
+          send_json(conn, 200, note)
 
-      note = %{
-        "id" => (existing && existing["id"]) || Note.new_id(),
-        "scope" => Note.scope_map(scope),
-        "blocks" => blocks,
-        "attachments" => atts,
-        "created_at" => (existing && existing["created_at"]) || now,
-        "updated_at" => now
-      }
-
-      Note.write!(pack_dir, note)
-      send_json(conn, 200, note)
+        {:error, msg} ->
+          send_json(conn, 400, %{error: to_string(msg)})
+      end
     end
   end
 
@@ -753,19 +816,11 @@ defmodule Keyverse.Router do
             send_json(conn, 200, %{encrypted: true, removed: att_id})
 
           true ->
-            removed = Enum.find(note["attachments"] || [], &(&1["id"] == att_id))
-            atts = Enum.reject(note["attachments"] || [], &(&1["id"] == att_id))
-            note = note |> Map.put("attachments", atts) |> Map.put("updated_at", Note.iso_now())
-            Note.write!(pack_dir, note)
-
-            if removed && removed["kind"] == "file" && removed["sha256"] do
-              unless Note.attachment_referenced?(pack_dir, removed["sha256"]) do
-                path = Note.attach_blob_path(pack_dir, removed["sha256"])
-                if path, do: File.rm(path)
-              end
+            case Note.detach_meta!(pack_dir, scope, note, att_id) do
+              {:ok, note} -> send_json(conn, 200, note)
+              {:error, :not_found} -> send_json(conn, 404, %{error: "attachment not found"})
+              {:error, msg} -> send_json(conn, 400, %{error: to_string(msg)})
             end
-
-            send_json(conn, 200, note)
         end
     end
   end
@@ -778,27 +833,39 @@ defmodule Keyverse.Router do
     sha = String.downcase(sha)
     path = Note.attach_blob_path(pack_dir, sha)
 
-    case path && File.read(path) do
-      {:ok, bin} ->
-        {mime, name} =
-          Enum.find_value(Note.list(pack_dir), {"application/octet-stream", "file"}, fn n ->
-            case Enum.find(n["attachments"] || [], &(&1["kind"] == "file" and &1["sha256"] == sha)) do
-              nil -> nil
-              a -> {a["mime"] || "application/octet-stream", a["name"] || "file"}
-            end
-          end)
+    case path && File.stat(path) do
+      {:ok, %File.Stat{type: :regular, size: size}} ->
+        {mime, name} = Note.attachment_meta_for_sha(pack_dir, sha)
+        name = Attach.sanitize_filename(conn.query_params["name"] || name)
+        mime = Attach.sanitize_mime(mime)
 
-        name = conn.query_params["name"] || name
+        # Stream file; avoid loading multi-MB into BEAM heap twice.
+        conn =
+          conn
+          |> put_resp_content_type(mime)
+          |> put_resp_header("content-disposition", Attach.content_disposition(name, mime))
+          |> put_resp_header("x-content-type-options", "nosniff")
+          |> put_resp_header("cache-control", "private, max-age=31536000, immutable")
+          |> put_resp_header("content-length", Integer.to_string(size))
+          |> send_file(200, path)
 
         conn
-        |> put_resp_content_type(mime)
-        |> put_resp_header("content-disposition", ~s(inline; filename="#{String.replace(name, "\"", "")}"))
-        |> put_resp_header("cache-control", "public, max-age=31536000, immutable")
-        |> send_resp(200, bin)
 
       _ ->
         send_json(conn, 404, %{error: "attachment not found"})
     end
+  end
+
+  defp decode_filename_header(nil), do: nil
+
+  defp decode_filename_header(name) when is_binary(name) do
+    # Client may send encodeURIComponent; tolerate plain names too.
+    case URI.decode(name) do
+      decoded when is_binary(decoded) -> decoded
+      _ -> name
+    end
+  rescue
+    _ -> name
   end
 
   defp raw_request?(conn) do
@@ -826,6 +893,8 @@ defmodule Keyverse.Router do
       door_open: Config.door_open?(),
       cors: not cors_disabled?(),
       max_attach_bytes: Config.max_attach_bytes(),
+      max_attach_per_note: Config.max_attach_per_note(),
+      max_import_bytes: Config.max_import_bytes(),
       features: %{
         notes: true,
         attachments: true,
