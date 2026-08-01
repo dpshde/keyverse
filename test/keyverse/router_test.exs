@@ -82,7 +82,20 @@ defmodule Keyverse.RouterTest do
     # unknown door
     conn = conn(:get, "/nope-not-a-real-pack-here/") |> Router.call([])
     assert conn.status == 404
+
+    # URL attachment
+    att_body = Jason.encode!(%{"kind" => "url", "url" => "https://example.com", "title" => "ex"})
+
+    conn =
+      conn(:post, "/firm-sane-chef-earn/api/note/jhn.3.16/attachments", att_body)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 200
+    note = Jason.decode!(conn.resp_body)
+    assert Enum.any?(note["attachments"] || [], &(&1["kind"] == "url"))
   end
+
 
   test "UX HTML includes window.BASE" do
     conn =
