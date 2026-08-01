@@ -21,7 +21,7 @@ required for a complete pack.
 ## Export
 
 ### Browser
-Open your pack → **Export pack (.zip)** on the home page.
+Open your notes → **Export** on the home page (zip download).
 
 ### HTTP
 ```http
@@ -41,9 +41,8 @@ Export includes only user paths above. No account, no proprietary blob format.
 ## Import
 
 ### Browser
-**Import pack** on the home page. Default **merge** (zip files overwrite same
-paths). Check **Replace all notes** for a clean load (`notes/` + `attachments/`
-cleared first).
+**Import** on the home page. Merges by default. Check **Replace** to clear
+notes first.
 
 ### HTTP
 ```http

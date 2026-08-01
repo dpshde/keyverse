@@ -1225,16 +1225,47 @@
     .oline.has-kids .ochev { opacity: .55; }
   }
 
-/* Pack ownership / export-import */
-.pack-own{margin:1.5rem 0 2rem;padding:1rem;border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:10px}
-.pack-own h2{margin:0 0 .35rem;font-size:.95rem;font-weight:600}
-.pack-own-sum{margin:.2rem 0 .75rem}
-.pack-own-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
-.pack-own-btn{display:inline-block;padding:.45rem .8rem;border-radius:8px;border:1px solid color-mix(in srgb, currentColor 22%, transparent);background:color-mix(in srgb, currentColor 6%, transparent);color:inherit;text-decoration:none;font:inherit;cursor:pointer}
-.pack-own-btn:hover{background:color-mix(in srgb, currentColor 12%, transparent)}
-.pack-own-import{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:0}
-.pack-own-replace{font-size:.85rem;opacity:.8}
-.pack-own-hint{margin:.75rem 0 0;font-size:.85rem;max-width:36rem}
+/* Pack ownership / export-import — one quiet row */
+.pack-own{
+  margin:1.25rem auto 0;
+  max-width:36rem;
+  padding:.65rem 1rem 0;
+  border:0;
+  border-top:1px solid color-mix(in srgb, currentColor 9%, transparent);
+  border-radius:0;
+}
+.pack-own-row{
+  display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .45rem;
+  font-size:.88rem;
+}
+.pack-own-sum{margin:0}
+.pack-own-dot{opacity:.4;user-select:none}
+.pack-own-link{
+  color:inherit;
+  text-decoration:underline;
+  text-decoration-color:color-mix(in srgb, currentColor 22%, transparent);
+  text-underline-offset:.12em;
+  cursor:pointer;
+  font:inherit;
+  background:none;border:0;padding:0;
+}
+.pack-own-link:hover{text-decoration-color:currentColor}
+.pack-own-import{
+  display:inline-flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;margin:0;
+}
+.pack-own-file{display:inline;cursor:pointer}
+.pack-own-file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.pack-own-replace{
+  display:inline-flex;align-items:center;gap:.3rem;
+  font-size:.82rem;opacity:.7;cursor:pointer;user-select:none;
+}
+.pack-own-replace input{margin:0}
+.pack-own-status{margin:.35rem 0 0;font-size:.85rem}
+/* legacy btn class unused on home; keep minimal so nothing breaks */
+.pack-own-btn{display:none}
+.pack-own-hint{display:none}
+.pack-own h2{display:none}
+
 
 /* Local pack mount (ADR 0017 read-only) */
 .local-shell{min-height:70vh}

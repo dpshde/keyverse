@@ -352,22 +352,27 @@ defmodule Keyverse.Html do
     notes = man.notes || 0
     atts = man.attachments || 0
 
+    note_bit = "#{notes} note#{if notes == 1, do: "", else: "s"}"
+    file_bit = "#{atts} file#{if atts == 1, do: "", else: "s"}"
+
     """
-    <section class="pack-own ui" id="pack-own" aria-label="Your pack data">
-      <h2 class="muted">Your pack</h2>
-      <p class="muted pack-own-sum">#{notes} notes · #{atts} files · you own this data</p>
-      <div class="pack-own-actions">
-        <a class="pack-own-btn" href="#{esc(base)}/api/pack/export" download>Export pack (.zip)</a>
+    <section class="pack-own ui" id="pack-own" aria-label="Backup">
+      <div class="pack-own-row">
+        <span class="muted pack-own-sum">#{note_bit} · #{file_bit}</span>
+        <span class="pack-own-dot muted" aria-hidden="true">·</span>
+        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>Export</a>
+        <span class="pack-own-dot muted" aria-hidden="true">·</span>
         <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
-          <label class="pack-own-btn pack-own-file">
-            Import pack
+          <label class="pack-own-link pack-own-file">
+            Import
             <input type="file" name="pack" accept=".zip,application/zip" required hidden>
           </label>
-          <label class="pack-own-replace"><input type="checkbox" id="pack-import-replace"> Replace all notes</label>
+          <label class="pack-own-replace muted" title="Clear existing notes before import">
+            <input type="checkbox" id="pack-import-replace"> Replace
+          </label>
         </form>
       </div>
-      <p class="muted pack-own-hint">Export is the full portable pack (notes + attachments). No account — the folder is yours. Import merges by default.</p>
-      <p id="pack-import-status" class="muted" role="status" hidden></p>
+      <p id="pack-import-status" class="muted pack-own-status" role="status" hidden></p>
     </section>
     <script>
     (function () {
@@ -387,7 +392,7 @@ defmodule Keyverse.Html do
           .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
           .then(function (x) {
             if (x.ok) {
-              status.textContent = "Imported " + (x.j.files || 0) + " files. Reloading…";
+              status.textContent = "Imported. Reloading…";
               location.reload();
             } else {
               status.textContent = (x.j && x.j.error) ? x.j.error : "Import failed";
