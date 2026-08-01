@@ -71,6 +71,21 @@ defmodule Keyverse.RouterTest do
     proto = Jason.decode!(conn.resp_body)
     assert proto["multipack"] == true
     assert proto["door_phrase"] == "firm-sane-chef-earn"
+    assert proto["features"]["pack_export"] == true
+    assert proto["ownership"]["user_owned_pack"] == true
+
+    # pack manifest + export zip
+    conn = conn(:get, "/firm-sane-chef-earn/api/pack") |> Router.call([])
+    assert conn.status == 200
+    man = Jason.decode!(conn.resp_body)
+    assert man["notes"] >= 1
+    assert man["user_owned"] == true
+
+    conn = conn(:get, "/firm-sane-chef-earn/api/pack/export") |> Router.call([])
+    assert conn.status == 200
+    assert conn.resp_body != ""
+    ct = conn |> Plug.Conn.get_resp_header("content-type") |> List.first() || ""
+    assert String.contains?(ct, "zip") or byte_size(conn.resp_body) > 30
 
     # resolve
     conn = conn(:get, "/firm-sane-chef-earn/api/resolve?q=John+3:16") |> Router.call([])

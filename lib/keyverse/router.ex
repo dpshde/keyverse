@@ -2,7 +2,7 @@ defmodule Keyverse.Router do
   @moduledoc "HTTP multipack door — Plug router."
   use Plug.Router
 
-  alias Keyverse.{Config, Door, Html, Note, Pack, Scope}
+  alias Keyverse.{Config, Door, Html, Note, Pack, PackTransfer, Scope}
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
@@ -282,6 +282,25 @@ defmodule Keyverse.Router do
           |> send_resp(200, svg)
         end
 
+      {"GET", "/api/pack"} ->
+        send_json(conn, 200, PackTransfer.manifest(pack_dir))
+
+      {"GET", "/api/pack/export"} ->
+        case PackTransfer.export_zip(pack_dir) do
+          {:ok, name, bin} ->
+            conn
+            |> put_resp_content_type("application/zip")
+            |> put_resp_header("content-disposition", ~s(attachment; filename="#{name}"))
+            |> put_resp_header("cache-control", "no-store")
+            |> send_resp(200, bin)
+
+          {:error, reason} ->
+            send_json(conn, 400, %{error: to_string(reason)})
+        end
+
+      {"POST", "/api/pack/import"} ->
+        handle_pack_import(conn, pack_dir)
+
       {"GET", "/go"} ->
         case Scope.parse(conn.query_params["q"] || "") do
           nil ->
@@ -424,6 +443,60 @@ defmodule Keyverse.Router do
 
   defp handle_api_note(conn, _pack_dir, _, _slug) do
     send_json(conn, 405, %{error: "method not allowed"})
+  end
+
+  defp handle_pack_import(conn, pack_dir) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    mode = if conn.query_params["mode"] == "replace", do: :replace, else: :merge
+
+    zip_bin =
+      cond do
+        is_map(conn.body_params) and is_map(conn.body_params["pack"]) ->
+          upload = conn.body_params["pack"]
+
+          cond do
+            is_struct(upload, Plug.Upload) ->
+              File.read!(upload.path)
+
+            is_map(upload) and is_binary(upload["path"]) ->
+              File.read!(upload["path"])
+
+            true ->
+              nil
+          end
+
+        true ->
+          case Plug.Conn.read_body(conn, length: Config.max_attach_bytes()) do
+            {:ok, body, _conn} when byte_size(body) > 0 -> body
+            _ -> nil
+          end
+      end
+
+    cond do
+      is_nil(zip_bin) or zip_bin == "" ->
+        send_json(conn, 400, %{error: "missing pack zip (multipart field pack or raw body)"})
+
+      true ->
+        case PackTransfer.import_zip(pack_dir, zip_bin, mode: mode, validate: true) do
+          {:ok, info} ->
+            send_json(conn, 200, %{
+              ok: true,
+              mode: info.mode,
+              files: info.files,
+              manifest: PackTransfer.manifest(pack_dir)
+            })
+
+          {:error, {:conformance_failed, report}} ->
+            send_json(conn, 422, %{
+              ok: false,
+              error: "conformance_failed",
+              errors: report.errors
+            })
+
+          {:error, reason} ->
+            send_json(conn, 400, %{ok: false, error: to_string(reason)})
+        end
+    end
   end
 
   defp handle_api_attach(conn, pack_dir, "POST", slug) do
@@ -631,6 +704,8 @@ defmodule Keyverse.Router do
         resolve: true,
         share_qr: not Config.door_open?() and door != "",
         multipack: not Config.door_open?(),
+        pack_export: true,
+        pack_import: true,
         pwa: true,
         host: "elixir"
       },
@@ -645,16 +720,26 @@ defmodule Keyverse.Router do
         "POST /api/note/<slug>/attachments",
         "DELETE /api/note/<slug>/attachments/<att_id>",
         "GET /api/attachments/<sha256>",
+        "GET /api/pack",
+        "GET /api/pack/export",
+        "POST /api/pack/import",
         "GET /api/share-qr?origin=",
         "GET /manifest.webmanifest",
         "GET /sw.js",
         "GET /offline",
         "GET /health"
       ],
+      ownership: %{
+        user_owned_pack: true,
+        source_of_truth: "filesystem pack directory",
+        export: "GET /api/pack/export",
+        import: "POST /api/pack/import?mode=merge|replace"
+      },
       schemas: "schemas/",
       docs: %{
         protocol: "PROTOCOL.md",
         http: "docs/API.md",
+        ownership: "docs/OWNERSHIP.md",
         llms: "llms.txt"
       }
     }

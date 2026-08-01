@@ -1,0 +1,7 @@
+{
+  "id": "note_x",
+  "scope": { "kind": "verse", "osis": "JHN.3.16", "slug": "rom.1.1" },
+  "blocks": [ { "id": "b1", "indent": 0, "text": "mismatch" } ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}

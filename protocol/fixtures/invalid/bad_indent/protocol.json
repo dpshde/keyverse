@@ -1,0 +1,5 @@
+{
+  "protocol": "keyverse",
+  "version": "0.1-demo",
+  "schemas": "schemas/"
+}

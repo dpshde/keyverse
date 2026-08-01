@@ -8,8 +8,11 @@
 - Name: `keyverse`
 - Version: `0.1-demo` (demo-era; expect breaking refinements before 1.0)
 - Normative: PROTOCOL.md
+- Layers: pack core vs door profiles (docs/adr/0014)
+- Ownership: docs/OWNERSHIP.md (export/import zip)
 - HTTP matrix: docs/API.md
 - Schemas: schemas/ (note, attachment, cipher, protocol)
+- Conformance: protocol/fixtures + `mix keyverse.conformance`
 - Manifest: pack/protocol.json → `{"protocol":"keyverse","version":"0.1-demo"}`
 - Discovery: GET /{door}/api/protocol
 
@@ -54,6 +57,9 @@ Single pack (offline / import) is just that inner directory.
 | POST | /api/note/`<slug>`/attachments | URL JSON or raw file (`X-Filename`) |
 | DELETE | /api/note/`<slug>`/attachments/`<id>` | Detach; optional `?sha256=` GC |
 | GET | /api/attachments/`<sha256>` | Blob bytes |
+| GET | /api/pack | Pack manifest (user-owned counts) |
+| GET | /api/pack/export | Zip export (notes+attachments only) |
+| POST | /api/pack/import | Zip import (`mode=merge|replace`) |
 | GET | /api/share-qr?origin= | Door URL as SVG QR |
 | OPTIONS | /api/* | CORS preflight → 204 |
 | GET | /sw.js | Service worker (root; PWA) |
@@ -79,6 +85,8 @@ Default `Access-Control-Allow-Origin: *` on `/api/*`. Set `CORS_ORIGIN=off` to d
 - Treat empty plaintext + no attachments as delete.
 - Ignore unknown JSON keys.
 - Keep passphrase client-side only (never send to server).
+- User owns pack data; export zip must omit disposable scripture cache.
+- Validate packs offline when possible (`mix keyverse.conformance` / schemas).
 
 ## Must not
 

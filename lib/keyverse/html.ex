@@ -305,6 +305,7 @@ defmodule Keyverse.Html do
   def render_index(pack_dir, door, base) do
     notes = Note.list(pack_dir)
     tree = home_tree_html(notes, base)
+    man = Keyverse.PackTransfer.manifest(pack_dir)
 
     body = """
     <header class="ui home-head">
@@ -317,11 +318,65 @@ defmodule Keyverse.Html do
       <h2 class="ui muted">Notes</h2>
       #{tree}
     </section>
+    #{pack_ownership_html(base, man)}
     #{site_footer(true)}
     <script src="/home-tree.js"></script>
     """
 
     page("keyverse", body, base: base)
+  end
+
+  defp pack_ownership_html(base, man) do
+    notes = man.notes || 0
+    atts = man.attachments || 0
+
+    """
+    <section class="pack-own ui" id="pack-own" aria-label="Your pack data">
+      <h2 class="muted">Your pack</h2>
+      <p class="muted pack-own-sum">#{notes} notes · #{atts} files · you own this data</p>
+      <div class="pack-own-actions">
+        <a class="pack-own-btn" href="#{esc(base)}/api/pack/export" download>Export pack (.zip)</a>
+        <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
+          <label class="pack-own-btn pack-own-file">
+            Import pack
+            <input type="file" name="pack" accept=".zip,application/zip" required hidden>
+          </label>
+          <label class="pack-own-replace"><input type="checkbox" id="pack-import-replace"> Replace all notes</label>
+        </form>
+      </div>
+      <p class="muted pack-own-hint">Export is the full portable pack (notes + attachments). No account — the folder is yours. Import merges by default.</p>
+      <p id="pack-import-status" class="muted" role="status" hidden></p>
+    </section>
+    <script>
+    (function () {
+      var form = document.getElementById("pack-import-form");
+      var status = document.getElementById("pack-import-status");
+      var replace = document.getElementById("pack-import-replace");
+      if (!form) return;
+      var file = form.querySelector('input[type=file]');
+      file.addEventListener("change", function () {
+        if (!file.files || !file.files[0]) return;
+        var mode = replace && replace.checked ? "replace" : "merge";
+        var fd = new FormData();
+        fd.append("pack", file.files[0]);
+        status.hidden = false;
+        status.textContent = "Importing…";
+        fetch(BASE + "/api/pack/import?mode=" + mode, { method: "POST", body: fd, credentials: "same-origin" })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (x) {
+            if (x.ok) {
+              status.textContent = "Imported " + (x.j.files || 0) + " files. Reloading…";
+              location.reload();
+            } else {
+              status.textContent = (x.j && x.j.error) ? x.j.error : "Import failed";
+            }
+          })
+          .catch(function (e) { status.textContent = "Import failed"; });
+        file.value = "";
+      });
+    })();
+    </script>
+    """
   end
 
   defp home_tree_html(notes, base) do

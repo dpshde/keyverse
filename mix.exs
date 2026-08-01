@@ -42,7 +42,8 @@ defmodule Keyverse.MixProject do
   defp aliases do
     [
       start: ["app.start", "run --no-halt"],
-      "keyverse.server": ["app.config", "run --no-halt"]
+      "keyverse.server": ["app.config", "run --no-halt"],
+      conformance: ["keyverse.conformance"]
     ]
   end
 end

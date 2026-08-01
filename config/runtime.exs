@@ -13,5 +13,10 @@ config :keyverse,
   boot_door: System.get_env("DOOR") || System.get_env("PACK_DOOR") || "",
   max_attach_bytes: String.to_integer(System.get_env("MAX_ATTACH_BYTES") || "#{50 * 1024 * 1024}"),
   cors_origin: System.get_env("CORS_ORIGIN"),
-  fathom_site: System.get_env("FATHOM_SITE") || "EMYGRIAR",
-  start_server: System.get_env("START_SERVER") != "false"
+  fathom_site: System.get_env("FATHOM_SITE") || "EMYGRIAR"
+
+# Only override start_server when explicitly set (preserve config/test.exs false).
+case System.get_env("START_SERVER") do
+  nil -> :ok
+  val -> config :keyverse, start_server: val not in ["false", "0", "no"]
+end

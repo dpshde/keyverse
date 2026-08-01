@@ -6,11 +6,26 @@ that reads and writes a conforming pack directory is a keyverse client — the
 bundled server is just the reference client (a door). Two clients pointed at
 the same pack interoperate with no coordination beyond the filesystem.
 
+### Layers (ADR 0014)
+
+| Layer | What | Normative? |
+|-------|------|------------|
+| **Pack core** | OSIS address, note JSON, CAS attachments, cipher envelopes, `protocol.json` | **Yes** — this document + `schemas/` |
+| **Conformance** | Offline fixture validation (`protocol/fixtures`, `mix keyverse.conformance`) | Yes for CI / second clients |
+| **Door HTTP profile** | Optional `/{door}/api/…` matrix | [docs/API.md](docs/API.md) |
+| **Ownership transfer** | Export/import zip of user data | [docs/OWNERSHIP.md](docs/OWNERSHIP.md) |
+| **Host runtime** | Elixir (or any) multipack process | Replaceable |
+
+User-owned data is critical: a pack or export zip must remain complete with the
+door offline. Disposable scripture cache is never user data.
+
 | Audience | Start here |
 |----------|------------|
 | Machines / LLMs | [llms.txt](llms.txt) |
+| Ownership / export | [docs/OWNERSHIP.md](docs/OWNERSHIP.md) |
 | HTTP status matrix | [docs/API.md](docs/API.md) |
 | JSON Schema | [schemas/](schemas/) |
+| Fixtures | [protocol/](protocol/) |
 | Runtime discovery | `GET /{door}/api/protocol` |
 
 ## 1. Addressing
@@ -354,7 +369,19 @@ Disable with `CORS_ORIGIN=off`, or restrict with `CORS_ORIGIN=https://app.exampl
 4. Read/write note JSON; preserve block `id`s and attachment rows when editing text.
 5. Treat empty plaintext + no attachments as delete.
 6. Handle sealed notes without sending a passphrase to the server (`409` on raw).
-7. Ignore unknown keys; optionally validate with `schemas/`.
+7. Ignore unknown keys; optionally validate with `schemas/` or `mix keyverse.conformance`.
+8. Prefer pack directory or export zip for backup — not host-only APIs
+   ([docs/OWNERSHIP.md](docs/OWNERSHIP.md)).
+
+## 8.1 User-owned transfer (door profile)
+
+When speaking HTTP, doors SHOULD offer:
+
+- `GET /api/pack` — manifest (counts, protocol version)
+- `GET /api/pack/export` — zip of `protocol.json`, `door`, `notes/`, `attachments/`
+- `POST /api/pack/import?mode=merge|replace` — restore zip (conformance after write)
+
+Scripture cache paths MUST NOT appear in exports.
 
 ## 9. Reserved extensions (not fully specified in v0.1)
 

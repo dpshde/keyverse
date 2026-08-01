@@ -9,6 +9,14 @@ Machine-readable shapes for pack records. Normative prose remains [PROTOCOL.md](
 | [attachment.schema.json](./attachment.schema.json) | attachment rows |
 | [cipher.schema.json](./cipher.schema.json) | encrypted note `cipher` |
 
+Offline CI gate (extra filesystem MUST rules such as slug↔filename and CAS presence):
+
+```sh
+mix keyverse.conformance
+```
+
+Fixtures: [../protocol/fixtures/](../protocol/fixtures/). Ownership/export: [../docs/OWNERSHIP.md](../docs/OWNERSHIP.md).
+
 HTTP request/response catalogue: [docs/API.md](../docs/API.md).
 
 Clients MUST ignore unknown properties (`additionalProperties: true`) so future

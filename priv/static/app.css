@@ -1224,3 +1224,14 @@
     .oblock.has-kids .ochev { opacity: .65; }
     .oline.has-kids .ochev { opacity: .55; }
   }
+
+/* Pack ownership / export-import */
+.pack-own{margin:1.5rem 0 2rem;padding:1rem;border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:10px}
+.pack-own h2{margin:0 0 .35rem;font-size:.95rem;font-weight:600}
+.pack-own-sum{margin:.2rem 0 .75rem}
+.pack-own-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.pack-own-btn{display:inline-block;padding:.45rem .8rem;border-radius:8px;border:1px solid color-mix(in srgb, currentColor 22%, transparent);background:color-mix(in srgb, currentColor 6%, transparent);color:inherit;text-decoration:none;font:inherit;cursor:pointer}
+.pack-own-btn:hover{background:color-mix(in srgb, currentColor 12%, transparent)}
+.pack-own-import{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:0}
+.pack-own-replace{font-size:.85rem;opacity:.8}
+.pack-own-hint{margin:.75rem 0 0;font-size:.85rem;max-width:36rem}

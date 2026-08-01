@@ -13,6 +13,7 @@ A **cowyo-class** capture door over on-disk scripture note packs.
 | **Address = passage** | `/note/jhn.3.16` — home search with **reference autocomplete** |
 | **Open → type → saved** | Outliner (same browser UX as before). Autosave. No account. |
 | **Pack is the truth** | `packs/{key}/notes/<slug>.json` — readable with the server dead |
+| **You own the data** | Export/import `.zip` (notes + attachments); no account lock-in |
 | **Multipack** | Four-word key = your pack; another key is another library |
 | **Attachments** | Files + URL refs |
 | **Access** | Multiword URL is the key — cowyo-style |
@@ -26,8 +27,10 @@ Requirements: **Elixir 1.15+** / OTP 26+ (Homebrew: `brew install elixir`).
 ```sh
 mix deps.get
 mix test
+mix keyverse.conformance   # offline pack fixtures (protocol gate)
 mix run --no-halt
 # open http://localhost:4180/setup  → create your key
+# home page: Export pack (.zip) / Import pack
 ```
 
 | Env | Default | Meaning |

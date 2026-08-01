@@ -166,6 +166,41 @@ Raw bytes. `?name=` optional download name.
 | `400` | invalid hash |
 | `404` | blob missing |
 
+## Pack ownership (export / import)
+
+User-owned transfer profile. See [OWNERSHIP.md](./OWNERSHIP.md).
+
+### `GET /api/pack`
+
+Manifest of the current pack (counts + export include list).
+
+| Status | Body |
+|--------|------|
+| `200` | `{ protocol, door, notes, attachments, attachment_bytes, user_owned, export }` |
+
+### `GET /api/pack/export`
+
+Zip of user data only: `protocol.json`, `door`, `notes/**`, `attachments/**`.
+
+| Status | Body |
+|--------|------|
+| `200` | `application/zip` (`Content-Disposition: attachment`) |
+| `400` | `{ "error": "…" }` empty/unreadable pack |
+
+### `POST /api/pack/import?mode=merge|replace`
+
+Restore a pack zip into this door’s directory.
+
+- **Body:** multipart field `pack` (file) **or** raw `application/zip` body
+- **mode=merge** (default): overwrite paths present in the zip
+- **mode=replace:** clear `notes/` and `attachments/` first
+
+| Status | Body |
+|--------|------|
+| `200` | `{ ok: true, mode, files, manifest }` |
+| `400` | missing/invalid zip |
+| `422` | `{ ok: false, error: "conformance_failed", errors: […] }` |
+
 ## Progressive web app (shell)
 
 These are **outside** the door path (except door-scoped manifest) so the browser
@@ -232,6 +267,7 @@ Not every path uses both fields; clients should check HTTP status first.
 6. Handle `409` on sealed notes (prompt passphrase; never send passphrase to server).  
 7. Attach: `POST …/attachments`; if response has `encrypted: true`, re-encrypt note with new metadata.  
 8. Ignore unknown JSON keys on read.  
-9. Prefer pack filesystem when co-located; HTTP is optional.
+9. Prefer pack filesystem when co-located; HTTP is optional.  
+10. Offer or consume export/import zip for user-owned backup ([OWNERSHIP.md](./OWNERSHIP.md)).
 
-Schemas: [../schemas/](../schemas/). Agent index: [../llms.txt](../llms.txt).
+Schemas: [../schemas/](../schemas/). Fixtures: [../protocol/](../protocol/). Agent index: [../llms.txt](../llms.txt).

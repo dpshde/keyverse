@@ -1,0 +1,18 @@
+{
+  "id": "note_sealed",
+  "scope": { "kind": "verse", "osis": "JHN.3.16", "slug": "jhn.3.16" },
+  "encrypted": true,
+  "cipher": {
+    "v": 1,
+    "alg": "AES-GCM",
+    "kdf": "PBKDF2",
+    "iter": 210000,
+    "salt": "c2FsdHNhbHRzYWx0c2FsdA==",
+    "iv": "aXZpdml2aXZpdml2",
+    "ct": "Y2lwaGVydGV4dGhlcmU="
+  },
+  "blocks": [],
+  "attachments": [],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}

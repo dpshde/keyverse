@@ -1,0 +1,17 @@
+{
+  "id": "note_x",
+  "scope": { "kind": "verse", "osis": "JHN.3.16", "slug": "jhn.3.16" },
+  "blocks": [ { "id": "b1", "indent": 0, "text": "x" } ],
+  "attachments": [
+    {
+      "id": "att_1",
+      "kind": "file",
+      "name": "missing.bin",
+      "mime": "application/octet-stream",
+      "sha256": "987a0b63eed4f3f35f547163ae0f4a38267f7301592e8f896ae5c3f6aebdb165",
+      "bytes": 25
+    }
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}

@@ -46,6 +46,12 @@ jobs:
         env:
           MIX_ENV: test
 
+      - name: Protocol conformance (offline packs)
+        run: mix keyverse.conformance
+        env:
+          MIX_ENV: test
+          START_SERVER: "false"
+
       - name: Smoke boot
         run: |
           set -euo pipefail

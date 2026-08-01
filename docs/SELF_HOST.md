@@ -153,13 +153,34 @@ Interop docs: [API.md](./API.md), [../llms.txt](../llms.txt), [../schemas/](../s
 
 ## Backup / move
 
+**You own the pack.** Prefer user export when possible ([OWNERSHIP.md](./OWNERSHIP.md)).
+
+### Export (recommended)
+
+```sh
+# from a running door, or:
+mix keyverse.export /var/lib/keyverse/packs/your-four-word-key ~/keyverse-backup.zip
+mix keyverse.import ~/keyverse-backup.zip /restore/packs/your-four-word-key --replace
+```
+
+Browser: open your pack → **Export pack (.zip)**.
+
+### Folder copy
+
 Copy the **whole pack** (include `door` or you lose the multiword key):
 
 ```sh
-tar czf keyverse-backup.tgz -C /var/lib/keyverse pack
+tar czf keyverse-backup.tgz -C /var/lib/keyverse/packs your-four-word-key
 # restore
-tar xzf keyverse-backup.tgz -C /restore
+mkdir -p /restore/packs
+tar xzf keyverse-backup.tgz -C /restore/packs
 PACK_DIR=/restore/packs mix run --no-halt
+```
+
+Validate any pack offline:
+
+```sh
+mix keyverse.conformance /path/to/pack
 ```
 
 Unencrypted notes remain readable as plain JSON with the server off. Sealed

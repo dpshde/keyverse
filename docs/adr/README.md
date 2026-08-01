@@ -9,7 +9,7 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0003](./0003-flat-blocks-outline.md) | Flat line-blocks for outline content | Accepted |
 | [0004](./0004-compose-dont-absorb.md) | Compose, don’t absorb (containment computed) | Accepted |
 | [0005](./0005-frictionless-no-accounts.md) | Frictionless capture, no accounts | Accepted |
-| [0006](./0006-reference-door-single-process.md) | Reference door: single Node process, no framework | Accepted |
+| [0006](./0006-reference-door-single-process.md) | Reference door: thin host (was Node file) | **Superseded by 0014** |
 | [0007](./0007-scripture-text-as-disposable-cache.md) | Scripture text is a disposable cache | Accepted |
 | [0008](./0008-prod-layers-deferred.md) | Production layers deferred under the pack | Accepted |
 | [0009](./0009-wiki-link-cross-references.md) | Wiki-link cross-references in block text | Accepted |
@@ -17,6 +17,8 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0011](./0011-multiword-door-access.md) | Multiword door URL is the access key (cowyo-style) | Accepted |
 | [0012](./0012-client-side-note-encryption.md) | Client-side note encryption (cowyo-style passphrase) | Accepted |
 | [0013](./0013-outline-collapse-and-structural-ops.md) | Outline collapse and structural ops on flat blocks | Accepted |
+| [0014](./0014-protocol-layers-pack-vs-door.md) | Protocol layers: pack core vs door profiles | Accepted |
+| [0015](./0015-user-owned-pack-transfer.md) | User-owned pack transfer (export / import) | Accepted |
 
 ## How to add an ADR
 
@@ -74,5 +76,6 @@ confidentiality layer under frictionlessness, not a permanence/sync feature.
 | Run locally | [../SELF_HOST.md](../SELF_HOST.md), [../../README.md](../../README.md) |
 | Deploy | [../PRODUCTION.md](../PRODUCTION.md) |
 | UI how-to | [../USAGE.md](../USAGE.md) |
-| Interop format | [../../PROTOCOL.md](../../PROTOCOL.md) |
+| Interop format | [../../PROTOCOL.md](../../PROTOCOL.md), [../../protocol/](../../protocol/) |
+| Ownership / export | [../OWNERSHIP.md](../OWNERSHIP.md) |
 | HTTP matrix / LLMs | [../API.md](../API.md), [../../llms.txt](../../llms.txt), [../../schemas/](../../schemas/) |
