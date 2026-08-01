@@ -1,0 +1,826 @@
+const META = JSON.parse(document.getElementById("page-meta").textContent);
+
+      
+      const seeds = JSON.parse(document.getElementById("verse-seeds").textContent);
+      const chapterDisplay = JSON.stringify(META.display);
+      // slug → { api, noteEl }
+      const editors = new Map();
+      let anchorV = null;       // last plain-clicked verse number (shift+click base)
+      let selRange = null;      // { lo, hi } while a multi-verse selection is active
+      let pickRangeEnd = false; // long-press started; next verse tap completes range
+      // Ignore dismiss/click noise right after opening a passage note (drag/shift tail events).
+      let suppressDismissUntil = 0;
+      document.querySelector(".verse.hl")?.scrollIntoView({ block: "center" });
+
+      function verseNum(el) {
+        if (!el) return null;
+        const n = Number(el.dataset.v);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function verseEl(n) {
+        return document.getElementById("v" + n);
+      }
+
+      function outlineHtml(blocks) {
+        const items = blocks || [];
+        if (!items.length) return "";
+        const hidden = new Set();
+        for (let i = 0; i < items.length; i++) {
+          if (!items[i].collapsed) continue;
+          const base = Math.max(0, items[i].indent|0);
+          for (let j = i + 1; j < items.length; j++) {
+            const d = Math.max(0, items[j].indent|0);
+            if (d <= base) break;
+            hidden.add(j);
+          }
+        }
+        return '<div class="outline">' + items.map((b, i) => {
+          if (hidden.has(i)) return "";
+          const depth = Math.max(0, b.indent|0);
+          const empty = !(b.text && b.text.trim());
+          const hasKids = i + 1 < items.length && (Math.max(0, items[i + 1].indent|0) > depth);
+          const collapsed = !!(b.collapsed && hasKids);
+          let cls = "oline";
+          if (empty) cls += " blank";
+          if (hasKids) cls += " has-kids";
+          if (collapsed) cls += " collapsed";
+          const id = String(b.id || "").replace(/"/g, "");
+          const aria = collapsed ? "Expand" : "Collapse";
+          return '<div class="' + cls + '" style="--depth:' + depth + '" data-id="' + id + '" title="' + id + '">' +
+            '<span class="ochev" role="button" tabindex="-1" aria-label="' + aria + '"></span>' +
+            '<span class="odot" aria-hidden="true"></span>' +
+            '<span class="otxt">' + (empty ? "" : formatBlockHtml(b.text)) + '</span></div>';
+        }).join("") + '</div>';
+      }
+
+      /** Fold/unfold a read-only outline row. Does not open editor or close the verse tray. */
+      function toggleReaderOutlineFold(ochev) {
+        const line = ochev.closest(".oline");
+        const noteEl = ochev.closest(".note");
+        if (!line || !noteEl || noteEl.classList.contains("editing")) return false;
+        if (noteEl.dataset.encrypted === "1") return false;
+        if (!line.classList.contains("has-kids")) return false;
+        const slug = noteEl.dataset.slug;
+        if (!slug || !seeds[slug]) return false;
+        const blocks = seeds[slug].map((b) => ({
+          id: b.id,
+          indent: b.indent|0,
+          text: b.text || "",
+          collapsed: !!b.collapsed,
+        }));
+        const id = line.dataset.id || line.getAttribute("title") || "";
+        const i = blocks.findIndex((b) => b.id === id);
+        if (i < 0) return false;
+        const base = blocks[i].indent|0;
+        if (!(i + 1 < blocks.length && (blocks[i + 1].indent|0) > base)) return false;
+        blocks[i].collapsed = !blocks[i].collapsed;
+        seeds[slug] = blocks;
+        const body = noteEl.querySelector(".note-body");
+        if (body) body.innerHTML = outlineHtml(blocks);
+        // Persist collapse; omit attachments so the server keeps existing ones.
+        const payload = {
+          blocks: blocks.map((b) => {
+            const row = { id: b.id, indent: b.indent|0, text: b.text || "" };
+            if (b.collapsed) row.collapsed = true;
+            return row;
+          }),
+        };
+        fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch(() => {});
+        return true;
+      }
+
+      function statusElFor(noteEl) {
+        const verse = noteEl.closest(".verse");
+        if (verse) return verse.querySelector(".vstatus");
+        return null;
+      }
+
+      function clearSelection() {
+        selRange = null;
+        document.querySelectorAll(".verse.sel").forEach((v) => {
+          v.classList.remove("sel", "sel-lo", "sel-hi");
+        });
+        document.body.classList.remove("pick-range-end");
+        pickRangeEnd = false;
+      }
+
+      function dismissSuppressed() {
+        return performance.now() < suppressDismissUntil;
+      }
+
+      function armDismissSuppress(ms) {
+        suppressDismissUntil = performance.now() + (ms || 450);
+        swallowClick = true;
+      }
+
+      /** Drop multi-verse highlight; optionally finish/close the passage note UI. */
+      async function dismissMultiSelect({ closeNotes = true } = {}) {
+        if (dismissSuppressed()) return;
+        const range = selRange ? { ...selRange } : null;
+        const wasPicking = pickRangeEnd;
+        clearSelection();
+        if (!closeNotes) return;
+        if (range && range.lo !== range.hi) {
+          const host = verseEl(range.hi);
+          if (host) {
+            await closeAllOnVerse(host);
+            host.classList.remove("notes-open", "editing");
+          }
+        } else if (wasPicking && anchorV != null) {
+          verseEl(anchorV)?.classList.remove("notes-open", "editing");
+        }
+        syncAllHasNotes();
+      }
+
+      function paintSelection(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        selRange = { lo: a, hi: b };
+        document.querySelectorAll(".verse").forEach((v) => {
+          const n = verseNum(v);
+          const on = n != null && n >= a && n <= b;
+          v.classList.toggle("sel", on);
+          v.classList.toggle("sel-lo", on && n === a);
+          v.classList.toggle("sel-hi", on && n === b);
+        });
+      }
+
+      function rangeSlug(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        const el = verseEl(a);
+        if (!el) return null;
+        const m = String(el.dataset.slug || "").match(/^(.*)\\.(\\d+)$/);
+        if (!m) return null;
+        if (a === b) return m[1] + "." + a;
+        return m[1] + "." + a + "-" + b;
+      }
+
+      function rangeLabel(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        if (a === b) return chapterDisplay + ":" + a;
+        return chapterDisplay + ":" + a + "\\u2013" + b;
+      }
+
+      function noteHasContent(noteEl) {
+        if (!noteEl) return false;
+        if (noteEl.dataset.encrypted === "1") return true;
+        const blocks = seeds[noteEl.dataset.slug];
+        if (blocks) return blocks.some((b) => b.text.trim());
+        return !!noteEl.querySelector(".oline:not(.blank), .otxt");
+      }
+
+      /** Recompute gutter rails from real note content only (never from bare selection). */
+      function syncAllHasNotes() {
+        const cover = new Set();
+        const verseOnly = new Set();
+        document.querySelectorAll(".note").forEach((n) => {
+          if (!noteHasContent(n)) return;
+          if (n.dataset.kind === "range") {
+            let lo = Number(n.dataset.lo), hi = Number(n.dataset.hi);
+            if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+              const m = String(n.dataset.slug || "").match(/\\.(\\d+)-(\\d+)$/);
+              if (m) { lo = Number(m[1]); hi = Number(m[2]); }
+            }
+            if (Number.isFinite(lo) && Number.isFinite(hi)) {
+              for (let i = lo; i <= hi; i++) cover.add(i);
+            }
+            // host verse always
+            const host = n.closest(".verse");
+            const hv = verseNum(host);
+            if (hv != null) cover.add(hv);
+          } else if (n.dataset.kind === "verse") {
+            const host = n.closest(".verse");
+            const hv = verseNum(host);
+            if (hv != null) {
+              cover.add(hv);
+              verseOnly.add(hv);
+            }
+          }
+        });
+        document.querySelectorAll(".verse").forEach((v) => {
+          const n = verseNum(v);
+          v.classList.toggle("has-notes", n != null && cover.has(n));
+          v.classList.toggle("has-verse-note", n != null && verseOnly.has(n));
+        });
+      }
+
+      function syncHasNotes(verse) {
+        // Keep single-verse callers cheap; full recompute is correct for ranges.
+        syncAllHasNotes();
+        if (verse) { /* verse param retained for call sites */ }
+      }
+
+      async function closeNoteEditor(slug) {
+        const ed = editors.get(slug);
+        if (!ed) return;
+        const { api, noteEl } = ed;
+        const kind = noteEl.dataset.kind;
+        await api.flush();
+        const blocks = api.getBlocks();
+        api.destroy();
+        editors.delete(slug);
+        noteEl.classList.remove("editing");
+        const verse = noteEl.closest(".verse");
+        if (verse && ![...editors.values()].some(e => e.noteEl.closest(".verse") === verse)) {
+          verse.classList.remove("editing");
+        }
+        const status = statusElFor(noteEl);
+        if (status) status.textContent = "";
+        const host = noteEl.querySelector(".note-edit");
+        const body = noteEl.querySelector(".note-body");
+        host.hidden = true;
+        host.innerHTML = "";
+        if (!blocks.some(b => b.text.trim())) {
+          delete seeds[slug];
+          noteEl.remove();
+          // drop empty passage group shell
+          if (verse) {
+            verse.querySelectorAll(".note-group").forEach((g) => {
+              if (!g.querySelector(".note")) g.remove();
+            });
+            if (!verse.querySelector(".note")) verse.classList.remove("notes-open");
+          }
+        } else {
+          seeds[slug] = blocks;
+          body.innerHTML = outlineHtml(blocks);
+          if (verse) verse.classList.add("notes-open", "has-notes");
+        }
+        syncAllHasNotes();
+        if (!editors.size && kind === "range") clearSelection();
+        syncExpandNotesBtn();
+      }
+
+      async function closeAllOnVerse(verse) {
+        const slugs = [...editors.entries()]
+          .filter(([, ed]) => ed.noteEl.closest(".verse") === verse)
+          .map(([slug]) => slug);
+        for (const slug of slugs) await closeNoteEditor(slug);
+      }
+
+      function openNoteEditor(noteEl) {
+        const slug = noteEl.dataset.slug;
+        // Encrypted notes have no plaintext seeds — open full editor unlock flow.
+        if (noteEl.dataset.encrypted === "1") {
+          location.href = BASE + "/note/" + slug;
+          return;
+        }
+        if (editors.has(slug)) { editors.get(slug).api.focus(); return; }
+        const verse = noteEl.closest(".verse");
+        if (verse) verse.classList.add("notes-open", "editing");
+        noteEl.classList.add("editing");
+        const host = noteEl.querySelector(".note-edit");
+        host.hidden = false;
+        host.innerHTML = "";
+        // Keep / restore range address label so scope stays obvious while writing.
+        if (noteEl.dataset.kind === "range") {
+          let lab = noteEl.querySelector(".note-label");
+          if (!lab) {
+            lab = document.createElement("div");
+            lab.className = "note-label";
+            noteEl.insertBefore(lab, noteEl.firstChild);
+          }
+          if (!lab.textContent.trim()) {
+            const m = String(slug).match(/\\.(\\d+)-(\\d+)$/);
+            if (m) lab.textContent = rangeLabel(Number(m[1]), Number(m[2]));
+            else lab.textContent = slug;
+          }
+        }
+        // Label already names the passage — keep the field quiet.
+        const ph = "Write\\u2026";
+        const api = mountOutliner(host, {
+          slug,
+          blocks: seeds[slug] || [{ id: newId(), indent: 0, text: "" }],
+          statusEl: statusElFor(noteEl),
+          compact: true,
+          autofocus: true,
+          placeholder: ph,
+        });
+        editors.set(slug, { api, noteEl });
+      }
+
+      function openVerseNoteEditor(verse) {
+        let el = verse.querySelector('.note[data-kind="verse"]');
+        if (!el) {
+          // place under verse-local group when passage notes already exist
+          let host = verse.querySelector(".vnotes");
+          let group = host.querySelector(".note-group.verse-local");
+          if (!group && host.querySelector(".note-group.passage")) {
+            group = document.createElement("div");
+            group.className = "note-group verse-local";
+            group.innerHTML = '<div class="note-group-title">This verse</div>';
+            host.appendChild(group);
+            host = group;
+          } else if (group) {
+            host = group;
+          }
+          host.insertAdjacentHTML("beforeend",
+            '<div class="note" data-kind="verse" data-slug="' + verse.dataset.slug + '">' +
+            '<div class="note-body"></div><div class="note-edit" hidden></div></div>');
+          el = verse.querySelector('.note[data-kind="verse"]');
+        }
+        openNoteEditor(el);
+      }
+
+      /** Long-press: always open/create this verse's own note (never a covering range). */
+      function forceSingleVerseNote(verse) {
+        if (!verse) return;
+        pickRangeEnd = false;
+        document.body.classList.remove("pick-range-end");
+        clearSelection();
+        const v = verseNum(verse);
+        if (v != null) anchorV = v;
+        armDismissSuppress(400);
+        openVerseNoteEditor(verse);
+        syncExpandNotesBtn();
+        verse.scrollIntoView({ block: "nearest" });
+        requestAnimationFrame(() => {
+          const el = verse.querySelector('.note[data-kind="verse"]');
+          const ed = el && editors.get(el.dataset.slug);
+          if (ed) ed.api.focus();
+        });
+      }
+
+      function ensurePassageNoteEl(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        const slug = rangeSlug(a, b);
+        if (!slug) return null;
+        // Sit under the *last* verse so the full passage reads above the note.
+        const hostVerse = verseEl(b);
+        if (!hostVerse) return null;
+        let el = document.querySelector('.note[data-slug="' + CSS.escape(slug) + '"]');
+        if (el) {
+          // Re-home under end verse if an older render left it on the start.
+          const owner = el.closest(".verse");
+          if (owner && owner !== hostVerse) {
+            let group = hostVerse.querySelector(".vnotes .note-group.passage");
+            if (!group) {
+              group = document.createElement("div");
+              group.className = "note-group passage";
+              const local = hostVerse.querySelector(".vnotes .note-group.verse-local");
+              const vnotes = hostVerse.querySelector(".vnotes");
+              if (local) vnotes.insertBefore(group, local);
+              else vnotes.appendChild(group);
+            }
+            group.appendChild(el);
+            const oldGroup = owner.querySelector(".note-group.passage");
+            if (oldGroup && !oldGroup.querySelector(".note")) oldGroup.remove();
+          }
+          let lab = el.querySelector(".note-label");
+          if (!lab) {
+            lab = document.createElement("div");
+            lab.className = "note-label";
+            el.insertBefore(lab, el.firstChild);
+          }
+          lab.textContent = rangeLabel(a, b);
+          return el;
+        }
+        const vnotes = hostVerse.querySelector(".vnotes");
+        let group = vnotes.querySelector(".note-group.passage");
+        if (!group) {
+          group = document.createElement("div");
+          group.className = "note-group passage";
+          const local = vnotes.querySelector(".note-group.verse-local");
+          if (local) vnotes.insertBefore(group, local);
+          else vnotes.appendChild(group);
+        }
+        const local = vnotes.querySelector(".note-group.verse-local");
+        if (local && !local.querySelector(".note-group-title") && local.querySelector(".note")) {
+          local.insertAdjacentHTML("afterbegin", '<div class="note-group-title">This verse</div>');
+        }
+        if (local && local.querySelector(".note") && !group.querySelector(".note-group-title")) {
+          group.insertAdjacentHTML("afterbegin", '<div class="note-group-title">Passage</div>');
+        }
+        const labelHtml = '<div class="note-label">' + rangeLabel(a, b).replace(/&/g,"&amp;").replace(/</g,"&lt;") + '</div>';
+        group.insertAdjacentHTML("beforeend",
+          '<div class="note" data-kind="range" data-slug="' + slug + '" data-lo="' + a + '" data-hi="' + b + '">' +
+          labelHtml +
+          '<div class="note-body"></div><div class="note-edit" hidden></div></div>');
+        return group.querySelector('.note[data-slug="' + CSS.escape(slug) + '"]');
+      }
+
+      /** Open exactly one passage note for lo–hi and focus its editor. */
+      function openPassageNote(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        pickRangeEnd = false;
+        document.body.classList.remove("pick-range-end");
+        armDismissSuppress(500);
+        if (a === b) {
+          clearSelection();
+          const verse = verseEl(a);
+          if (!verse) return;
+          anchorV = a;
+          openVerseNoteEditor(verse);
+          return;
+        }
+        paintSelection(a, b);
+        const last = verseEl(b);
+        if (!last) return;
+        // Close any other open verse trays so only this passage note is front-and-center.
+        document.querySelectorAll(".verse.notes-open, .verse.editing").forEach((v) => {
+          if (v !== last) {
+            v.classList.remove("notes-open", "editing");
+          }
+        });
+        // Close other inline editors (single focus).
+        for (const [slug, ed] of [...editors.entries()]) {
+          if (ed.noteEl.dataset.slug !== rangeSlug(a, b)) {
+            // fire-and-forget flush of unrelated editors
+            closeNoteEditor(slug);
+          }
+        }
+        const targetSlug = rangeSlug(a, b);
+        // Close other inline editors so only this passage note is open.
+        for (const [slug] of [...editors.entries()]) {
+          if (slug !== targetSlug) closeNoteEditor(slug);
+        }
+        last.classList.add("notes-open", "editing");
+        const el = ensurePassageNoteEl(a, b);
+        if (!el) return;
+        openNoteEditor(el);
+        syncExpandNotesBtn();
+        // Bring the note (under last verse) into view after the passage.
+        last.scrollIntoView({ block: "nearest" });
+        // Focus after layout so the outliner caret lands cleanly.
+        requestAnimationFrame(() => {
+          const ed = editors.get(el.dataset.slug);
+          if (ed) ed.api.focus();
+        });
+      }
+
+      function rangeNoteForVerse(v) {
+        for (const el of document.querySelectorAll('.note[data-kind="range"]')) {
+          if (!noteHasContent(el) && !editors.has(el.dataset.slug)) continue;
+          let lo = Number(el.dataset.lo), hi = Number(el.dataset.hi);
+          if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+            const m = String(el.dataset.slug || "").match(/\\.(\\d+)-(\\d+)$/);
+            if (!m) continue;
+            lo = Number(m[1]); hi = Number(m[2]);
+          }
+          if (v >= lo && v <= hi) return el;
+        }
+        return null;
+      }
+
+      function activateVerseClick(verse, { shiftKey = false } = {}) {
+        const v = verseNum(verse);
+        if (v == null) return;
+
+        // long-press pick mode: same verse again cancels; other verse completes range
+        if (pickRangeEnd && anchorV != null && !shiftKey) {
+          if (v === anchorV) {
+            dismissMultiSelect({ closeNotes: false });
+            return;
+          }
+          openPassageNote(anchorV, v);
+          return;
+        }
+
+        // shift+click → passage from last anchor (or this verse alone)
+        if (shiftKey) {
+          const base = anchorV != null ? anchorV : v;
+          anchorV = base;
+          openPassageNote(base, v);
+          return;
+        }
+
+        // multi-verse select active: click inside = unselect; outside = clear then act
+        if (selRange && selRange.lo !== selRange.hi) {
+          if (dismissSuppressed()) return;
+          const inSel = v >= selRange.lo && v <= selRange.hi;
+          dismissMultiSelect({ closeNotes: true }).then(() => {
+            anchorV = v;
+            if (inSel) return; // unselect only
+            activateVerseClick(verse, { shiftKey: false });
+          });
+          return;
+        }
+
+        anchorV = v;
+
+        // verse text = all-or-none toggle; while editing, finish + hide
+        const editingHere = [...editors.values()].some(ed => ed.noteEl.closest(".verse") === verse);
+        if (editingHere) {
+          closeAllOnVerse(verse).then(() => {
+            verse.classList.remove("notes-open");
+            clearSelection();
+            syncAllHasNotes();
+            syncExpandNotesBtn();
+          });
+          return;
+        }
+        if (verse.classList.contains("notes-open")) {
+          verse.classList.remove("notes-open");
+          clearSelection();
+          syncExpandNotesBtn();
+          return;
+        }
+        // Prefer this verse's own note tray when it has content. A covering
+        // multi-verse passage must not steal the click (e.g. JHN.3.16 under 16–18).
+        const localVerseNote = verse.querySelector('.note[data-kind="verse"]');
+        const hasLocalVerse = localVerseNote && noteHasContent(localVerseNote);
+        if (hasLocalVerse || verse.querySelector('.note[data-kind="verse"] .oline, .note[data-kind="verse"] .otxt')) {
+          verse.classList.add("notes-open");
+          const only = verse.querySelectorAll(".vnotes .note");
+          // Single local note → edit-ready; multiple (passage host + verse) → show tray.
+          if (only.length === 1) openNoteEditor(only[0]);
+          syncExpandNotesBtn();
+          return;
+        }
+        // No local verse note: open a multi-verse passage that covers this verse.
+        const rangeNote = rangeNoteForVerse(v);
+        if (rangeNote) {
+          const lo = Number(rangeNote.dataset.lo);
+          const hi = Number(rangeNote.dataset.hi);
+          if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
+            openPassageNote(lo, hi);
+            return;
+          }
+        }
+        // Other local content (e.g. only a hosted range on this end verse) or empty.
+        if (verse.classList.contains("has-notes") || verse.querySelector(".note .oline, .note .otxt")) {
+          verse.classList.add("notes-open");
+          const only = verse.querySelectorAll(".vnotes .note");
+          if (only.length === 1) openNoteEditor(only[0]);
+          syncExpandNotesBtn();
+          return;
+        }
+        openVerseNoteEditor(verse);
+        syncExpandNotesBtn();
+      }
+
+      // --- multi-verse: mouse drag + long-press (touch) ---
+      let drag = null; // { startV, pointerId, moved, longTimer }
+      let swallowClick = false; // true after pointer path already handled the gesture
+      const LONG_MS = 480;
+
+      function verseFromPoint(x, y) {
+        const stack = document.elementsFromPoint(x, y);
+        for (const node of stack) {
+          const v = node.closest?.(".verse");
+          if (v && v.dataset.v) return v;
+        }
+        return null;
+      }
+
+      function endDrag(e, commit) {
+        if (!drag) return;
+        if (drag.longTimer) clearTimeout(drag.longTimer);
+        document.body.classList.remove("selecting-verses");
+        const d = drag;
+        drag = null;
+        // Always release capture from the verse that took it (not e.target —
+        // capture retargets events, so target may not own the capture).
+        try {
+          const capturer = verseEl(d.startV);
+          if (capturer && d.pointerId != null && capturer.releasePointerCapture) {
+            capturer.releasePointerCapture(d.pointerId);
+          }
+        } catch (_) {}
+        if (!commit) return;
+
+        // multi-verse drag (mouse, or touch after long-press then drag)
+        if (d.moved && d.curV != null && d.curV !== d.startV) {
+          armDismissSuppress(500);
+          openPassageNote(d.startV, d.curV);
+          return;
+        }
+        // long-press without drag → force single-verse note (even under a range)
+        if (d.longPressed && !d.moved) {
+          swallowClick = true;
+          const verse = verseEl(d.startV);
+          if (verse) forceSingleVerseNote(verse);
+          return;
+        }
+        // Plain tap/click: activate here. Do not rely on the synthetic click —
+        // setPointerCapture makes click.target the .verse, so closest(".vtext")
+        // fails and the click listener used to no-op (single-verse expand broken).
+        if (!d.moved && !d.longPressed) {
+          swallowClick = true;
+          const verse = verseEl(d.startV);
+          if (verse) activateVerseClick(verse, { shiftKey: !!d.shiftKey });
+        }
+      }
+
+      /** True when the event is on verse scripture text (not the note tray). */
+      function isVerseTextTarget(el) {
+        if (!el || !el.closest) return false;
+        const verse = el.closest(".verse");
+        if (!verse) return false;
+        if (el.closest(".vnotes, .note, .note-edit, .outliner, .otext, .obullet, .note-body, .note-label, .ochev, .outline, .odot")) {
+          return false;
+        }
+        // .vtext, its children (sup, status), or the .verse shell itself after capture
+        return !!(el.closest(".vtext") || el === verse || verse.contains(el));
+      }
+
+      document.addEventListener("pointerdown", (e) => {
+        if (e.button != null && e.button !== 0) return;
+        // Outline chevrons / note chrome must never start a verse drag/toggle.
+        if (e.target.closest("a, .otext, .obullet, .outliner, .note-edit, .note-body, .note-label, .ochev, .outline, .odot")) return;
+        const verse = e.target.closest(".verse");
+        if (!verse || !isVerseTextTarget(e.target)) return;
+        const v = verseNum(verse);
+        if (v == null) return;
+        swallowClick = false;
+        drag = {
+          startV: v,
+          curV: v,
+          pointerId: e.pointerId,
+          pointerType: e.pointerType || "mouse",
+          moved: false,
+          longPressed: false,
+          shiftKey: e.shiftKey,
+          longTimer: null,
+        };
+        // mouse: capture for drag-select; both: long-press forces single-verse note
+        if ((e.pointerType || "mouse") === "mouse") {
+          try { verse.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+        drag.longTimer = setTimeout(() => {
+          if (!drag || drag.moved) return;
+          drag.longPressed = true;
+          anchorV = drag.startV;
+          // Quiet hold feedback (do not enter multi-verse pick mode)
+          paintSelection(drag.startV, drag.startV);
+          if (navigator.vibrate) try { navigator.vibrate(12); } catch (_) {}
+        }, LONG_MS);
+      });
+
+      document.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const over = verseFromPoint(e.clientX, e.clientY);
+        const n = over ? verseNum(over) : null;
+        if (n == null) return;
+        if (n !== drag.curV || n !== drag.startV) {
+          if (n === drag.startV && !drag.moved) return;
+          // touch: only drag-extend after long-press (avoids scroll-as-select)
+          if (drag.pointerType !== "mouse" && !drag.longPressed) {
+            if (drag.longTimer) { clearTimeout(drag.longTimer); drag.longTimer = null; }
+            return;
+          }
+          if (n !== drag.startV) {
+            if (drag.longTimer) { clearTimeout(drag.longTimer); drag.longTimer = null; }
+            drag.moved = true;
+            drag.curV = n;
+            document.body.classList.add("selecting-verses");
+            paintSelection(drag.startV, n);
+          }
+        }
+      });
+
+      document.addEventListener("pointerup", (e) => endDrag(e, true));
+      document.addEventListener("pointercancel", (e) => endDrag(e, false));
+
+      document.addEventListener("click", (e) => {
+        if (e.target.closest("a")) return;
+        if (e.target.closest(".otext, .obullet, .outliner, .note-edit")) return;
+
+        // Read-only outline chevron: fold subnests only (never open editor / close tray).
+        const foldChev = e.target.closest(".outline .ochev, .oline.has-kids .ochev");
+        if (foldChev) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleReaderOutlineFold(foldChev);
+          return;
+        }
+
+        // click any note outline (verse / range / chapter) → edit that note inline
+        const body = e.target.closest(".note .note-body");
+        if (body) {
+          const noteEl = body.closest(".note");
+          if (!editors.has(noteEl.dataset.slug)) openNoteEditor(noteEl);
+          return;
+        }
+        // click range/chapter label → edit too
+        const label = e.target.closest(".note .note-label");
+        if (label) {
+          openNoteEditor(label.closest(".note"));
+          return;
+        }
+
+        // pointer path already handled (plain click, drag, touch, long-press, passage open)
+        if (swallowClick || dismissSuppressed()) {
+          swallowClick = false;
+          return;
+        }
+
+        const verse = e.target.closest(".verse");
+        // click outside scripture (or on note tray) → unselect multi-verse
+        if (!verse || !isVerseTextTarget(e.target)) {
+          if ((selRange && selRange.lo !== selRange.hi) || pickRangeEnd) {
+            // clicks inside the open passage note/editor must not dismiss
+            if (!e.target.closest(".note, .vnotes, .chapter-note, .outliner, .note-edit")) {
+              dismissMultiSelect({ closeNotes: true });
+            }
+          }
+          return;
+        }
+
+        // Fallback if pointerdown didn't run (e.g. keyboard-activated click)
+        activateVerseClick(verse, { shiftKey: e.shiftKey });
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        if (editors.size) {
+          e.preventDefault();
+          const last = [...editors.keys()].pop();
+          closeNoteEditor(last).then(syncExpandNotesBtn);
+          return;
+        }
+        if (pickRangeEnd || (selRange && selRange.lo !== selRange.hi)) {
+          e.preventDefault();
+          dismissMultiSelect({ closeNotes: true }).then(syncExpandNotesBtn);
+          return;
+        }
+        if (selRange) {
+          e.preventDefault();
+          clearSelection();
+          return;
+        }
+        // With all notes open (VBV), Esc collapses everything in one step.
+        if (allNotesExpanded()) {
+          e.preventDefault();
+          collapseAllNotes();
+          return;
+        }
+        const open = document.querySelector(".verse.notes-open");
+        if (open) {
+          e.preventDefault();
+          open.classList.remove("notes-open");
+          clearSelection();
+          syncExpandNotesBtn();
+        }
+      });
+
+      // --- expand / collapse all verse notes (VBV analysis) ---
+      function versesWithNoteEls() {
+        return [...document.querySelectorAll(".verse")].filter((v) =>
+          v.querySelector(".vnotes .note")
+        );
+      }
+
+      function allNotesExpanded() {
+        const vs = versesWithNoteEls();
+        return vs.length > 0 && vs.every((v) => v.classList.contains("notes-open"));
+      }
+
+      function syncExpandNotesBtn() {
+        const btn = document.getElementById("expand-notes");
+        if (!btn) return;
+        const vs = versesWithNoteEls();
+        if (!vs.length) {
+          btn.hidden = true;
+          return;
+        }
+        btn.hidden = false;
+        const open = allNotesExpanded();
+        btn.textContent = open ? "collapse notes" : "expand notes";
+        btn.setAttribute("aria-pressed", open ? "true" : "false");
+        btn.setAttribute(
+          "aria-label",
+          open ? "Collapse all verse notes" : "Expand all verse notes"
+        );
+      }
+
+      function expandAllNotes() {
+        clearSelection();
+        // View only — do not open editors. Show every note tray that has content.
+        versesWithNoteEls().forEach((v) => v.classList.add("notes-open"));
+        syncExpandNotesBtn();
+      }
+
+      async function collapseAllNotes() {
+        clearSelection();
+        for (const slug of [...editors.keys()]) {
+          await closeNoteEditor(slug);
+        }
+        document.querySelectorAll(".verse.notes-open, .verse.editing").forEach((v) => {
+          v.classList.remove("notes-open", "editing");
+        });
+        syncExpandNotesBtn();
+      }
+
+      document.getElementById("expand-notes")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (allNotesExpanded()) collapseAllNotes();
+        else expandAllNotes();
+      });
+
+      // deep-link: same selection chrome for single- and multi-verse; open notes
+      // only on verses that actually host note nodes (not empty range-cover mids —
+      // those empty trays painted border/padding seams between stitched verses).
+      const hlVerses = [...document.querySelectorAll(".verse.hl")];
+      if (hlVerses.length) {
+        const nums = hlVerses.map(verseNum).filter((n) => n != null);
+        if (nums.length) paintSelection(Math.min(...nums), Math.max(...nums));
+      }
+      document.querySelectorAll(".verse.hl").forEach((v) => {
+        if (v.querySelector(".vnotes .note")) v.classList.add("notes-open");
+      });
+      syncExpandNotesBtn();

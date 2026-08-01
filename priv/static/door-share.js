@@ -1,0 +1,144 @@
+(function () {
+    var wrap = document.getElementById("door-share-wrap");
+    var btn = document.getElementById("door-share");
+    var panel = document.getElementById("door-share-panel");
+    var closeBtn = document.getElementById("door-share-close");
+    var qrEl = document.getElementById("door-share-qr");
+    var action = document.getElementById("door-share-action");
+    var copyBtn = document.getElementById("door-share-copy");
+    if (!wrap || !btn || !panel || !closeBtn || !qrEl || !action || !copyBtn) return;
+    var key = document.getElementById("door-share").getAttribute("data-key");
+    var ready = false;
+    var loading = false;
+
+    function packUrl() {
+      return location.origin + "/" + key + "/";
+    }
+
+    function ensureContent() {
+      if (ready || loading) return;
+      loading = true;
+      qrEl.setAttribute("aria-busy", "true");
+      var qrUrl = (typeof BASE === "string" ? BASE : "") + "/api/share-qr?origin=" +
+        encodeURIComponent(location.origin);
+      fetch(qrUrl, { credentials: "same-origin" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("qr " + r.status);
+          return r.text();
+        })
+        .then(function (svg) {
+          qrEl.innerHTML = svg;
+          var s = qrEl.querySelector("svg");
+          if (s) {
+            s.setAttribute("role", "img");
+            s.setAttribute("aria-label", "QR code for notes link");
+            s.removeAttribute("width");
+            s.removeAttribute("height");
+            s.style.width = "100%";
+            s.style.height = "100%";
+          }
+          ready = true;
+        })
+        .catch(function () {
+          qrEl.innerHTML = "<span style=\\"font-size:.75rem;opacity:.55\\">QR unavailable</span>";
+        })
+        .finally(function () {
+          loading = false;
+          qrEl.setAttribute("aria-busy", "false");
+        });
+    }
+
+    function isOpen() { return wrap.dataset.open === "1"; }
+    function openPop() {
+      ensureContent();
+      panel.hidden = false;
+      wrap.dataset.open = "1";
+      btn.setAttribute("aria-expanded", "true");
+    }
+    function closePop() {
+      panel.hidden = true;
+      wrap.dataset.open = "0";
+      btn.setAttribute("aria-expanded", "false");
+    }
+    function togglePop() {
+      if (isOpen()) closePop(); else openPop();
+    }
+
+    function flashEl(el, msg) {
+      var prev = el.textContent;
+      el.textContent = msg;
+      el.dataset.flash = "1";
+      setTimeout(function () {
+        el.textContent = prev;
+        el.dataset.flash = "0";
+      }, 1400);
+    }
+
+    async function copyUrl(feedbackEl) {
+      var url = packUrl();
+      var target = feedbackEl || copyBtn;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = url; ta.setAttribute("readonly", "");
+          ta.style.position = "fixed"; ta.style.left = "-9999px";
+          document.body.appendChild(ta); ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        flashEl(target, "Copied");
+      } catch (e) {
+        flashEl(target, "—");
+        window.prompt("Copy your notes link:", url);
+      }
+    }
+
+    async function shareUrl() {
+      var url = packUrl();
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: "keyverse",
+            text: "Open my scripture notes",
+            url: url,
+          });
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") return;
+        }
+      }
+      await copyUrl(action);
+    }
+
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      togglePop();
+    });
+    closeBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      closePop();
+      btn.focus();
+    });
+    action.addEventListener("click", function (e) {
+      e.stopPropagation();
+      shareUrl();
+    });
+    copyBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      copyUrl(copyBtn);
+    });
+    panel.addEventListener("click", function (e) { e.stopPropagation(); });
+    document.addEventListener("click", function () {
+      if (isOpen()) closePop();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && isOpen()) {
+        closePop();
+        btn.focus();
+      }
+    });
+
+    try { localStorage.setItem("vp_door_key", key); } catch (e) {}
+  })();

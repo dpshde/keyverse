@@ -1,0 +1,313 @@
+const slug = JSON.parse(document.getElementById("page-meta").textContent).slug;
+      let blocks = JSON.parse(document.getElementById("initial-blocks").textContent);
+      let attachments = JSON.parse(document.getElementById("initial-atts").textContent);
+      const cipher = JSON.parse(document.getElementById("initial-cipher").textContent);
+      let outlinerApi = null;
+      const attRoot = document.getElementById("att-root");
+      let uploadBusy = false;
+
+      function setStatus(msg) {
+        const el = document.getElementById("status");
+        if (el) el.textContent = msg || "";
+      }
+
+      function escH(s) {
+        return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
+      }
+      function fmtSize(n) {
+        n = Number(n) || 0;
+        if (n < 1024) return n + " B";
+        if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+        return (n / 1048576).toFixed(1) + " MB";
+      }
+      function shortName(name, max) {
+        name = String(name || "file");
+        max = max || 28;
+        if (name.length <= max) return name;
+        return name.slice(0, max - 1) + "…";
+      }
+
+      function renderAtts() {
+        if (!attRoot) return;
+        const rows = (attachments || []).map(a => {
+          if (a.kind === "file") {
+            const href = BASE + "/api/attachments/" + a.sha256 + "?name=" + encodeURIComponent(a.name || "file");
+            const isImg = (a.mime || "").indexOf("image/") === 0;
+            const icon = isImg
+              ? '<img class="att-thumb" src="' + href + '" alt="">'
+              : '<span class="att-icon" aria-hidden="true">□</span>';
+            return '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="file">' +
+              icon +
+              '<a class="attlink" href="' + href + '"' + (isImg ? ' target="_blank" rel="noopener"' : " download") + '>' +
+              escH(a.name || "file") + '</a>' +
+              '<span class="att-meta">' + fmtSize(a.bytes) + '</span>' +
+              '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">×</button></li>';
+          }
+          return '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="url">' +
+            '<span class="att-icon" aria-hidden="true">↗</span>' +
+            '<a class="attlink" href="' + escH(a.url) + '" target="_blank" rel="noopener noreferrer">' +
+            escH(a.title || a.url) + '</a>' +
+            '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">×</button></li>';
+        }).join("");
+        attRoot.innerHTML =
+          '<div class="att-board" id="att-board">' +
+            (rows ? '<ul class="att-list">' + rows + '</ul>' : '') +
+            '<form class="att-add" id="att-url-form">' +
+              '<label class="att-file-btn' + (uploadBusy ? " busy" : "") + '">+ File' +
+              '<input type="file" id="att-file" multiple accept="*/*"' + (uploadBusy ? " disabled" : "") + '></label>' +
+              '<div class="att-link-wrap" id="att-link-wrap">' +
+                '<button type="button" class="att-link-btn" id="att-link-open">+ Link</button>' +
+                '<input class="att-url" type="url" id="att-url" placeholder="https://…" inputmode="url" autocomplete="url">' +
+              '</div>' +
+            '</form>' +
+          '</div>';
+        wireAttControls();
+      }
+
+      function newAttIdLocal() {
+        return "att_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      }
+
+      async function reencryptIfNeeded() {
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase() && outlinerApi) {
+          setStatus("encrypting…");
+          await outlinerApi.flush(true);
+          setStatus("saved · encrypted");
+          return true;
+        }
+        return false;
+      }
+
+      async function postUrl(url) {
+        setStatus("adding link…");
+        // With a pack passphrase, fold URL into the encrypted envelope (no plaintext on disk).
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+          attachments = attachments.concat([{
+            id: newAttIdLocal(), kind: "url", url, created_at: new Date().toISOString(),
+          }]);
+          renderAtts();
+          await reencryptIfNeeded();
+          return;
+        }
+        try {
+          const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind: "url", url }),
+          });
+          if (!r.ok) { setStatus("link failed"); return; }
+          const data = await r.json();
+          if (data.encrypted && data.attachment) {
+            attachments = attachments.concat([data.attachment]);
+          } else {
+            attachments = data.attachments || [];
+          }
+          renderAtts();
+          setStatus("link added");
+        } catch { setStatus("offline"); }
+      }
+
+      async function postFiles(fileList) {
+        const files = [...fileList];
+        if (!files.length) return;
+        uploadBusy = true;
+        renderAtts();
+        const total = files.length;
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const name = shortName(file.name || "file");
+          const size = fmtSize(file.size);
+          setStatus(total > 1
+            ? "uploading " + (i + 1) + "/" + total + " · " + name
+            : "uploading " + name + " (" + size + ")");
+          try {
+            const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
+              method: "POST",
+              headers: {
+                "content-type": file.type || "application/octet-stream",
+                "x-filename": file.name || "file",
+              },
+              body: file,
+            });
+            if (!r.ok) {
+              let detail = "";
+              try {
+                const err = await r.json();
+                if (err && err.error) detail = " · " + err.error;
+              } catch (e) {}
+              setStatus("upload failed · " + name + detail);
+              uploadBusy = false;
+              renderAtts();
+              return;
+            }
+            const data = await r.json();
+            if (data.encrypted && data.attachment) {
+              attachments = attachments.concat([data.attachment]);
+            } else {
+              attachments = data.attachments || [];
+            }
+            renderAtts();
+            if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+              await reencryptIfNeeded();
+            } else {
+              setStatus(total > 1
+                ? "uploaded " + (i + 1) + "/" + total + " · " + name
+                : "uploaded " + name);
+            }
+          } catch {
+            setStatus("upload offline · " + name);
+            uploadBusy = false;
+            renderAtts();
+            return;
+          }
+        }
+        uploadBusy = false;
+        renderAtts();
+        if (!(typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase())) {
+          setStatus(total > 1 ? "uploaded " + total + " files" : "uploaded " + shortName(files[0].name || "file"));
+        }
+      }
+
+      function wireAttControls() {
+        const form = document.getElementById("att-url-form");
+        const wrap = document.getElementById("att-link-wrap");
+        const openBtn = document.getElementById("att-link-open");
+        const input = document.getElementById("att-url");
+
+        function openLinkField() {
+          if (!wrap || !input) return;
+          wrap.dataset.open = "1";
+          input.focus();
+          try { input.select(); } catch (e) {}
+        }
+        function closeLinkField() {
+          if (!wrap || !input) return;
+          if ((input.value || "").trim()) return;
+          wrap.dataset.open = "0";
+          input.value = "";
+        }
+
+        if (openBtn) {
+          openBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            openLinkField();
+          });
+        }
+        if (input) {
+          input.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              input.value = "";
+              if (wrap) wrap.dataset.open = "0";
+              if (openBtn) openBtn.focus();
+            }
+          });
+          input.addEventListener("blur", () => {
+            setTimeout(closeLinkField, 120);
+          });
+        }
+        if (form) {
+          form.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const url = (input && input.value || "").trim();
+            if (!url) { openLinkField(); return; }
+            postUrl(url).then(() => {
+              if (input) input.value = "";
+              if (wrap) wrap.dataset.open = "0";
+            });
+          });
+        }
+        const fileInput = document.getElementById("att-file");
+        if (fileInput) {
+          fileInput.addEventListener("change", (e) => {
+            const files = [...(e.target.files || [])];
+            e.target.value = "";
+            if (files.length) postFiles(files);
+          });
+        }
+      }
+
+      function startEditor() {
+        const host = document.getElementById("editor");
+        host.innerHTML = "";
+        outlinerApi = mountOutliner(host, {
+          slug,
+          blocks,
+          attachments,
+          getAttachments: () => attachments,
+          statusEl: document.getElementById("status"),
+          autofocus: true,
+          page: true,
+          placeholder: "Write…",
+        });
+        renderAtts();
+      }
+
+      async function tryUnlock(pw) {
+        if (!cipher) return true;
+        try {
+          const payload = await VP_CRYPTO.decryptPayload(cipher, pw);
+          blocks = payload.blocks || [{ id: "b_new", indent: 0, text: "" }];
+          attachments = payload.attachments || [];
+          VP_CRYPTO.setPassphrase(pw);
+          document.getElementById("crypto-gate").hidden = true;
+          document.getElementById("note-main").hidden = false;
+          document.getElementById("crypto-err").hidden = true;
+          startEditor();
+          document.getElementById("crypto-status") && document.dispatchEvent(new CustomEvent("vpcrypto", { detail: { on: true } }));
+          return true;
+        } catch {
+          document.getElementById("crypto-err").hidden = false;
+          return false;
+        }
+      }
+
+      if (attRoot) {
+        attRoot.addEventListener("click", async (e) => {
+          const btn = e.target.closest(".att-remove");
+          if (!btn) return;
+          e.preventDefault();
+          const id = btn.dataset.att;
+          const removed = attachments.find(a => a.id === id);
+          setStatus("removing…");
+          if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+            attachments = attachments.filter(a => a.id !== id);
+            renderAtts();
+            try {
+              let delUrl = BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id);
+              if (removed && removed.kind === "file" && removed.sha256) {
+                delUrl += "?sha256=" + encodeURIComponent(removed.sha256);
+              }
+              await fetch(delUrl, { method: "DELETE" });
+            } catch { /* GC best-effort */ }
+            await reencryptIfNeeded();
+            return;
+          }
+          try {
+            const r = await fetch(BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id), { method: "DELETE" });
+            if (!r.ok) { setStatus("remove failed"); return; }
+            const data = await r.json();
+            if (data.encrypted) {
+              attachments = attachments.filter(a => a.id !== id);
+            } else {
+              attachments = data.attachments || [];
+            }
+            renderAtts();
+            setStatus("removed");
+          } catch { setStatus("offline"); }
+        });
+      }
+
+      if (cipher) {
+        if (VP_CRYPTO.hasPassphrase()) {
+          tryUnlock(VP_CRYPTO.getPassphrase()).then(ok => {
+            if (!ok) { /* stay on gate */ }
+          });
+        }
+        document.getElementById("crypto-unlock-form").addEventListener("submit", (e) => {
+          e.preventDefault();
+          tryUnlock(document.getElementById("crypto-pw").value);
+        });
+      } else {
+        startEditor();
+      }

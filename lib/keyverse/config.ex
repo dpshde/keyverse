@@ -1,0 +1,80 @@
+defmodule Keyverse.Config do
+  @moduledoc "Runtime configuration for the multipack door."
+
+  def port, do: Application.get_env(:keyverse, :port, 4180)
+
+  def host, do: Application.get_env(:keyverse, :host, "0.0.0.0")
+
+  def ip do
+    case host() do
+      "0.0.0.0" -> {0, 0, 0, 0}
+      "127.0.0.1" -> {127, 0, 0, 1}
+      "::" -> {0, 0, 0, 0, 0, 0, 0, 0}
+      other ->
+        case :inet.parse_address(String.to_charlist(other)) do
+          {:ok, addr} -> addr
+          _ -> {0, 0, 0, 0}
+        end
+    end
+  end
+
+  def packs_root do
+    root = Application.get_env(:keyverse, :packs_root) || Path.expand("packs")
+    Path.expand(root)
+  end
+
+  def door_open?, do: Application.get_env(:keyverse, :door_open, false) == true
+
+  def boot_door do
+    Application.get_env(:keyverse, :boot_door, "")
+    |> to_string()
+    |> Keyverse.Door.normalize()
+  end
+
+  def max_attach_bytes, do: Application.get_env(:keyverse, :max_attach_bytes, 50 * 1024 * 1024)
+
+  def cors_origin, do: Application.get_env(:keyverse, :cors_origin)
+
+  def fathom_site do
+    case Application.get_env(:keyverse, :fathom_site, "EMYGRIAR") do
+      v when v in ["off", "0", "false", "no", ""] -> ""
+      nil -> "EMYGRIAR"
+      other -> to_string(other) |> String.trim()
+    end
+  end
+
+  def protocol_name, do: "keyverse"
+  def protocol_version, do: "0.1-demo"
+
+  def static_dir, do: Application.app_dir(:keyverse, "priv/static")
+
+  def words_path do
+    candidates = [
+      Path.join(File.cwd!(), "words-door.txt"),
+      Path.expand("words-door.txt"),
+      Application.app_dir(:keyverse, "priv/words-door.txt")
+    ]
+
+    Enum.find(candidates, &File.exists?/1) || List.first(candidates)
+  end
+
+  def ensure_packs_root! do
+    File.mkdir_p!(packs_root())
+    File.mkdir_p!(Path.join(packs_root(), "_cache/text/bsb"))
+
+    if door_open?() do
+      Keyverse.Pack.ensure_dirs!(Path.join(packs_root(), "_open"))
+    end
+
+    boot = boot_door()
+
+    if boot != "" and Keyverse.Door.valid?(boot) and not Keyverse.Pack.exists?(boot) do
+      case Keyverse.Pack.create(boot) do
+        {:ok, _} -> IO.puts("created boot pack: #{boot}")
+        {:error, reason} -> IO.puts("boot pack error: #{inspect(reason)}")
+      end
+    end
+
+    :ok
+  end
+end

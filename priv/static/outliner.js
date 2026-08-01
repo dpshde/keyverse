@@ -1,0 +1,1406 @@
+
+function newId() {
+  return "b_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\\"": "&quot;", "'": "&#39;" })[c];
+  });
+}
+
+/** Client twin of formatBlockText (wiki via /go; no attachment embeds in editor). */
+function formatBlockHtml(text) {
+  var s = String(text == null ? "" : text);
+  var i = 0, out = "";
+  var base = typeof BASE === "string" ? BASE : "";
+  function isWord(ch) { return ch != null && /[A-Za-z0-9]/.test(ch); }
+  while (i < s.length) {
+    if (s[i] === "\`") {
+      var ce = s.indexOf("\`", i + 1);
+      if (ce > i + 1 && s.slice(i + 1, ce).indexOf("\\n") < 0) {
+        out += '<code class="md-code">' + escHtml(s.slice(i + 1, ce)) + "</code>";
+        i = ce + 1; continue;
+      }
+    }
+    if (s[i] === "!" && s[i + 1] === "[" && s[i + 2] === "[") {
+      var ee = s.indexOf("]]", i + 3);
+      if (ee >= 0 && s.slice(i + 3, ee).indexOf("\\n") < 0) {
+        var einner = s.slice(i + 3, ee);
+        var epipe = einner.indexOf("|");
+        var et = (epipe < 0 ? einner : einner.slice(0, epipe)).trim();
+        var elab = epipe < 0 ? et : (einner.slice(epipe + 1).trim() || et);
+        if (/^https?:\\/\\//i.test(et)) {
+          out += '<a class="md-link" href="' + escHtml(et) + '" target="_blank" rel="noopener noreferrer">' +
+            escHtml(elab) + "</a>";
+        } else {
+          out += escHtml(s.slice(i, ee + 2));
+        }
+        i = ee + 2; continue;
+      }
+    }
+    if (s[i] === "[" && s[i + 1] === "[") {
+      var we = s.indexOf("]]", i + 2);
+      if (we >= 0 && s.slice(i + 2, we).indexOf("\\n") < 0) {
+        var winner = s.slice(i + 2, we);
+        var wpipe = winner.indexOf("|");
+        var wt = (wpipe < 0 ? winner : winner.slice(0, wpipe)).trim();
+        var wlab = wpipe < 0 ? wt : (winner.slice(wpipe + 1).trim() || wt);
+        out += '<a class="wikilink" href="' + base + "/go?q=" + encodeURIComponent(wt) + '">' +
+          escHtml(wlab) + "</a>";
+        i = we + 2; continue;
+      }
+    }
+    if (s[i] === "[") {
+      var mc = s.indexOf("]", i + 1);
+      if (mc > i + 1 && s[mc + 1] === "(") {
+        var mu = s.indexOf(")", mc + 2);
+        if (mu > mc + 2) {
+          var mlab = s.slice(i + 1, mc);
+          var murl = s.slice(mc + 2, mu).trim();
+          if (mlab && mlab.indexOf("\\n") < 0 && /^https?:\\/\\/[^\\s]+$/i.test(murl)) {
+            out += '<a class="md-link" href="' + escHtml(murl) + '" target="_blank" rel="noopener noreferrer">' +
+              escHtml(mlab) + "</a>";
+            i = mu + 1; continue;
+          }
+        }
+      }
+    }
+    if (s[i] === "*" && s[i + 1] === "*") {
+      var be = s.indexOf("**", i + 2);
+      if (be > i + 2) {
+        var bi = s.slice(i + 2, be);
+        if (bi && bi.indexOf("*") < 0 && bi.indexOf("\\n") < 0) {
+          out += '<strong class="md-strong">' + escHtml(bi) + "</strong>";
+          i = be + 2; continue;
+        }
+      }
+    }
+    if (s[i] === "~" && s[i + 1] === "~") {
+      var se = s.indexOf("~~", i + 2);
+      if (se > i + 2) {
+        var si = s.slice(i + 2, se);
+        if (si && si.indexOf("~") < 0 && si.indexOf("\\n") < 0) {
+          out += '<s class="md-strike">' + escHtml(si) + "</s>";
+          i = se + 2; continue;
+        }
+      }
+    }
+    if (s[i] === "*" && s[i + 1] !== "*") {
+      var ie = s.indexOf("*", i + 1);
+      if (ie > i + 1) {
+        var ii = s.slice(i + 1, ie);
+        if (ii && ii.indexOf("*") < 0 && ii.indexOf("\\n") < 0) {
+          out += '<em class="md-em">' + escHtml(ii) + "</em>";
+          i = ie + 1; continue;
+        }
+      }
+    }
+    if (s[i] === "_") {
+      var prev = i > 0 ? s[i - 1] : " ";
+      if (!isWord(prev)) {
+        var ue = s.indexOf("_", i + 1);
+        if (ue > i + 1) {
+          var un = ue + 1 < s.length ? s[ue + 1] : " ";
+          var ui = s.slice(i + 1, ue);
+          if (ui && ui.indexOf("_") < 0 && ui.indexOf("\\n") < 0 && !isWord(un)) {
+            out += '<em class="md-em">' + escHtml(ui) + "</em>";
+            i = ue + 1; continue;
+          }
+        }
+      }
+    }
+    var j = i + 1;
+    while (j < s.length) {
+      var c = s[j];
+      if (c === "\`" || c === "[" || c === "*" || c === "~" || c === "_" ||
+          (c === "!" && s[j + 1] === "[")) break;
+      j++;
+    }
+    out += escHtml(s.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
+function mountOutliner(host, opts) {
+  const slug = opts.slug;
+  const statusEl = opts.statusEl || null;
+  const compact = !!opts.compact;
+  const placeholder = opts.placeholder || "Write\u2026";
+  let blocks = (opts.blocks && opts.blocks.length)
+    ? opts.blocks.map(b => ({
+        id: b.id || newId(),
+        indent: b.indent|0,
+        text: b.text || "",
+        collapsed: !!b.collapsed,
+      }))
+    : [{ id: newId(), indent: 0, text: "", collapsed: false }];
+  let timer = null;
+  let inflight = null;
+  let dirty = false;
+  let activeId = blocks[0] ? blocks[0].id : null;
+  let selected = null; // { anchor, focus } ids for multi-select, or null
+  let undoStack = [];
+  let redoStack = [];
+  let typingHistArmed = true;
+  let histTimer = null;
+  const HIST_MAX = 100;
+  // While rebuild DOM, ignore focusout — removing the focused row would otherwise
+  // nested-render in view mode and steal focus from Enter/Tab/etc.
+  let rebuilding = false;
+  let blurTimer = null;
+  let alive = true;
+
+  const shell = document.createElement("div");
+  shell.className = "outliner-shell" + (compact ? " compact" : "");
+  host.replaceWith(shell);
+  shell.appendChild(host);
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "otoolbar";
+  toolbar.innerHTML =
+    '<button type="button" class="otool-btn" data-act="outdent" aria-label="Unnest">' +
+      '<span class="otool-ico" aria-hidden="true">\u21E4</span>unnest</button>' +
+    '<button type="button" class="otool-btn" data-act="indent" aria-label="Nest">' +
+      '<span class="otool-ico" aria-hidden="true">\u21E5</span>nest</button>' +
+    '<button type="button" class="otool-btn" data-act="collapse" aria-label="Collapse or expand">' +
+      '<span class="otool-ico" aria-hidden="true">\u25BE</span>fold</button>';
+  shell.appendChild(toolbar);
+
+  const dropLine = document.createElement("div");
+  dropLine.className = "odrop";
+  host.appendChild(dropLine);
+
+  host.classList.add("outliner");
+  if (compact) host.classList.add("compact");
+  if (opts.page) host.classList.add("page");
+  host.dataset.slug = slug;
+
+  function setStatus(s) { if (statusEl) statusEl.textContent = s; }
+
+  function snap() {
+    return blocks.map(b => ({
+      id: b.id, indent: b.indent, text: b.text, collapsed: !!b.collapsed,
+    }));
+  }
+  function restore(s) {
+    blocks = s.map(b => ({
+      id: b.id, indent: b.indent, text: b.text, collapsed: !!b.collapsed,
+    }));
+  }
+  function pushHistory() {
+    undoStack.push(snap());
+    if (undoStack.length > HIST_MAX) undoStack.shift();
+    redoStack = [];
+  }
+  function undo() {
+    if (!undoStack.length) return;
+    syncFromDom();
+    redoStack.push(snap());
+    restore(undoStack.pop());
+    selected = null;
+    const id = activeId && blocks.some(b => b.id === activeId)
+      ? activeId : (blocks[0] && blocks[0].id);
+    render(id, null);
+    scheduleSave();
+  }
+  function redo() {
+    if (!redoStack.length) return;
+    syncFromDom();
+    undoStack.push(snap());
+    restore(redoStack.pop());
+    selected = null;
+    const id = activeId && blocks.some(b => b.id === activeId)
+      ? activeId : (blocks[0] && blocks[0].id);
+    render(id, null);
+    scheduleSave();
+  }
+  function armTypingHistory() {
+    typingHistArmed = true;
+  }
+  function maybeTextHistory() {
+    if (typingHistArmed) {
+      pushHistory();
+      typingHistArmed = false;
+    }
+    clearTimeout(histTimer);
+    histTimer = setTimeout(armTypingHistory, 450);
+  }
+
+  function subtreeEnd(i) {
+    const base = blocks[i].indent;
+    let j = i + 1;
+    while (j < blocks.length && blocks[j].indent > base) j++;
+    return j;
+  }
+  function hasChildren(i) {
+    return i + 1 < blocks.length && blocks[i + 1].indent > blocks[i].indent;
+  }
+  function parentIndex(i) {
+    const base = blocks[i].indent;
+    if (base <= 0) return -1;
+    for (let j = i - 1; j >= 0; j--) {
+      if (blocks[j].indent === base - 1) return j;
+      if (blocks[j].indent < base - 1) return -1;
+    }
+    return -1;
+  }
+  function prevSibling(i) {
+    const base = blocks[i].indent;
+    for (let j = i - 1; j >= 0; j--) {
+      if (blocks[j].indent < base) return -1;
+      if (blocks[j].indent === base) return j;
+    }
+    return -1;
+  }
+  function nextSibling(i) {
+    const base = blocks[i].indent;
+    const end = subtreeEnd(i);
+    if (end < blocks.length && blocks[end].indent === base) return end;
+    return -1;
+  }
+  function isHiddenByCollapse(i) {
+    let ind = blocks[i].indent;
+    for (let j = i - 1; j >= 0 && ind > 0; j--) {
+      if (blocks[j].indent === ind - 1) {
+        if (blocks[j].collapsed) return true;
+        ind = blocks[j].indent;
+      }
+    }
+    return false;
+  }
+  function visibleIndices() {
+    const out = [];
+    for (let i = 0; i < blocks.length; i++) {
+      if (!isHiddenByCollapse(i)) out.push(i);
+    }
+    return out;
+  }
+  function indexOfId(id) {
+    return blocks.findIndex(b => b.id === id);
+  }
+  function activeIndex() {
+    let i = indexOfId(activeId);
+    return i < 0 ? 0 : i;
+  }
+  function clampIndent() {
+    for (let i = 0; i < blocks.length; i++) {
+      if (i === 0) blocks[i].indent = 0;
+      else blocks[i].indent = Math.min(blocks[i].indent, blocks[i - 1].indent + 1);
+      blocks[i].indent = Math.max(0, blocks[i].indent);
+      if (!hasChildren(i)) blocks[i].collapsed = false;
+    }
+  }
+  function clearSelection() {
+    selected = null;
+    host.classList.remove("selecting");
+  }
+  function selectionIds() {
+    if (!selected) return [];
+    const vis = visibleIndices();
+    const ia = vis.indexOf(indexOfId(selected.anchor));
+    const ib = vis.indexOf(indexOfId(selected.focus));
+    if (ia < 0 || ib < 0) return [];
+    const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+    return vis.slice(lo, hi + 1).map(i => blocks[i].id);
+  }
+  function selectionRoots() {
+    const ids = selectionIds();
+    const set = new Set(ids);
+    const roots = [];
+    for (const id of ids) {
+      const i = indexOfId(id);
+      if (i < 0) continue;
+      let covered = false;
+      let p = parentIndex(i);
+      while (p >= 0) {
+        if (set.has(blocks[p].id)) { covered = true; break; }
+        p = parentIndex(p);
+      }
+      if (!covered) roots.push(i);
+    }
+    return roots.sort((a, b) => a - b);
+  }
+
+  function refreshToolbar() {
+    const i = activeIndex();
+    const outBtn = toolbar.querySelector('[data-act="outdent"]');
+    const inBtn = toolbar.querySelector('[data-act="indent"]');
+    const foldBtn = toolbar.querySelector('[data-act="collapse"]');
+    if (outBtn) outBtn.disabled = !blocks[i] || blocks[i].indent <= 0;
+    if (inBtn) {
+      const max = i === 0 ? 0 : blocks[i - 1].indent + 1;
+      inBtn.disabled = !blocks[i] || blocks[i].indent >= max;
+    }
+    if (foldBtn) foldBtn.disabled = !blocks[i] || !hasChildren(i);
+  }
+
+  function serializeBlock(b) {
+    const row = { id: b.id, indent: b.indent, text: b.text };
+    if (b.collapsed) row.collapsed = true;
+    return row;
+  }
+
+  function render(focusId, caret, caretX) {
+    if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
+    if (focusId) activeId = focusId;
+    const selSet = new Set(selectionIds());
+    if (selected) host.classList.add("selecting");
+    else host.classList.remove("selecting");
+    const fresh = blocks.length === 1 && !blocks[0].text.trim();
+
+    rebuilding = true;
+    // Drop all rows; keep .odrop. Guard stops focusout from nested-rendering.
+    const rows = host.querySelectorAll(".oblock");
+    for (const r of rows) r.remove();
+
+    for (let i = 0; i < blocks.length; i++) {
+      if (isHiddenByCollapse(i)) continue;
+      const b = blocks[i];
+      const kids = hasChildren(i);
+      const row = document.createElement("div");
+      row.className = "oblock";
+      if (kids) row.classList.add("has-kids");
+      if (b.collapsed && kids) row.classList.add("collapsed");
+      if (selSet.has(b.id)) row.classList.add("selected");
+      row.dataset.id = b.id;
+      row.style.setProperty("--depth", String(Math.max(0, b.indent|0)));
+
+      const chev = document.createElement("button");
+      chev.type = "button";
+      chev.className = "ochev";
+      chev.tabIndex = -1;
+      chev.setAttribute("aria-label", b.collapsed ? "Expand" : "Collapse");
+      if (!kids) chev.style.visibility = "hidden";
+
+      const bullet = document.createElement("span");
+      bullet.className = "obullet";
+      bullet.title = "Drag to reorder";
+
+      const text = document.createElement("div");
+      text.className = "otext";
+      text.spellcheck = true;
+      text.inputMode = "text";
+      text.enterKeyHint = "enter";
+      if (fresh) text.dataset.placeholder = placeholder;
+
+      const editing = !selected && b.id === activeId;
+      if (editing) {
+        text.contentEditable = "true";
+        text.classList.remove("view");
+        text.textContent = b.text;
+      } else {
+        text.contentEditable = "false";
+        text.classList.add("view");
+        if (b.text && b.text.trim()) text.innerHTML = formatBlockHtml(b.text);
+        else text.textContent = "";
+      }
+
+      row.appendChild(chev);
+      row.appendChild(bullet);
+      row.appendChild(text);
+      host.insertBefore(row, dropLine);
+    }
+
+    if (focusId && !selected) {
+      const el = host.querySelector('.oblock[data-id="' + CSS.escape(focusId) + '"] .otext');
+      if (el && el.isContentEditable) {
+        el.focus({ preventScroll: true });
+        if (caretX != null && typeof caretX === "number") {
+          placeCaretAtX(el, caretX);
+        } else {
+          placeCaret(el, caret == null ? endOf(el) : caret);
+        }
+      }
+    }
+    rebuilding = false;
+    refreshToolbar();
+  }
+
+  function endOf(el) {
+    return (el.textContent || "").length;
+  }
+
+  function placeCaret(el, offset) {
+    const range = document.createRange();
+    const sel = window.getSelection();
+    const node = el.firstChild;
+    if (!node) {
+      range.selectNodeContents(el);
+      range.collapse(true);
+    } else {
+      const o = Math.max(0, Math.min(offset, node.textContent.length));
+      range.setStart(node, o);
+      range.collapse(true);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function placeCaretAtX(el, x) {
+    const text = el.textContent || "";
+    if (!text) { placeCaret(el, 0); return; }
+    // binary search offset by caret x
+    let lo = 0, hi = text.length, best = 0, bestDist = Infinity;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      placeCaret(el, mid);
+      const rect = caretLineRect();
+      if (!rect) { best = mid; break; }
+      const dist = Math.abs(rect.left - x);
+      if (dist < bestDist) { bestDist = dist; best = mid; }
+      if (rect.left < x) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    placeCaret(el, best);
+  }
+
+  function caretOffset(el) {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return (el.textContent || "").length;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.startContainer)) return (el.textContent || "").length;
+    const pre = range.cloneRange();
+    pre.selectNodeContents(el);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return pre.toString().length;
+  }
+
+  function caretLineRect() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    let rect = range.getBoundingClientRect();
+    if (rect.height === 0) {
+      const first = range.getClientRects()[0];
+      if (first) rect = first;
+    }
+    return rect.height === 0 ? null : rect;
+  }
+  function atLineStart(el) {
+    const rect = caretLineRect();
+    if (!rect) return true;
+    return rect.top - el.getBoundingClientRect().top < rect.height / 2;
+  }
+  function atLineEnd(el) {
+    const rect = caretLineRect();
+    if (!rect) return true;
+    return el.getBoundingClientRect().bottom - rect.bottom < rect.height / 2;
+  }
+  function isCaretAtStart(el) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.startContainer)) return false;
+    return caretOffset(el) === 0;
+  }
+  function isCaretAtEnd(el) {
+    const sel = window.getSelection();
+    if (!sel || !sel.isCollapsed || !sel.rangeCount) return false;
+    return caretOffset(el) === (el.textContent || "").length;
+  }
+
+  function syncFromDom() {
+    const rows = host.querySelectorAll(".oblock");
+    for (const row of rows) {
+      const b = blocks.find(x => x.id === row.dataset.id);
+      const el = row.querySelector(".otext");
+      if (b && el && el.isContentEditable) {
+        b.text = el.textContent.replace(/\u00a0/g, " ");
+      }
+    }
+  }
+
+  function scheduleSave() {
+    dirty = true;
+    setStatus("\u2026");
+    clearTimeout(timer);
+    timer = setTimeout(save, 400);
+  }
+
+  async function save() {
+    syncFromDom();
+    let payload = {
+      blocks: blocks.map(serializeBlock),
+    };
+    try {
+      if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+        const atts = (opts.getAttachments && opts.getAttachments()) || opts.attachments || [];
+        const cipher = await VP_CRYPTO.encryptPayload({
+          blocks: payload.blocks,
+          attachments: atts,
+        }, VP_CRYPTO.getPassphrase());
+        payload = { encrypted: true, cipher };
+      }
+    } catch (err) {
+      setStatus("encrypt error");
+      return;
+    }
+    if (inflight) await inflight;
+    inflight = fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then(async (r) => {
+        if (!r.ok) { setStatus("error"); return; }
+        const data = await r.json().catch(() => null);
+        if (data && data.deleted) setStatus("cleared");
+        else setStatus(payload.encrypted ? "saved \u00b7 encrypted" : "saved");
+        dirty = false;
+      })
+      .catch(() => setStatus("offline"))
+      .finally(() => { inflight = null; });
+    return inflight;
+  }
+
+  function indexOfRow(row) {
+    return blocks.findIndex(b => b.id === row.dataset.id);
+  }
+
+  function indentBlock(i, delta) {
+    if (delta > 0) {
+      if (i === 0) return false;
+      const max = blocks[i - 1].indent + 1;
+      if (blocks[i].indent >= max) return false;
+    } else {
+      if (blocks[i].indent <= 0) return false;
+    }
+    const end = subtreeEnd(i);
+    for (let j = i; j < end; j++) blocks[j].indent += delta;
+    return true;
+  }
+
+  function applyIndent(delta) {
+    syncFromDom();
+    pushHistory();
+    if (selected) {
+      const roots = selectionRoots();
+      if (delta > 0) {
+        for (let k = roots.length - 1; k >= 0; k--) indentBlock(roots[k], 1);
+      } else {
+        for (const r of roots) indentBlock(r, -1);
+      }
+      clampIndent();
+      render(null);
+      scheduleSave();
+      return;
+    }
+    const i = activeIndex();
+    const focusEl = document.activeElement;
+    const caret = (focusEl && focusEl.classList && focusEl.classList.contains("otext"))
+      ? caretOffset(focusEl) : endOf({ textContent: blocks[i] ? blocks[i].text : "" });
+    if (!indentBlock(i, delta)) {
+      undoStack.pop();
+      refreshToolbar();
+      return;
+    }
+    clampIndent();
+    render(blocks[i].id, caret);
+    scheduleSave();
+  }
+
+  function toggleCollapsed(i, force) {
+    if (i < 0 || !hasChildren(i)) return false;
+    pushHistory();
+    if (force === true) blocks[i].collapsed = true;
+    else if (force === false) blocks[i].collapsed = false;
+    else blocks[i].collapsed = !blocks[i].collapsed;
+    return true;
+  }
+
+  function moveUp(i) {
+    if (i < 0) return false;
+    const prev = prevSibling(i);
+    if (prev >= 0) {
+      const end = subtreeEnd(i);
+      const chunk = blocks.splice(i, end - i);
+      blocks.splice(prev, 0, ...chunk);
+      return true;
+    }
+    const p = parentIndex(i);
+    if (p < 0) return false;
+    const uncle = prevSibling(p);
+    if (uncle < 0) return false;
+    const end = subtreeEnd(i);
+    const chunk = blocks.splice(i, end - i);
+    const delta = (blocks[uncle].indent + 1) - chunk[0].indent;
+    for (const b of chunk) b.indent = Math.max(0, b.indent + delta);
+    const insertAt = subtreeEnd(uncle);
+    blocks.splice(insertAt, 0, ...chunk);
+    clampIndent();
+    return true;
+  }
+
+  function moveDown(i) {
+    if (i < 0) return false;
+    const next = nextSibling(i);
+    if (next >= 0) {
+      const end = subtreeEnd(i);
+      const chunk = blocks.splice(i, end - i);
+      const next2 = next - chunk.length;
+      const insertAt = subtreeEnd(next2);
+      blocks.splice(insertAt, 0, ...chunk);
+      return true;
+    }
+    const p = parentIndex(i);
+    if (p < 0) return false;
+    const end = subtreeEnd(i);
+    const chunk = blocks.splice(i, end - i);
+    const pEnd = subtreeEnd(p);
+    if (pEnd >= blocks.length || blocks[pEnd].indent !== blocks[p].indent) {
+      blocks.splice(i, 0, ...chunk);
+      return false;
+    }
+    const uncle = pEnd;
+    const delta = (blocks[uncle].indent + 1) - chunk[0].indent;
+    for (const b of chunk) b.indent = Math.max(0, b.indent + delta);
+    blocks.splice(uncle + 1, 0, ...chunk);
+    clampIndent();
+    return true;
+  }
+
+  function deleteSubtreeAt(i) {
+    if (i < 0) return -1;
+    const end = subtreeEnd(i);
+    const prevId = i > 0 ? blocks[i - 1].id : null;
+    blocks.splice(i, end - i);
+    if (!blocks.length) blocks.push({ id: newId(), indent: 0, text: "", collapsed: false });
+    return prevId ? indexOfId(prevId) : 0;
+  }
+
+  function doMove(dir) {
+    syncFromDom();
+    pushHistory();
+    if (selected) {
+      const roots = selectionRoots();
+      if (!roots.length) return;
+      const ids = roots.map(r => blocks[r].id);
+      if (dir < 0) {
+        for (const id of ids) {
+          const idx = indexOfId(id);
+          if (idx < 0 || !moveUp(idx)) break;
+        }
+      } else {
+        for (let k = ids.length - 1; k >= 0; k--) {
+          const idx = indexOfId(ids[k]);
+          if (idx >= 0) moveDown(idx);
+        }
+      }
+      clampIndent();
+      render(null);
+      scheduleSave();
+      return;
+    }
+    const i = activeIndex();
+    const id = blocks[i].id;
+    const ok = dir < 0 ? moveUp(i) : moveDown(i);
+    if (!ok) {
+      undoStack.pop();
+      return;
+    }
+    clampIndent();
+    render(id, null);
+    scheduleSave();
+  }
+
+  function doDeleteSubtree() {
+    syncFromDom();
+    pushHistory();
+    if (selected) {
+      let focusAfter = null;
+      let roots = selectionRoots();
+      // If anchor/focus were hidden by collapse, still delete the anchor node.
+      if (!roots.length && selected.anchor) {
+        const ai = indexOfId(selected.anchor);
+        if (ai >= 0) roots = [ai];
+      }
+      if (!roots.length) {
+        undoStack.pop();
+        clearSelection();
+        render(activeId || (blocks[0] && blocks[0].id), null);
+        return;
+      }
+      // Prefer focus after the node above the first (lowest-index) root.
+      const firstRoot = roots[0];
+      const preferPrev = firstRoot > 0 ? blocks[firstRoot - 1].id : null;
+      const ids = roots.map(r => blocks[r].id);
+      for (let k = ids.length - 1; k >= 0; k--) {
+        const idx = indexOfId(ids[k]);
+        if (idx >= 0) {
+          const fi = deleteSubtreeAt(idx);
+          if (fi >= 0 && blocks[fi]) focusAfter = blocks[fi].id;
+        }
+      }
+      clampIndent();
+      clearSelection();
+      const nextId = (preferPrev && indexOfId(preferPrev) >= 0)
+        ? preferPrev
+        : (focusAfter || (blocks[0] && blocks[0].id));
+      render(nextId, null);
+      scheduleSave();
+      return;
+    }
+    const i = activeIndex();
+    const focusI = deleteSubtreeAt(i);
+    clampIndent();
+    const id = blocks[Math.max(0, focusI)].id;
+    const caret = blocks[Math.max(0, focusI)].text.length;
+    render(id, caret);
+    scheduleSave();
+  }
+
+  /** Multi-node select: whole visible run from anchor id to focus id. */
+  function setNodeSelection(anchorId, focusId) {
+    if (!anchorId || indexOfId(anchorId) < 0) return;
+    const focus = focusId && indexOfId(focusId) >= 0 ? focusId : anchorId;
+    selected = { anchor: anchorId, focus };
+    activeId = focus;
+    const el = document.activeElement;
+    if (el && host.contains(el) && el.blur) el.blur();
+    window.getSelection() && window.getSelection().removeAllRanges();
+    render(null);
+  }
+
+  function selectAllVisible() {
+    const vis = visibleIndices();
+    if (!vis.length) return;
+    setNodeSelection(blocks[vis[0]].id, blocks[vis[vis.length - 1]].id);
+  }
+
+  // toolbar
+  toolbar.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".otool-btn")) e.preventDefault();
+  });
+  toolbar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    const act = btn.dataset.act;
+    if (act === "indent") applyIndent(1);
+    else if (act === "outdent") applyIndent(-1);
+    else if (act === "collapse") {
+      syncFromDom();
+      const i = activeIndex();
+      if (toggleCollapsed(i)) {
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+    }
+  });
+
+  host.addEventListener("click", (e) => {
+    const chev = e.target.closest(".ochev");
+    if (chev && host.contains(chev)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const row = chev.closest(".oblock");
+      if (!row) return;
+      const i = indexOfRow(row);
+      syncFromDom();
+      if (toggleCollapsed(i)) {
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+      return;
+    }
+    const a = e.target.closest("a[href]");
+    if (a && host.contains(a)) {
+      e.stopPropagation();
+    }
+  });
+
+  host.addEventListener("focusin", (e) => {
+    if (e.target.closest && e.target.closest("a")) return;
+    if (e.target.closest && e.target.closest(".ochev")) return;
+    const row = e.target.closest(".oblock");
+    if (!row) return;
+    if (selected) {
+      clearSelection();
+    }
+    const el = row.querySelector(".otext");
+    if (el && !el.isContentEditable) {
+      const id = row.dataset.id;
+      const b = blocks.find(x => x.id === id);
+      const caret = b && b.text ? b.text.length : 0;
+      render(id, caret);
+      return;
+    }
+    activeId = row.dataset.id;
+    refreshToolbar();
+  });
+
+  host.addEventListener("focusout", (e) => {
+    if (rebuilding) return;
+    if (!e.target.classList || !e.target.classList.contains("otext")) return;
+    const next = e.relatedTarget;
+    if (next && (host.contains(next) || toolbar.contains(next))) return;
+    // Defer: Enter/Tab destroy the node then focus a new one in the same turn.
+    // relatedTarget is often null even when we are about to focus another row.
+    if (blurTimer) clearTimeout(blurTimer);
+    blurTimer = setTimeout(function () {
+      blurTimer = null;
+      if (rebuilding || !alive) return;
+      if (host.contains(document.activeElement)) return;
+      if (toolbar.contains(document.activeElement)) return;
+      syncFromDom();
+      const id = activeId;
+      activeId = null;
+      render(null);
+      activeId = id;
+      refreshToolbar();
+    }, 0);
+  });
+
+  host.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("a")) return;
+    if (e.target.closest(".ochev")) return;
+    const row = e.target.closest(".oblock");
+    // Shift+click: multi-node select (extend or start from active/anchor)
+    if (e.shiftKey && row && host.contains(row)) {
+      e.preventDefault();
+      const id = row.dataset.id;
+      syncFromDom();
+      if (selected) {
+        setNodeSelection(selected.anchor, id);
+      } else {
+        const anchor = (activeId && indexOfId(activeId) >= 0) ? activeId : id;
+        setNodeSelection(anchor, id);
+      }
+      return;
+    }
+    // drag from bullet
+    const bullet = e.target.closest(".obullet");
+    if (bullet && host.contains(bullet)) {
+      if (!row) return;
+      e.preventDefault();
+      startDrag(e, row);
+      return;
+    }
+    const el = e.target.closest(".otext.view");
+    if (!el) return;
+    if (!row) return;
+    if (selected) {
+      clearSelection();
+    }
+    e.preventDefault();
+    const id = row.dataset.id;
+    const b = blocks.find(x => x.id === id);
+    render(id, b && b.text ? b.text.length : 0);
+  });
+
+  // --- drag reorder ---
+  let drag = null;
+  function startDrag(e, row) {
+    const i = indexOfRow(row);
+    if (i < 0) return;
+    syncFromDom();
+    drag = {
+      id: blocks[i].id,
+      startY: e.clientY,
+      startX: e.clientX,
+      moved: false,
+      pointerId: e.pointerId,
+    };
+    try { row.setPointerCapture(e.pointerId); } catch (err) {}
+    const onMove = (ev) => {
+      if (!drag) return;
+      if (!drag.moved) {
+        if (Math.abs(ev.clientY - drag.startY) < 4 && Math.abs(ev.clientX - drag.startX) < 4) return;
+        drag.moved = true;
+        pushHistory();
+        const r = host.querySelector('.oblock[data-id="' + CSS.escape(drag.id) + '"]');
+        if (r) r.classList.add("dragging");
+      }
+      updateDropIndicator(ev);
+    };
+    const onUp = (ev) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      dropLine.classList.remove("show");
+      const r = host.querySelector('.oblock[data-id="' + CSS.escape(d.id) + '"]');
+      if (r) r.classList.remove("dragging");
+      if (!d.moved) {
+        // treat as click: focus row
+        clearSelection();
+        const b = blocks.find(x => x.id === d.id);
+        render(d.id, b && b.text ? b.text.length : 0);
+        return;
+      }
+      applyDrop(d.id, ev);
+      scheduleSave();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  function updateDropIndicator(ev) {
+    const rows = [...host.querySelectorAll(".oblock")];
+    if (!rows.length) return;
+    let target = null;
+    let after = false;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      if (ev.clientY < mid) {
+        target = row;
+        after = false;
+        break;
+      }
+      target = row;
+      after = true;
+    }
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    dropLine.classList.add("show");
+    dropLine.style.top = (after ? rect.bottom : rect.top) - hostRect.top + host.scrollTop + "px";
+    // depth from x
+    const gutter = parseFloat(getComputedStyle(host).getPropertyValue("--note-gutter")) || 20;
+    const chev = parseFloat(getComputedStyle(host).getPropertyValue("--chev-w")) || 15;
+    const relX = ev.clientX - hostRect.left;
+    const depth = Math.max(0, Math.min(8, Math.round((relX - chev) / gutter)));
+    dropLine.dataset.afterId = target.dataset.id;
+    dropLine.dataset.after = after ? "1" : "0";
+    dropLine.dataset.depth = String(depth);
+    dropLine.style.marginLeft = (depth * gutter) + "px";
+  }
+
+  function applyDrop(dragId, ev) {
+    updateDropIndicator(ev);
+    const afterId = dropLine.dataset.afterId;
+    const after = dropLine.dataset.after === "1";
+    let depth = parseInt(dropLine.dataset.depth || "0", 10) || 0;
+    dropLine.classList.remove("show");
+    if (!afterId || afterId === dragId) {
+      // cancel history push if no-op - already pushed; leave it
+      render(dragId, null);
+      return;
+    }
+    const from = indexOfId(dragId);
+    if (from < 0) return;
+    // refuse drop inside own subtree
+    const fromEnd = subtreeEnd(from);
+    const toIdx = indexOfId(afterId);
+    if (toIdx >= from && toIdx < fromEnd) {
+      render(dragId, null);
+      return;
+    }
+    const end = subtreeEnd(from);
+    const chunk = blocks.splice(from, end - from);
+    let insertAt = indexOfId(afterId);
+    if (insertAt < 0) {
+      blocks.splice(from, 0, ...chunk);
+      render(dragId, null);
+      return;
+    }
+    if (after) insertAt = subtreeEnd(insertAt);
+    // adjust depth
+    if (insertAt > 0) {
+      const max = blocks[insertAt - 1] ? blocks[insertAt - 1].indent + 1 : 0;
+      depth = Math.min(depth, max);
+    } else depth = 0;
+    const delta = depth - chunk[0].indent;
+    for (const b of chunk) b.indent = Math.max(0, b.indent + delta);
+    blocks.splice(insertAt, 0, ...chunk);
+    clampIndent();
+    clearSelection();
+    render(dragId, null);
+  }
+
+  host.addEventListener("input", (e) => {
+    if (!e.target.classList.contains("otext") || !e.target.isContentEditable) return;
+    maybeTextHistory();
+    const row = e.target.closest(".oblock");
+    const b = blocks.find(x => x.id === row.dataset.id);
+    if (b) b.text = e.target.textContent.replace(/\u00a0/g, " ");
+    if (row) activeId = row.dataset.id;
+    scheduleSave();
+  });
+
+  function enterNodeSelect(id) {
+    setNodeSelection(id, id);
+  }
+  function extendSelect(dir) {
+    if (!selected) return;
+    const vis = visibleIndices();
+    const fi = vis.indexOf(indexOfId(selected.focus));
+    if (fi < 0) return;
+    const ni = fi + dir;
+    if (ni < 0 || ni >= vis.length) return;
+    selected.focus = blocks[vis[ni]].id;
+    activeId = selected.focus;
+    render(null);
+  }
+
+  function handleSelectionKeys(e) {
+    if (!selected) return false;
+    const mod = e.metaKey || e.ctrlKey;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      const id = selected.focus;
+      clearSelection();
+      render(id, null);
+      return true;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      applyIndent(e.shiftKey ? -1 : 1);
+      return true;
+    }
+    // Multi-node delete: remove every selected root (and each subtree)
+    if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
+      e.stopPropagation();
+      doDeleteSubtree();
+      return true;
+    }
+    if (mod && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      selectAllVisible();
+      return true;
+    }
+    if (mod && e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      doMove(e.key === "ArrowUp" ? -1 : 1);
+      return true;
+    }
+    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      extendSelect(e.key === "ArrowUp" ? -1 : 1);
+      return true;
+    }
+    if (mod && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return true;
+    }
+    if (mod && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      redo();
+      return true;
+    }
+    // arrow without shift leaves selection
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const id = selected.focus;
+      clearSelection();
+      const i = indexOfId(id);
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      let target = id;
+      if (e.key === "ArrowUp" && vi > 0) target = blocks[vis[vi - 1]].id;
+      if (e.key === "ArrowDown" && vi >= 0 && vi < vis.length - 1) target = blocks[vis[vi + 1]].id;
+      render(target, null);
+      return true;
+    }
+    return false;
+  }
+
+  // Capture-phase window keys while multi-selecting (caret is blurred off the row)
+  function onWinKey(e) {
+    if (!alive || !selected || !shell.isConnected) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && ae !== document.documentElement) {
+      const tag = (ae.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      // Another editor has focus — don't steal Backspace/Delete
+      if (ae.isContentEditable && !host.contains(ae)) return;
+    }
+    handleSelectionKeys(e);
+  }
+  window.addEventListener("keydown", onWinKey, true);
+
+  host.addEventListener("keydown", (e) => {
+    // undo/redo always
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (mod && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (mod && (e.key === "b" || e.key === "i" || e.key === "u")) {
+      e.preventDefault();
+      return;
+    }
+
+    if (selected) {
+      handleSelectionKeys(e);
+      return;
+    }
+
+    const textEl = e.target.closest(".otext");
+    if (!textEl || !textEl.isContentEditable) return;
+    const row = textEl.closest(".oblock");
+    const i = indexOfRow(row);
+    if (i < 0) return;
+
+    // collapse / expand
+    if (mod && !e.shiftKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      if (hasChildren(i) && !blocks[i].collapsed) {
+        syncFromDom();
+        toggleCollapsed(i, true);
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+      return;
+    }
+    if (mod && !e.shiftKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      if (hasChildren(i) && blocks[i].collapsed) {
+        syncFromDom();
+        toggleCollapsed(i, false);
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+      return;
+    }
+
+    // move among siblings
+    if (mod && e.shiftKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      doMove(-1);
+      return;
+    }
+    if (mod && e.shiftKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      doMove(1);
+      return;
+    }
+
+    // delete subtree
+    if (mod && e.shiftKey && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault();
+      doDeleteSubtree();
+      return;
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      syncFromDom();
+      pushHistory();
+      const off = caretOffset(textEl);
+      const cur = blocks[i];
+      const left = cur.text.slice(0, off);
+      const right = cur.text.slice(off);
+      const atEnd = off === cur.text.length;
+      cur.text = left;
+      if (atEnd && hasChildren(i) && !cur.collapsed) {
+        // first child
+        const nb = { id: newId(), indent: cur.indent + 1, text: right, collapsed: false };
+        blocks.splice(i + 1, 0, nb);
+        render(nb.id, 0);
+      } else {
+        const nb = { id: newId(), indent: cur.indent, text: right, collapsed: false };
+        blocks.splice(subtreeEnd(i), 0, nb);
+        render(nb.id, 0);
+      }
+      scheduleSave();
+      return;
+    }
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      activeId = blocks[i].id;
+      applyIndent(e.shiftKey ? -1 : 1);
+      return;
+    }
+
+    // enter multi-select (and extend one step so a range is multi-node immediately)
+    if (e.shiftKey && e.key === "ArrowUp" && atLineStart(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      enterNodeSelect(blocks[i].id);
+      extendSelect(-1);
+      return;
+    }
+    if (e.shiftKey && e.key === "ArrowDown" && atLineEnd(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      enterNodeSelect(blocks[i].id);
+      extendSelect(1);
+      return;
+    }
+
+    // select all visible nodes → Backspace/Delete removes them as multi-node delete
+    if (mod && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      syncFromDom();
+      selectAllVisible();
+      return;
+    }
+
+    if (e.key === "Backspace") {
+      const off = caretOffset(textEl);
+      if (off === 0 && i > 0) {
+        e.preventDefault();
+        syncFromDom();
+        pushHistory();
+        if (!blocks[i].text) {
+          const end = subtreeEnd(i);
+          if (end > i + 1) {
+            for (let j = i + 1; j < end; j++) blocks[j].indent = Math.max(0, blocks[j].indent - 1);
+          }
+          const prev = blocks[i - 1];
+          const caret = prev.text.length;
+          blocks.splice(i, 1);
+          if (!blocks.length) blocks.push({ id: newId(), indent: 0, text: "", collapsed: false });
+          clampIndent();
+          render(prev.id, caret);
+          scheduleSave();
+          return;
+        }
+        const prev = blocks[i - 1];
+        const caret = prev.text.length;
+        prev.text += blocks[i].text;
+        blocks.splice(i, 1);
+        clampIndent();
+        render(prev.id, caret);
+        scheduleSave();
+        return;
+      }
+    }
+
+    if (e.key === "ArrowUp" && !e.shiftKey && !mod) {
+      if (!atLineStart(textEl)) return;
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi > 0) {
+        const rect = caretLineRect();
+        const x = rect ? rect.left : null;
+        render(blocks[vis[vi - 1]].id, null, x);
+      }
+      return;
+    }
+    if (e.key === "ArrowDown" && !e.shiftKey && !mod) {
+      if (!atLineEnd(textEl)) return;
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi >= 0 && vi < vis.length - 1) {
+        const rect = caretLineRect();
+        const x = rect ? rect.left : null;
+        render(blocks[vis[vi + 1]].id, null, x);
+      }
+      return;
+    }
+    if (e.key === "ArrowLeft" && !e.shiftKey && !mod && isCaretAtStart(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi > 0) {
+        const prev = blocks[vis[vi - 1]];
+        render(prev.id, prev.text.length);
+      }
+      return;
+    }
+    if (e.key === "ArrowRight" && !e.shiftKey && !mod && isCaretAtEnd(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi >= 0 && vi < vis.length - 1) {
+        render(blocks[vis[vi + 1]].id, 0);
+      }
+      return;
+    }
+  });
+
+  host.addEventListener("paste", (e) => {
+    const textEl = e.target.closest(".otext");
+    if (!textEl || !textEl.isContentEditable) return;
+    e.preventDefault();
+    const paste = (e.clipboardData || window.clipboardData).getData("text") || "";
+    const lines = paste.replace(/\\r\\n/g, "\\n").split("\\n");
+    syncFromDom();
+    pushHistory();
+    const i = indexOfRow(textEl.closest(".oblock"));
+    const off = caretOffset(textEl);
+    const cur = blocks[i];
+    if (lines.length === 1) {
+      cur.text = cur.text.slice(0, off) + lines[0] + cur.text.slice(off);
+      render(cur.id, off + lines[0].length);
+      scheduleSave();
+      return;
+    }
+    const before = cur.text.slice(0, off);
+    const after = cur.text.slice(off);
+    cur.text = before + lines[0];
+    const created = [];
+    for (let k = 1; k < lines.length; k++) {
+      const isLast = k === lines.length - 1;
+      const nb = {
+        id: newId(),
+        indent: cur.indent,
+        text: lines[k] + (isLast ? after : ""),
+        collapsed: false,
+      };
+      created.push(nb);
+    }
+    blocks.splice(i + 1, 0, ...created);
+    const last = created[created.length - 1] || cur;
+    render(last.id, lines[lines.length - 1].length);
+    scheduleSave();
+  });
+
+  render(opts.autofocus ? blocks[0].id : null, opts.autofocus ? endOf({ textContent: blocks[0].text }) : null);
+  if (opts.autofocus) {
+    const last = blocks[blocks.length - 1];
+    render(last.id, endOf({ textContent: last.text }));
+  }
+
+  return {
+    focus() {
+      const last = blocks[blocks.length - 1];
+      render(last.id, endOf({ textContent: last.text }));
+    },
+    isEmpty() {
+      syncFromDom();
+      return blocks.every(b => !b.text.trim());
+    },
+    getBlocks() {
+      syncFromDom();
+      return blocks.map(serializeBlock);
+    },
+    setAttachments(list) {
+      opts.attachments = list || [];
+    },
+    async flush(force) {
+      clearTimeout(timer);
+      if (dirty || force) await save();
+      else if (inflight) await inflight;
+    },
+    destroy() {
+      alive = false;
+      window.removeEventListener("keydown", onWinKey, true);
+      clearTimeout(timer);
+      clearTimeout(histTimer);
+      if (blurTimer) clearTimeout(blurTimer);
+      host.innerHTML = "";
+      host.classList.remove("outliner", "compact", "page", "selecting");
+      if (shell.parentNode) {
+        shell.parentNode.insertBefore(host, shell);
+        shell.remove();
+      }
+    },
+  };
+}
+
+
+window.mountOutliner = typeof mountOutliner !== "undefined" ? mountOutliner : window.mountOutliner;

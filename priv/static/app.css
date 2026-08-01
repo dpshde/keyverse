@@ -1,0 +1,1226 @@
+
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    max-width: 38rem; margin: 0 auto;
+    padding: 1.5rem 1.1rem calc(5rem + env(safe-area-inset-bottom, 0px));
+    padding-left: max(1.1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1.1rem, env(safe-area-inset-right, 0px));
+    padding-top: max(1.5rem, env(safe-area-inset-top, 0px));
+    line-height: 1.55; font-size: 1.05rem;
+  }
+  /* installed PWA (home-screen) */
+  @media (display-mode: standalone), (display-mode: minimal-ui) {
+    body {
+      padding-top: max(1.25rem, env(safe-area-inset-top, 0px));
+    }
+  }
+  .pwa-install {
+    display: none;
+    margin: 0; padding: .35rem .7rem;
+    border-radius: 999px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    background: transparent; font: inherit; font-size: .82rem; font-family: -apple-system, system-ui, sans-serif;
+    color: color-mix(in srgb, currentColor 55%, transparent); cursor: pointer;
+  }
+  .pwa-install:hover { color: inherit; border-color: color-mix(in srgb, currentColor 36%, transparent); }
+  .pwa-install.show { display: inline-flex; align-items: center; gap: .35rem; }
+  .offline-page { text-align: center; padding: 2rem 0; }
+  .offline-page h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .5rem; }
+  .offline-page p { color: color-mix(in srgb, currentColor 55%, transparent); }
+  .site-foot {
+    margin: 2.5rem 0 0; padding-top: 1rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .78rem; line-height: 1.4;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    display: flex; flex-wrap: wrap; gap: .35rem .85rem; align-items: center;
+  }
+  .site-foot a { color: inherit; text-decoration: underline; text-underline-offset: 2px;
+    text-decoration-color: color-mix(in srgb, currentColor 28%, transparent); }
+  .site-foot a:hover { color: inherit; opacity: 1;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+  .login .site-foot { justify-content: center; border-top: 0; margin-top: 2rem; padding-top: 0; }
+  .ios-install-hint {
+    display: none; margin: 1rem 0 0; padding: .75rem .85rem; border-radius: .5rem;
+    font-family: -apple-system, system-ui, sans-serif; font-size: .86rem; line-height: 1.4;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    color: color-mix(in srgb, currentColor 62%, transparent);
+  }
+  .ios-install-hint.show { display: block; }
+  .ios-install-hint strong { font-weight: 600; color: inherit; }
+  a { color: inherit; text-decoration: none; }
+  a:hover { opacity: .72; }
+  /* body-copy / explicit text links only */
+  a.underline, .note-meta a, .prose a, a.wikilink, a.attlink {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  }
+  a.underline:hover, .note-meta a:hover, .prose a:hover, a.wikilink:hover, a.attlink:hover { opacity: 1;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+  a.wikilink, a.attlink, a.md-link { border-radius: .15rem; cursor: pointer; }
+  a.wikilink:hover, a.attlink:hover, a.md-link:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  /* attachments — one quiet list + one add row */
+  .att-board {
+    margin: 1rem 0 0;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .att-list { list-style: none; margin: 0; padding: 0; }
+  .att-row {
+    display: flex; align-items: center; gap: .45rem;
+    padding: .35rem 0;
+    font-size: .88rem;
+    min-height: 2.1rem;
+  }
+  .att-row .attlink {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 22%, transparent);
+    text-underline-offset: .12em;
+  }
+  .att-row .attlink:hover { text-decoration-color: currentColor; }
+  .att-meta {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, currentColor 38%, transparent);
+    font-size: .75rem;
+  }
+  .att-remove {
+    flex: 0 0 auto;
+    border: 0; background: transparent; cursor: pointer;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    font-size: .9rem; line-height: 1; padding: .25rem .35rem;
+    min-height: 2rem; min-width: 2rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .att-remove:hover { color: inherit; }
+  .att-add {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .5rem;
+    margin-top: .35rem;
+  }
+  .att-add input[type=file] { display: none; }
+  .att-file-btn,
+  .att-link-btn {
+    flex: 0 0 auto;
+    display: inline-flex; align-items: center;
+    font: inherit; font-size: .85rem; padding: .45rem .55rem;
+    border: 0; background: transparent; cursor: pointer;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .att-file-btn:hover,
+  .att-link-btn:hover { color: inherit; }
+  .att-file-btn.busy { opacity: .45; pointer-events: none; cursor: default; }
+  #status {
+    font-variant-numeric: tabular-nums;
+    min-height: 1.1em;
+  }
+  .att-link-wrap {
+    flex: 1 1 10rem; min-width: 0;
+    display: flex; align-items: center;
+  }
+  .att-link-wrap:not([data-open="1"]) .att-url { display: none; }
+  .att-link-wrap[data-open="1"] {
+    flex: 1 1 100%;
+  }
+  .att-link-wrap[data-open="1"] .att-link-btn { display: none; }
+  .att-add input.att-url {
+    flex: 1 1 auto; width: 100%; min-width: 0; font-size: 16px;
+    padding: .45rem .55rem; border-radius: .35rem;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    background: transparent; color: inherit;
+  }
+  .att-add input.att-url:focus {
+    outline: none;
+    border-color: color-mix(in srgb, currentColor 36%, transparent);
+  }
+  .att-image img {
+    display: block; max-width: min(100%, 22rem); max-height: 14rem;
+    margin: .25rem 0; border-radius: .35rem;
+  }
+  .att-missing { opacity: .45; text-decoration: line-through; }
+  .att-thumb {
+    display: block; width: 1.65rem; height: 1.65rem; object-fit: cover;
+    border-radius: .25rem; flex: 0 0 auto;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .att-icon {
+    flex: 0 0 auto; width: 1.1rem; text-align: center;
+    opacity: .35; font-size: .8rem; user-select: none;
+  }
+  @media (max-width: 640px) {
+    .att-row { min-height: 2.5rem; }
+    .att-link-wrap[data-open="1"] { flex: 1 1 100%; }
+  }
+  code, kbd, .ui { font-family: -apple-system, system-ui, sans-serif; }
+  button { font: inherit; color: inherit; }
+  input[type=text] {
+    width: 100%; font: inherit; font-size: 1rem; padding: .55rem .7rem;
+    border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    border-radius: .4rem; background: transparent;
+  }
+  input:focus, .outliner:focus-within { outline: none;
+    border-color: color-mix(in srgb, currentColor 45%, transparent); }
+  /* passage reference autocomplete (home search) — one composite radius + border */
+  .ref-search {
+    --rs-radius: .45rem;
+    --rs-border: color-mix(in srgb, currentColor 18%, transparent);
+    position: relative;
+  }
+  .ref-search form { margin: 0; }
+  .ref-search input[type=text] {
+    margin: 0; display: block;
+    border-color: var(--rs-border);
+    border-radius: var(--rs-radius);
+  }
+  .ref-search input[aria-expanded="true"] {
+    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
+    border-bottom-color: color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .ref-suggest {
+    position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+    margin: -1px 0 0; padding: 0; list-style: none; /* overlap to merge borders */
+    border: 1px solid var(--rs-border);
+    border-top: 0;
+    border-radius: 0 0 var(--rs-radius) var(--rs-radius);
+    background: color-mix(in srgb, Canvas 92%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 .4rem 1.25rem color-mix(in srgb, currentColor 10%, transparent);
+    max-height: min(16rem, 50vh); overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .ref-suggest[hidden] { display: none; }
+  .ref-suggest li { margin: 0; }
+  .ref-suggest li:last-child button { border-radius: 0 0 var(--rs-radius) var(--rs-radius); }
+  .ref-suggest button {
+    display: flex; align-items: baseline; justify-content: space-between; gap: .75rem;
+    width: 100%; margin: 0; padding: .55rem .75rem;
+    border: 0; background: transparent; cursor: pointer;
+    font: inherit; font-size: .95rem; color: inherit; text-align: left;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ref-suggest button:hover,
+  .ref-suggest li[aria-selected="true"] button {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+  }
+  .ref-suggest .rs-label { font-weight: 500; }
+  .ref-suggest .rs-kind {
+    flex: 0 0 auto; font-size: .75rem;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    text-transform: lowercase;
+  }
+  @media (prefers-color-scheme: dark) {
+    .ref-suggest { background: color-mix(in srgb, #1c1c1e 94%, transparent); }
+  }
+  .muted { color: color-mix(in srgb, currentColor 48%, transparent); font-size: .88rem; }
+  /* ghost text control — matches muted header links (reader expand notes, etc.) */
+  button.text-btn {
+    margin: 0; padding: 0; border: 0; background: transparent;
+    font: inherit; color: inherit; cursor: pointer;
+    text-align: left; appearance: none; -webkit-appearance: none;
+  }
+  button.text-btn:hover { color: inherit; }
+  button.text-btn[hidden] { display: none; }
+  .ui { font-family: -apple-system, system-ui, sans-serif; font-size: .88rem; }
+  .login {
+    max-width: 20rem; margin: 3rem auto 2rem; padding: 0 .5rem;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .login h1 { font-size: 1.4rem; font-weight: 650; margin: 0 0 .4rem; letter-spacing: -.025em; }
+  .login .lead { margin: 0 0 1.5rem; line-height: 1.4;
+    color: color-mix(in srgb, currentColor 52%, transparent); font-size: .95rem; }
+  .login-form { display: flex; flex-direction: column; gap: .6rem; margin: 0; }
+  .login-form label {
+    font-size: .8rem; font-weight: 500;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+  }
+  .login-form input[type=text] {
+    width: 100%; font-size: 16px; padding: .7rem .8rem;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: .55rem; background: transparent; color: inherit;
+  }
+  .login-form input:focus {
+    outline: none; border-color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  /* solid primary — high contrast, not washed grey */
+  .login-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; box-sizing: border-box;
+    margin: 0; padding: .8rem 1.1rem; min-height: 2.9rem;
+    font: inherit; font-size: .95rem; font-weight: 600;
+    border: 0; border-radius: .55rem; cursor: pointer;
+    text-decoration: none; text-align: center;
+    background: #111; color: #fff;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .login-btn:hover { background: #000; color: #fff; }
+  .login-btn:active { transform: scale(.99); }
+  .login-btn-secondary {
+    margin-top: .45rem;
+    background: transparent;
+    color: inherit;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    font-weight: 550;
+  }
+  .login-btn-secondary:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    color: inherit;
+    border-color: color-mix(in srgb, currentColor 28%, transparent);
+  }
+  @media (prefers-color-scheme: dark) {
+    .login-btn { background: #f2f2f2; color: #111; }
+    .login-btn:hover { background: #fff; color: #111; }
+    .login-btn-secondary {
+      background: transparent;
+      color: color-mix(in srgb, currentColor 72%, transparent);
+      border-color: color-mix(in srgb, currentColor 18%, transparent);
+    }
+    .login-btn-secondary:hover {
+      background: color-mix(in srgb, currentColor 8%, transparent);
+      color: inherit;
+    }
+  }
+  .login-error {
+    margin: 0 0 1rem; padding: .65rem .75rem; border-radius: .45rem;
+    font-size: .9rem; line-height: 1.35;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .login-more {
+    margin: 1.35rem 0 0; font-size: .85rem; line-height: 1.45;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+  }
+  .login-more summary {
+    cursor: pointer; list-style: none;
+    color: color-mix(in srgb, currentColor 55%, transparent);
+  }
+  .login-more summary::-webkit-details-marker { display: none; }
+  .login-more summary:hover { color: inherit; }
+  .login-more .login-form { margin-top: .85rem; }
+  .login-more p { margin: .65rem 0 0; }
+  /* Share bookplate — overlay; key + seal QR + actions; no layout shift */
+  .door-share-wrap {
+    position: relative; display: inline-block; max-width: 100%;
+    vertical-align: baseline;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .door-share {
+    display: inline-flex; align-items: center; gap: .3rem;
+    margin: 0; padding: .15rem .35rem; border: 0; border-radius: .2rem;
+    background: transparent; cursor: pointer;
+    font: inherit; font-family: inherit;
+    font-size: .82rem; letter-spacing: .01em;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    max-width: 100%;
+  }
+  .door-share:hover { color: inherit; background: color-mix(in srgb, currentColor 6%, transparent); }
+  .door-share:active { transform: scale(.98); }
+  .door-share:focus-visible {
+    outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+    outline-offset: 2px;
+  }
+  .door-share-key {
+    font-variant-ligatures: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: min(14rem, 42vw);
+  }
+  .door-share-hint {
+    flex: 0 0 auto; font-size: .72rem; opacity: .65; line-height: 1;
+  }
+  /* Ghost chip holds header space while the panel floats above */
+  .door-share-wrap[data-open="1"] > .door-share {
+    visibility: hidden; pointer-events: none;
+  }
+  .door-share-panel {
+    --ds-radius: .5rem;
+    --ds-radius-inner: .35rem;
+    position: absolute; right: 0; top: 0; z-index: 60;
+    width: 12.5rem;
+    box-sizing: border-box;
+    padding: .7rem .7rem .65rem;
+    border-radius: var(--ds-radius);
+    border: 1px solid color-mix(in srgb, #2a241c 14%, transparent);
+    background: #f6f1e7;
+    color: #1c1915;
+    /* single soft shadow — hard offset shadows misalign with border-radius */
+    box-shadow: 0 .45rem 1.5rem color-mix(in srgb, #1c1915 16%, transparent);
+    overflow: hidden;
+    animation: door-share-in 170ms cubic-bezier(.2, .8, .2, 1) both;
+  }
+  .door-share-panel[hidden] { display: none; animation: none; }
+  @keyframes door-share-in {
+    from { opacity: 0; transform: translateY(-.2rem) scale(.98); }
+    to   { opacity: 1; transform: none; }
+  }
+  .door-share-head {
+    display: flex; align-items: flex-start; gap: .35rem;
+    margin: 0 0 .55rem;
+  }
+  .door-share-title {
+    flex: 1 1 auto; min-width: 0;
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: .88rem; font-weight: 600;
+    letter-spacing: -.015em; line-height: 1.2;
+    color: inherit;
+    white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .door-share-x {
+    flex: 0 0 auto;
+    margin: -.15rem -.2rem 0 0; padding: .2rem .35rem;
+    border: 0; border-radius: var(--ds-radius-inner);
+    background: transparent; cursor: pointer;
+    font: inherit; font-size: .95rem; line-height: 1;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .door-share-x:hover { color: inherit; background: color-mix(in srgb, currentColor 7%, transparent); }
+  .door-share-x:focus-visible {
+    outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+    outline-offset: 1px;
+  }
+  .door-share-qr {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; aspect-ratio: 1; margin: 0; padding: 0;
+    border: 1px solid color-mix(in srgb, #2a241c 12%, transparent);
+    border-radius: var(--ds-radius-inner);
+    background: #fff;
+    overflow: hidden;
+  }
+  .door-share-qr svg {
+    display: block; width: 100%; height: 100%;
+  }
+  .door-share-qr[aria-busy="true"] {
+    min-height: 8.5rem;
+    background:
+      linear-gradient(90deg,
+        color-mix(in srgb, #2a241c 5%, #fff) 25%,
+        color-mix(in srgb, #2a241c 9%, #fff) 50%,
+        color-mix(in srgb, #2a241c 5%, #fff) 75%);
+    background-size: 200% 100%;
+    animation: door-share-shimmer 1.1s ease-in-out infinite;
+  }
+  @keyframes door-share-shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+  .door-share-actions {
+    display: flex; flex-direction: column; align-items: stretch;
+    gap: .3rem; margin-top: .55rem;
+  }
+  .door-share-action {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; box-sizing: border-box;
+    margin: 0; padding: .48rem .6rem; min-height: 2.05rem;
+    font: inherit; font-size: .82rem; font-weight: 600;
+    letter-spacing: .01em;
+    border: 1px solid #1c1915; border-radius: var(--ds-radius-inner); cursor: pointer;
+    background: #1c1915; color: #f6f1e7;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .door-share-action:hover { background: #000; border-color: #000; color: #fff; }
+  .door-share-action:active { transform: scale(.99); }
+  .door-share-action:focus-visible {
+    outline: 2px solid color-mix(in srgb, #1c1915 45%, transparent);
+    outline-offset: 2px;
+  }
+  .door-share-action[data-flash="1"] { opacity: .8; }
+  .door-share-copy {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; margin: 0; padding: .25rem .4rem;
+    border: 0; border-radius: var(--ds-radius-inner); cursor: pointer;
+    background: transparent;
+    font: inherit; font-size: .76rem; font-weight: 500;
+    color: color-mix(in srgb, #1c1915 52%, transparent);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, #1c1915 22%, transparent);
+    text-underline-offset: .14em;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .door-share-copy:hover {
+    color: #1c1915;
+    text-decoration-color: color-mix(in srgb, #1c1915 48%, transparent);
+  }
+  .door-share-copy:focus-visible {
+    outline: 2px solid color-mix(in srgb, #1c1915 35%, transparent);
+    outline-offset: 1px;
+  }
+  .door-share-copy[data-flash="1"] { color: #1c1915; }
+  @media (prefers-color-scheme: dark) {
+    .door-share-panel {
+      background: #1a1814;
+      color: #ece6db;
+      border-color: color-mix(in srgb, #ece6db 16%, transparent);
+      box-shadow: 0 .5rem 1.6rem color-mix(in srgb, #000 48%, transparent);
+    }
+    .door-share-qr {
+      background: #fff;
+      border-color: color-mix(in srgb, #ece6db 12%, transparent);
+    }
+    .door-share-action {
+      background: #ece6db; color: #1a1814; border-color: #ece6db;
+    }
+    .door-share-action:hover { background: #fff; border-color: #fff; color: #111; }
+    .door-share-action:focus-visible {
+      outline-color: color-mix(in srgb, #ece6db 50%, transparent);
+    }
+    .door-share-copy { color: color-mix(in srgb, #ece6db 55%, transparent); }
+    .door-share-copy:hover { color: #ece6db; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .door-share-panel { animation: none; }
+    .door-share-qr[aria-busy="true"] { animation: none; }
+  }
+  .crypto-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem;
+    margin: 0 0 1rem; padding: .45rem 0 .55rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-size: .82rem;
+    color: color-mix(in srgb, currentColor 50%, transparent);
+  }
+  .crypto-bar[data-on="1"] { color: color-mix(in srgb, currentColor 62%, transparent); }
+  .crypto-status { flex: 1 1 12rem; min-width: 0; line-height: 1.35; }
+  .crypto-btn {
+    border: 0; background: transparent; padding: .2rem 0; cursor: pointer;
+    font: inherit; color: color-mix(in srgb, currentColor 48%, transparent);
+  }
+  .crypto-btn:hover { color: inherit; }
+  .crypto-lock {
+    margin: 2rem 0; padding: 1.25rem 0;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .crypto-lock h2 { font-size: 1.05rem; margin: 0 0 .5rem; font-weight: 600; }
+  .crypto-lock p { margin: 0 0 .85rem; color: color-mix(in srgb, currentColor 55%, transparent); max-width: 28rem; line-height: 1.45; }
+  .crypto-lock input {
+    width: min(100%, 20rem); font-size: 16px; padding: .55rem .65rem;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    border-radius: .35rem; background: transparent; color: inherit;
+  }
+  .crypto-lock button {
+    margin-left: .4rem; padding: .55rem .85rem; font-size: .88rem;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    border-radius: .35rem; background: transparent; cursor: pointer; color: inherit;
+    min-height: 2.6rem;
+  }
+  header { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; margin-bottom: 1.75rem;
+    row-gap: .35rem; }
+  header h1 { font-size: 1.2rem; font-weight: 600; margin: 0; letter-spacing: -.01em;
+    min-width: 0; flex: 1 1 auto; }
+  #status { margin-left: auto; font-size: .8rem; color: color-mix(in srgb, currentColor 45%, transparent); }
+  h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
+       font-family: -apple-system, system-ui, sans-serif; }
+  /* Home list: flat by default; indent via --depth for chapter → verse folders */
+  .note-tree { margin-top: .15rem; }
+  .note-row {
+    display: flex; align-items: flex-start; gap: .15rem;
+    padding: .55rem 0; padding-left: calc(var(--depth, 0) * 1.15rem);
+    color: inherit;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .note-row:hover { background: color-mix(in srgb, currentColor 4%, transparent);
+    margin: 0 -.35rem; padding-left: calc(var(--depth, 0) * 1.15rem + .35rem);
+    padding-right: .35rem; border-radius: .25rem; }
+  .note-row .nt-main {
+    flex: 1 1 auto; min-width: 0; color: inherit;
+    display: block; text-align: left;
+  }
+  .note-row .nt-main.nt-fold,
+  .note-row .nt-main.nt-open-read { cursor: pointer; }
+  .note-row .nt-top {
+    display: flex; align-items: center; gap: .35rem; min-width: 0;
+  }
+  .note-row .nt-top .ref {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .note-row .nt-meta {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: .12rem;
+    margin-left: auto;
+  }
+  .note-row .nt-time { font-size: .8rem; margin-left: .2rem; white-space: nowrap; }
+  .note-row .nt-ex { margin-top: .1rem; }
+  .note-row.is-folder .ref,
+  .note-row.is-chapter .ref { font-weight: 600; }
+  .note-row.is-folder .nt-ex,
+  .note-row.is-chapter .nt-ex { font-size: .85rem; }
+  .nt-act {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.25rem; height: 1.25rem; border-radius: .2rem;
+    color: inherit; opacity: .38; text-decoration: none;
+  }
+  .nt-act:hover { opacity: .9; background: color-mix(in srgb, currentColor 8%, transparent); }
+  .nt-act svg { display: block; }
+  .nt-chev {
+    flex: 0 0 auto; width: 1.35rem; height: 1.35rem; margin-top: .05rem;
+    padding: 0; border: 0; background: transparent; color: inherit;
+    cursor: pointer; border-radius: .25rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    opacity: .45; font-size: .7rem; line-height: 1;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  .nt-chev:not(.is-leaf)::before { content: "\\25BE"; } /* ▾ */
+  .nt-chev.is-leaf { visibility: hidden; cursor: default; pointer-events: none; }
+  .nt-chev:not(.is-leaf):hover { opacity: .85; background: color-mix(in srgb, currentColor 6%, transparent); }
+  .nt-node.is-collapsed > .note-row .nt-chev { transform: rotate(-90deg); }
+  .nt-node.is-collapsed > .nt-kids { display: none; }
+  .ref { font-weight: 600; margin-right: .4rem; }
+  kbd {
+    font-family: inherit; font-size: .8em; padding: .05rem .3rem;
+    border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: .25rem;
+  }
+
+  /* reading: scripture primary; notes hide until the verse is opened */
+  .verse {
+    --v-pad-y: .34rem;
+    --v-pad-x: .75rem;
+    --v-gutter: .72rem; /* left rail only — never overlaps verse text */
+    position: relative;
+    padding: var(--v-pad-y) var(--v-pad-x) var(--v-pad-y) var(--v-pad-x);
+    margin-left: 0;
+    cursor: pointer;
+  }
+  /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
+  /*
+   * Multi-verse selection = one continuous surface.
+   * Fill is painted on ::after (not the box background) with an opaque Canvas mix
+   * so edges never double-stack transparency (that looked like dark seam bars).
+   * ::before stays free for the has-notes left rail.
+   * --sel-x is the single horizontal inset for scripture AND the passage note.
+   */
+  .verse.sel {
+    --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
+    --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
+    --sel-x: .75rem;
+    --sel-y: .36rem;
+    --sel-radius: .45rem;
+    background: transparent;
+    padding: var(--sel-y) var(--sel-x);
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    position: relative;
+    isolation: isolate; /* keep z-index:-1 ::after inside this verse */
+  }
+  /* Continuous selection fill */
+  .verse.sel::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: -1;
+    background-color: var(--sel-fill);
+    pointer-events: none;
+    border-radius: 0;
+  }
+  .verse.sel.sel-lo::after {
+    border-radius: var(--sel-radius) var(--sel-radius) 0 0;
+  }
+  .verse.sel.sel-hi::after {
+    border-radius: 0 0 var(--sel-radius) var(--sel-radius);
+  }
+  .verse.sel.sel-lo.sel-hi::after {
+    border-radius: var(--sel-radius);
+  }
+  /*
+   * Stitch: extend each following selected verse's fill up into the previous
+   * so subpixel gaps cannot show page background as a seam. Collapse doubled
+   * vertical padding between run members so the range reads as one block.
+   */
+  .verse.sel:not(.sel-lo)::after {
+    top: -4px;
+  }
+  .verse.sel:not(.sel-lo) {
+    padding-top: 0.12rem;
+  }
+  .verse.sel:not(.sel-hi) {
+    padding-bottom: 0.12rem;
+  }
+  .verse.sel + .verse.sel {
+    margin-top: 0;
+  }
+  /*
+   * Note open on end verse: keep the *outer* bottom curve on .sel-hi and clip
+   * children to it — never zero the radius under a rounded tray (square shows through).
+   */
+  .verse.sel.sel-hi.notes-open,
+  .verse.sel.sel-hi.editing {
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+  /* full-bleed within the card: cancel --sel-x, then re-apply so note text matches verse text */
+  .verse.sel .vnotes {
+    background-color: var(--sel-fill);
+    margin: .28rem calc(-1 * var(--sel-x)) 0;
+    padding: .5rem var(--sel-x) .55rem;
+    border-top: 1px solid var(--sel-edge);
+    border-radius: 0; /* curve lives on .sel-hi only */
+    box-shadow: none;
+    position: relative;
+  }
+  body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
+  body.pick-range-end .verse { cursor: cell; }
+  /*
+   * Note presence: thin left rail, outside verse text.
+   * Contiguous has-notes verses share one continuous bar; only an isolated
+   * single verse (or the ends of a run) get a short/rounded segment.
+   * Passage/range cover = quieter rail; individual verse note = stronger color
+   * (even mid-run when connected to a passage).
+   * Hidden once notes are open (the note itself is the cue) — including mid
+   * verses of a multi-verse selection when the tray is open under another
+   * member of the run (range notes host on the end verse only).
+   */
+  .verse.has-notes:not(.notes-open):not(.editing)::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: var(--v-pad-y, .34rem);
+    bottom: var(--v-pad-y, .34rem);
+    width: 2px;
+    border-radius: 1px;
+    background: color-mix(in srgb, currentColor 22%, transparent);
+    pointer-events: none;
+  }
+  .verse.has-verse-note:not(.notes-open):not(.editing)::before {
+    background: color-mix(in srgb, currentColor 55%, transparent);
+  }
+  .verse.sel.has-notes:not(.notes-open):not(.editing)::before {
+    top: var(--sel-y, .36rem);
+    bottom: var(--sel-y, .36rem);
+  }
+  /*
+   * Expanded selection: drop rails on every .sel in the run once any member
+   * has its tray open (mids are not .notes-open themselves).
+   */
+  .verse.sel.has-notes:has(~ .verse.sel.notes-open)::before,
+  .verse.sel.has-notes:has(~ .verse.sel.editing)::before,
+  .verse.sel.notes-open ~ .verse.sel.has-notes::before,
+  .verse.sel.editing ~ .verse.sel.has-notes::before {
+    content: none;
+    width: 0;
+    background: transparent;
+  }
+  /* Join into next closed has-notes verse */
+  .verse.has-notes:not(.notes-open):not(.editing):has(+ .verse.has-notes:not(.notes-open):not(.editing))::before {
+    bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  /* Join from previous closed has-notes verse */
+  .verse.has-notes:not(.notes-open):not(.editing) + .verse.has-notes:not(.notes-open):not(.editing)::before {
+    top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+  .vtext { margin: 0; }
+  .vtext sup {
+    font-family: -apple-system, system-ui, sans-serif; font-size: .68em;
+    font-weight: 500; color: color-mix(in srgb, currentColor 40%, transparent);
+    margin-right: .35rem; user-select: none;
+  }
+  .vstatus { font-family: -apple-system, system-ui, sans-serif; font-size: .72rem;
+    color: color-mix(in srgb, currentColor 40%, transparent); margin-left: .35rem; }
+  .vnotes {
+    display: none;
+    margin: .35rem 0 .45rem 0;
+    padding-left: 0;
+  }
+  .verse:not(.sel).notes-open .vnotes,
+  .verse:not(.sel).editing .vnotes {
+    margin-left: .35rem;
+  }
+  /* Only show trays that actually host a note (range cover mids stay closed). */
+  .verse.notes-open .vnotes:has(.note),
+  .verse.editing .vnotes:has(.note),
+  .verse.editing .vnotes { display: block; }
+  /* Empty trays (range-cover mid verses) must not paint border/padding seams. */
+  .vnotes:not(:has(.note)) {
+    display: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+
+  /* plain note block in reader (no per-note collapse) */
+  .note {
+    font-family: -apple-system, system-ui, sans-serif; font-size: .9rem;
+    margin: .35rem 0 .5rem;
+    color: color-mix(in srgb, currentColor 78%, transparent);
+  }
+  .note-label {
+    font-size: .78rem; font-weight: 500; letter-spacing: .01em;
+    color: color-mix(in srgb, currentColor 45%, transparent);
+    margin: 0 0 .2rem;
+  }
+  /* range address: quiet meta above the editor — scope stays obvious while writing */
+  .note[data-kind="range"] {
+    margin: 0;
+  }
+  .note[data-kind="range"] .note-label {
+    display: flex;
+    align-items: baseline;
+    gap: .4rem;
+    flex-wrap: wrap;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .78rem;
+    font-weight: 550;
+    letter-spacing: .01em;
+    color: color-mix(in srgb, currentColor 62%, transparent);
+    margin: 0 0 .4rem;
+    line-height: 1.3;
+  }
+  .note[data-kind="range"] .note-label::before {
+    content: "Passage";
+    flex: 0 0 auto;
+    font-size: .65rem;
+    font-weight: 650;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  .note-meta { margin: .2rem 0 0; font-size: .8rem;
+    color: color-mix(in srgb, currentColor 45%, transparent); }
+  .note-edit { margin: .05rem 0 0; }
+  /* range editor sits inside the selection surface — tighten chrome */
+  .note[data-kind="range"] .note-edit .outliner-shell.compact .otoolbar {
+    margin-top: .4rem;
+    padding-top: .3rem;
+    border-top-color: color-mix(in srgb, currentColor 9%, transparent);
+  }
+  .note[data-kind="range"] .note-edit .otool-btn {
+    font-size: .8rem;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  .note.editing .note-body { display: none; }
+  /* hide generic labels while editing; range labels stay (scope must remain obvious) */
+  .note.editing:not([data-kind="range"]) .note-label { display: none; }
+  .note .note-body { cursor: text; }
+  .note .note-label { cursor: text; }
+  .note[data-kind="range"] .note-label { cursor: default; }
+
+  /* passage notes vs this-verse note under a verse */
+  .note-group { margin: 0; }
+  .note-group + .note-group {
+    margin-top: .55rem;
+    padding-top: .55rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  }
+  .note-group-title {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .02em;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    margin: 0 0 .3rem;
+  }
+  .note-group .note { margin: .25rem 0 .4rem; }
+  .note-group .note:last-child { margin-bottom: 0; }
+  .note-group.passage .note[data-kind="range"] { margin: 0; }
+  /* range note when tray is open without selection (rare) — still a quiet card */
+  .verse:not(.sel) .note[data-kind="range"] {
+    padding: .5rem .65rem .45rem;
+    border-radius: .4rem;
+    background: color-mix(in srgb, currentColor 4.5%, transparent);
+  }
+
+  /* chapter note sits above scripture — outline only, no redundant label/link */
+  .chapter-note {
+    margin: 0 0 1.1rem;
+    padding: 0 0 1rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .chapter-note .note { margin: 0; }
+  /* related notes (Within / Part of / Overlaps) — clear hierarchy */
+  .related {
+    margin: 1.65rem 0 0;
+    padding-top: 1.15rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .related + .related {
+    margin-top: 1.25rem;
+  }
+  .related-label {
+    margin: 0 0 .15rem;
+    font-size: .7rem;
+    font-weight: 650;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  .related-sub {
+    margin: 0 0 .65rem;
+    font-size: .82rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    line-height: 1.35;
+  }
+  .inbox { margin: 0; display: flex; flex-direction: column; gap: .4rem; }
+
+  /* Within = contained notes: primary cards */
+  .related-within .inbox-item {
+    display: block; text-decoration: none; color: inherit;
+    padding: .7rem .8rem;
+    border-radius: .45rem;
+    border: 1px solid color-mix(in srgb, currentColor 11%, transparent);
+    background: transparent;
+  }
+  .related-within .inbox-item:hover {
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    border-color: color-mix(in srgb, currentColor 18%, transparent);
+  }
+  .related-within .inbox-title {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: 1.02rem; font-weight: 600;
+  }
+  .related-within .inbox-excerpt {
+    margin: .3rem 0 0;
+    font-size: .9rem;
+    color: color-mix(in srgb, currentColor 52%, transparent);
+    line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Part of = parents: quieter compact links */
+  .related-parent .inbox {
+    gap: .2rem;
+  }
+  .related-parent .inbox-item {
+    display: block; text-decoration: none; color: inherit;
+    padding: .45rem .55rem;
+    border-radius: .35rem;
+    border: 0;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+  }
+  .related-parent .inbox-item:hover {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+  }
+  .related-parent .inbox-title {
+    font-size: .95rem; font-weight: 550;
+    color: color-mix(in srgb, currentColor 78%, transparent);
+  }
+  .related-parent .inbox-excerpt {
+    margin: .1rem 0 0;
+    font-size: .82rem;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .related-parent .inbox-excerpt.is-empty {
+    font-style: italic;
+    opacity: .75;
+  }
+
+  /* Overlaps = peer ranges: between the two */
+  .related-overlap .inbox-item {
+    display: block; text-decoration: none; color: inherit;
+    padding: .55rem .65rem;
+    border-radius: .4rem;
+    border-left: 2px solid color-mix(in srgb, currentColor 18%, transparent);
+    background: color-mix(in srgb, currentColor 3%, transparent);
+  }
+  .related-overlap .inbox-item:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .related-overlap .inbox-title { font-size: .98rem; font-weight: 600; }
+  .related-overlap .inbox-excerpt {
+    margin: .2rem 0 0;
+    font-size: .86rem;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .inbox-top {
+    display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap;
+  }
+  .inbox-kind {
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .02em;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+
+  /*
+   * One indent geometry everywhere (read outline + edit outliner):
+   *   chevron | bullet | text; depth via margin-left.
+   */
+  .outline, .outliner {
+    --note-gutter: 1.25rem;
+    --chev-w: 0.95rem;
+    --bullet: 0.4375rem;
+    --row-h: 1.55em;
+  }
+  .outline { margin: 0; padding: 0; display: block; }
+  .oline {
+    display: grid;
+    grid-template-columns: var(--chev-w) var(--note-gutter) minmax(0, 1fr);
+    align-items: start;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--row-h);
+    padding: 0;
+    margin: 0 0 0 calc(var(--depth, 0) * var(--note-gutter));
+    line-height: 1.45;
+    position: relative;
+  }
+  .oline .ochev {
+    width: var(--chev-w); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    font-size: .65rem; user-select: none;
+  }
+  .oline.has-kids .ochev { pointer-events: auto; cursor: pointer; }
+  .oline.has-kids:hover .ochev,
+  .oline.collapsed .ochev,
+  .oline.has-kids .ochev:focus-visible { opacity: 1; }
+  .oline .ochev::before { content: "\\25B8"; transition: transform .12s ease; }
+  .oline.collapsed .ochev::before { content: "\\25B8"; }
+  .oline:not(.collapsed).has-kids .ochev::before { content: "\\25BE"; }
+  .oline .odot {
+    box-sizing: border-box;
+    width: var(--note-gutter); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .oline .odot::before {
+    content: "";
+    width: var(--bullet); height: var(--bullet);
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 28%, transparent);
+  }
+  .oline.collapsed.has-kids .odot::before {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, currentColor 32%, transparent);
+    background: color-mix(in srgb, currentColor 18%, transparent);
+  }
+  .oline .otxt {
+    display: block;
+    min-height: var(--row-h);
+    padding: 0.15em 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  /* base inline markdown (markers stored in text; rendered in view mode) */
+  .md-strong { font-weight: 650; }
+  .md-em { font-style: italic; }
+  .md-strike { text-decoration: line-through; opacity: .85; }
+  .md-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .88em;
+    padding: .08em .32em;
+    border-radius: .28rem;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .md-link {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 28%, transparent);
+    text-underline-offset: .12em;
+  }
+  .md-link:hover { text-decoration-color: currentColor; }
+  .otext.view .md-code,
+  .otxt .md-code { font-size: .86em; }
+  .otext.view {
+    cursor: text;
+    min-height: var(--row-h, 1.55em);
+  }
+  /* wiki / md links stay clickable in view mode; rest of line enters edit */
+  .otext.view a {
+    pointer-events: auto;
+    position: relative;
+    z-index: 1;
+  }
+  .otxt a { pointer-events: auto; }
+  /* blank rows keep a full row so the next depth never sits beside them */
+  .oline.blank {
+    height: var(--row-h);
+    min-height: var(--row-h);
+  }
+  .oline.blank .otxt {
+    height: var(--row-h);
+    min-height: var(--row-h);
+    padding: 0;
+    overflow: hidden;
+  }
+  .oline.blank .otxt::after { content: "\\00a0"; }
+
+  /* outliner — same grid + depth step as .outline */
+  .outliner { padding: .1rem 0; position: relative; }
+  .outliner.page { min-height: 40vh; }
+  .outliner.selecting { user-select: none; }
+  .oblock {
+    display: grid;
+    grid-template-columns: var(--chev-w) var(--note-gutter) minmax(0, 1fr);
+    align-items: start;
+    min-height: var(--row-h);
+    /* indent via padding (not margin) so hover/selection is a flush full-width band */
+    padding: 0.05rem 0 0.05rem calc(var(--depth, 0) * var(--note-gutter));
+    margin: 0;
+    border-radius: 0;
+    position: relative;
+  }
+  .oblock:hover { background: color-mix(in srgb, currentColor 3.5%, transparent); }
+  .oblock.selected {
+    background: color-mix(in srgb, currentColor 9%, transparent);
+    border-radius: 0;
+  }
+  .oblock.dragging { opacity: .35; }
+  .oblock .ochev {
+    width: var(--chev-w); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; border: 0; background: transparent; padding: 0;
+    color: color-mix(in srgb, currentColor 45%, transparent);
+    font-size: .65rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .oblock.has-kids .ochev { pointer-events: auto; }
+  .oblock.has-kids:hover .ochev,
+  .oblock.collapsed .ochev,
+  .oblock.has-kids .ochev:focus-visible { opacity: 1; }
+  .oblock .ochev::before { content: "\\25BE"; }
+  .oblock.collapsed .ochev::before { content: "\\25B8"; }
+  .obullet {
+    width: var(--note-gutter); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    user-select: none; cursor: grab; touch-action: none;
+  }
+  .obullet:active { cursor: grabbing; }
+  .obullet::before {
+    content: "";
+    width: var(--bullet); height: var(--bullet);
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 28%, transparent);
+  }
+  .oblock.collapsed.has-kids .obullet::before {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, currentColor 34%, transparent);
+    background: color-mix(in srgb, currentColor 16%, transparent);
+  }
+  .otext {
+    min-width: 0; min-height: var(--row-h); padding: 0; outline: none;
+    white-space: pre-wrap; word-break: break-word; font: inherit;
+    line-height: var(--row-h);
+    /* 16px minimum prevents iOS focus-zoom */
+    font-size: max(1em, 16px);
+  }
+  .otext:empty::before { content: attr(data-placeholder); opacity: .35; pointer-events: none; }
+  .outliner.compact { font-size: .9rem; }
+  .outliner.compact .otext { font-size: max(0.9rem, 16px); }
+  .odrop {
+    position: absolute; left: 0; right: 0; height: 2px;
+    background: color-mix(in srgb, currentColor 55%, transparent);
+    pointer-events: none; z-index: 5; display: none;
+    border-radius: 1px;
+  }
+  .odrop.show { display: block; }
+  .hint { margin-top: .65rem; }
+
+  /* nest / unnest / collapse — same quiet chrome as header links */
+  .outliner-shell { margin: 0; }
+  .otoolbar {
+    display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+    margin: .45rem 0 0;
+    padding: .35rem 0 0;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .otool-btn {
+    flex: 0 0 auto;
+    margin: 0; padding: .15rem 0;
+    border: 0; background: transparent;
+    font-family: inherit; font-size: .85rem; font-weight: 400;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .otool-btn:hover:not(:disabled) { color: inherit; }
+  .otool-btn:active:not(:disabled) { opacity: .7; }
+  .otool-btn:disabled { opacity: .28; cursor: default; }
+  .otool-ico {
+    display: inline-block; margin-right: .3rem;
+    opacity: .55; font-size: .95em; letter-spacing: -.02em;
+  }
+
+  @media (max-width: 640px) {
+    body {
+      padding-top: 1rem;
+      padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+      font-size: 1.02rem;
+    }
+    header { margin-bottom: 1.5rem; gap: .4rem .55rem; }
+    header h1 { font-size: 1.12rem; line-height: 1.25; }
+    header a, header .text-btn, #status { font-size: .82rem; }
+    input[type=text] { font-size: 16px; padding: .7rem .75rem; }
+    .note-row { padding: .7rem 0; min-height: 2.75rem; }
+    .nt-act { width: 1.75rem; height: 1.75rem; }
+    .related-within .inbox-item { padding: .75rem .85rem; min-height: 2.75rem; }
+    .related-parent .inbox-item { min-height: 2.5rem; }
+    .verse {
+      --v-pad-y: .4rem;
+      --v-pad-x: .7rem;
+      --v-gutter: .72rem;
+    }
+    .verse.sel {
+      --sel-x: .7rem;
+      --sel-y: .4rem;
+    }
+    .vtext { line-height: 1.5; }
+    .outline, .outliner { --note-gutter: 1.15rem; --row-h: 1.7em; }
+    .outliner.page { min-height: 30vh; }
+    .oblock.has-kids .ochev { opacity: .7; }
+    .hint { display: none; }
+    .otoolbar {
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      gap: 0;
+      margin: .55rem -0.85rem 0;
+      padding: 0 .25rem calc(env(safe-area-inset-bottom, 0px));
+      border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+      background: color-mix(in srgb, Canvas 94%, transparent);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      flex-wrap: nowrap;
+    }
+    .outliner-shell.compact .otoolbar {
+      margin-left: 0; margin-right: 0;
+    }
+    .otool-btn {
+      flex: 1 1 0;
+      min-height: 2.85rem;
+      padding: .55rem .35rem;
+      font-size: .82rem;
+      text-align: center;
+    }
+    .otool-btn + .otool-btn {
+      border-left: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    }
+    .otool-btn:hover:not(:disabled) {
+      background: color-mix(in srgb, currentColor 4%, transparent);
+    }
+    .related-parent .inbox-excerpt,
+    .related-overlap .inbox-excerpt {
+      white-space: normal; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .otool-btn { min-height: 2.5rem; padding: .4rem .35rem; }
+    .note-row, .inbox-item { padding-top: .65rem; padding-bottom: .65rem; }
+    .oblock.has-kids .ochev { opacity: .65; }
+    .oline.has-kids .ochev { opacity: .55; }
+  }

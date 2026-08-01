@@ -1,0 +1,85 @@
+
+const VP_CRYPTO = (() => {
+  const ITER = 210000;
+  const storageKey = () => "vp_pw_" + (typeof BASE === "string" ? BASE : location.pathname.split("/")[1] || "local");
+
+  function b64(buf) {
+    const bytes = new Uint8Array(buf);
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+  function unb64(s) {
+    const bin = atob(s);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function getPassphrase() {
+    try { return sessionStorage.getItem(storageKey()) || ""; } catch { return ""; }
+  }
+  function setPassphrase(pw) {
+    try {
+      if (pw) sessionStorage.setItem(storageKey(), pw);
+      else sessionStorage.removeItem(storageKey());
+    } catch { /* private mode */ }
+  }
+  function clearPassphrase() { setPassphrase(""); }
+
+  // Read #pw=… or #password=… once, store, strip from URL (never hits server)
+  function ingestHash() {
+    const h = location.hash.replace(/^#/, "");
+    if (!h) return;
+    const params = new URLSearchParams(h.includes("=") ? h : ("pw=" + h));
+    const pw = params.get("pw") || params.get("password") || params.get("key") || "";
+    if (pw) {
+      setPassphrase(pw);
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+  }
+
+  async function deriveKey(passphrase, saltBytes) {
+    const enc = new TextEncoder();
+    const baseKey = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: saltBytes, iterations: ITER, hash: "SHA-256" },
+      baseKey,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+  }
+
+  async function encryptPayload(obj, passphrase) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(passphrase, salt);
+    const pt = new TextEncoder().encode(JSON.stringify(obj));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+    return {
+      v: 1,
+      alg: "AES-GCM",
+      kdf: "PBKDF2",
+      iter: ITER,
+      salt: b64(salt),
+      iv: b64(iv),
+      ct: b64(ct),
+    };
+  }
+
+  async function decryptPayload(cipher, passphrase) {
+    if (!cipher || !cipher.ct) throw new Error("missing cipher");
+    const salt = unb64(cipher.salt);
+    const iv = unb64(cipher.iv);
+    const key = await deriveKey(passphrase, salt);
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, unb64(cipher.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+
+  function hasPassphrase() { return !!getPassphrase(); }
+
+  return {
+    ingestHash, getPassphrase, setPassphrase, clearPassphrase, hasPassphrase,
+    encryptPayload, decryptPayload, ITER,
+  };
+})();

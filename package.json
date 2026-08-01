@@ -2,12 +2,14 @@
   "name": "keyverse",
   "version": "0.1.0",
   "private": true,
-  "description": "keyverse demo: cowyo-frictionless scripture note door over an on-disk pack (OSIS-addressed).",
+  "description": "keyverse: multipack scripture note door. Primary host is Elixir (mix); server.mjs is legacy reference only.",
   "type": "module",
   "scripts": {
-    "dev": "node server.mjs",
-    "start": "node server.mjs",
-    "check": "node --check server.mjs"
+    "start": "mix run --no-halt",
+    "dev": "mix run --no-halt",
+    "test": "mix test",
+    "check": "mix compile --warnings-as-errors",
+    "legacy:node": "node server.mjs"
   },
   "dependencies": {
     "grab-bcv": "^0.1.7",

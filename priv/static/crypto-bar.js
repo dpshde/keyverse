@@ -1,0 +1,41 @@
+(function () {
+  const bar = document.getElementById("crypto-bar");
+  if (!bar || !window.VP_CRYPTO) return;
+  const status = document.getElementById("crypto-status");
+  const btnUnlock = document.getElementById("crypto-unlock");
+  const btnSet = document.getElementById("crypto-set");
+  const btnClear = document.getElementById("crypto-clear");
+  function refresh() {
+    const on = VP_CRYPTO.hasPassphrase();
+    status.textContent = on
+      ? "Encryption on — notes save encrypted (passphrase never leaves this browser)"
+      : "Optional encryption off — set a passphrase to encrypt notes like cowyo";
+    btnUnlock.hidden = on;
+    btnSet.hidden = on;
+    btnClear.hidden = !on;
+    bar.dataset.on = on ? "1" : "0";
+    document.dispatchEvent(new CustomEvent("vpcrypto", { detail: { on } }));
+  }
+  btnUnlock.addEventListener("click", () => {
+    const pw = prompt("Pack passphrase (never sent to the server):");
+    if (pw == null || pw === "") return;
+    VP_CRYPTO.setPassphrase(pw);
+    refresh();
+    location.reload();
+  });
+  btnSet.addEventListener("click", () => {
+    const pw = prompt("New pack passphrase (client-side only):");
+    if (pw == null || pw === "") return;
+    const pw2 = prompt("Repeat passphrase:");
+    if (pw !== pw2) { alert("Passphrases did not match."); return; }
+    VP_CRYPTO.setPassphrase(pw);
+    refresh();
+    alert("Passphrase set for this browser session. Saves will encrypt. Tip: open with #pw=… in the URL (hash is never sent to the server).");
+  });
+  btnClear.addEventListener("click", () => {
+    VP_CRYPTO.clearPassphrase();
+    refresh();
+    location.reload();
+  });
+  refresh();
+})();

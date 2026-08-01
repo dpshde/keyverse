@@ -1,0 +1,166 @@
+(function () {
+    var input = document.getElementById("ref-input");
+    var list = document.getElementById("ref-suggest");
+    var form = document.getElementById("ref-form");
+    if (!input || !list || !form) return;
+    var items = [];
+    var active = -1;
+    var timer = null;
+    var seq = 0;
+    var base = typeof BASE === "string" ? BASE : "";
+
+    function hide() {
+      list.hidden = true;
+      list.innerHTML = "";
+      items = [];
+      active = -1;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+    }
+
+    function kindLabel(k) {
+      if (k === "book") return "book";
+      if (k === "chapter") return "chapter";
+      if (k === "range") return "range";
+      return "verse";
+    }
+
+    function render() {
+      if (!items.length) { hide(); return; }
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      list.innerHTML = items.map(function (s, i) {
+        var id = "ref-opt-" + i;
+        var sel = i === active ? ' aria-selected="true"' : ' aria-selected="false"';
+        return '<li role="option" id="' + id + '"' + sel + '>' +
+          '<button type="button" data-i="' + i + '">' +
+          '<span class="rs-label"></span><span class="rs-kind"></span></button></li>';
+      }).join("");
+      var rows = list.querySelectorAll("li");
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].querySelector(".rs-label").textContent = items[i].label;
+        rows[i].querySelector(".rs-kind").textContent = kindLabel(items[i].kind);
+      }
+      if (active >= 0) {
+        var el = document.getElementById("ref-opt-" + active);
+        if (el) {
+          input.setAttribute("aria-activedescendant", el.id);
+          el.scrollIntoView({ block: "nearest" });
+        }
+      } else {
+        input.removeAttribute("aria-activedescendant");
+      }
+    }
+
+    function setActive(i) {
+      if (!items.length) { active = -1; return; }
+      active = (i + items.length) % items.length;
+      render();
+    }
+
+    function goHref(s) {
+      // book alone is incomplete for /go — keep typing after insert
+      if (s.kind === "book") return null;
+      var slug = String(s.canonical || "").toLowerCase();
+      if (!slug) return null;
+      if (s.kind === "chapter") return base + "/read/" + slug;
+      return base + "/note/" + slug;
+    }
+
+    function apply(s, opts) {
+      opts = opts || {};
+      if (!s) return;
+      var href = goHref(s);
+      if (href && !opts.insertOnly) {
+        location.href = href;
+        return;
+      }
+      // insert and keep focus (books, or Tab to complete without navigating)
+      var text = s.insertText || s.label || "";
+      if (s.kind === "book" && text && text.slice(-1) !== " ") text += " ";
+      input.value = text;
+      hide();
+      input.focus();
+      try {
+        var n = input.value.length;
+        input.setSelectionRange(n, n);
+      } catch (e) {}
+      // fetch next level of suggestions immediately
+      fetchSuggest(input.value);
+    }
+
+    function fetchSuggest(q) {
+      q = String(q || "").trim();
+      if (q.length < 1) { hide(); return; }
+      var my = ++seq;
+      fetch(base + "/api/suggest?q=" + encodeURIComponent(q) + "&limit=8", {
+        headers: { accept: "application/json" },
+      })
+        .then(function (r) { return r.ok ? r.json() : { suggestions: [] }; })
+        .then(function (data) {
+          if (my !== seq) return;
+          items = (data && data.suggestions) || [];
+          active = items.length ? 0 : -1;
+          render();
+        })
+        .catch(function () { if (my === seq) hide(); });
+    }
+
+    function schedule() {
+      clearTimeout(timer);
+      timer = setTimeout(function () { fetchSuggest(input.value); }, 80);
+    }
+
+    input.addEventListener("input", schedule);
+    input.addEventListener("focus", function () {
+      if (input.value.trim()) fetchSuggest(input.value);
+    });
+
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        if (!list.hidden) { e.preventDefault(); hide(); }
+        return;
+      }
+      if (list.hidden || !items.length) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActive(active < 0 ? 0 : active + 1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActive(active < 0 ? items.length - 1 : active - 1);
+      } else if (e.key === "Tab") {
+        if (active >= 0 && items[active]) {
+          e.preventDefault();
+          apply(items[active], { insertOnly: true });
+        }
+      } else if (e.key === "Enter") {
+        if (active >= 0 && items[active]) {
+          e.preventDefault();
+          apply(items[active]);
+        }
+        // else let form submit /go
+      }
+    });
+
+    list.addEventListener("mousedown", function (e) {
+      // prevent input blur before click
+      e.preventDefault();
+    });
+    list.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-i]");
+      if (!btn) return;
+      var i = Number(btn.getAttribute("data-i"));
+      if (items[i]) apply(items[i]);
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest("#ref-search")) hide();
+    });
+
+    form.addEventListener("submit", function () {
+      // if a suggestion is highlighted and matches, prefer direct nav
+      if (active >= 0 && items[active] && items[active].kind !== "book") {
+        // allow default if value already equals — still fine via /go
+      }
+    });
+  })();

@@ -1,0 +1,42 @@
+
+(function () {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(function (reg) {
+      if (!reg) return;
+      reg.addEventListener("updatefound", function () {
+        var w = reg.installing;
+        if (!w) return;
+        w.addEventListener("statechange", function () {
+          if (w.state === "installed" && navigator.serviceWorker.controller) {
+            /* new SW ready — optional quiet update on next navigation */
+          }
+        });
+      });
+    }).catch(function () {});
+  });
+  // Capture install prompt for optional UI button
+  window.__kvDeferredInstall = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    window.__kvDeferredInstall = e;
+    document.querySelectorAll(".pwa-install").forEach(function (btn) {
+      btn.classList.add("show");
+    });
+  });
+  window.addEventListener("appinstalled", function () {
+    window.__kvDeferredInstall = null;
+    document.querySelectorAll(".pwa-install").forEach(function (btn) {
+      btn.classList.remove("show");
+    });
+  });
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.closest && ev.target.closest(".pwa-install");
+    if (!btn) return;
+    ev.preventDefault();
+    var d = window.__kvDeferredInstall;
+    if (!d) return;
+    d.prompt();
+    d.userChoice.finally(function () { window.__kvDeferredInstall = null; btn.classList.remove("show"); });
+  });
+})();

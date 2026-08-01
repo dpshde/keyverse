@@ -1,0 +1,79 @@
+
+  (function () {
+    var root = document.getElementById("note-tree");
+    if (!root) return;
+    var KEY = "vp_home_fold_" + (typeof BASE === "string" ? BASE : location.pathname.split("/")[1] || "local");
+    function load() {
+      try { return JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { return {}; }
+    }
+    function save(map) {
+      try { localStorage.setItem(KEY, JSON.stringify(map)); } catch (e) {}
+    }
+    var collapsed = load();
+    function setExpanded(node, expanded) {
+      node.classList.toggle("is-collapsed", !expanded);
+      var chev = node.querySelector(":scope > .note-row .nt-chev");
+      if (chev && chev.tagName === "BUTTON") {
+        chev.setAttribute("aria-expanded", expanded ? "true" : "false");
+        chev.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
+      }
+      var fold = node.querySelector(":scope > .note-row .nt-fold");
+      if (fold) fold.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+    function toggleNode(node) {
+      if (!node || !node.querySelector(":scope > .nt-kids")) return;
+      var id = node.getAttribute("data-id");
+      var nowCollapsed = !node.classList.contains("is-collapsed");
+      setExpanded(node, !nowCollapsed);
+      var map = load();
+      if (nowCollapsed) map[id] = 1; else delete map[id];
+      save(map);
+    }
+    root.querySelectorAll(".nt-node").forEach(function (node) {
+      var id = node.getAttribute("data-id");
+      if (!id || !collapsed[id]) return;
+      if (!node.querySelector(":scope > .nt-kids")) return;
+      setExpanded(node, false);
+    });
+    root.addEventListener("click", function (e) {
+      if (e.target.closest(".nt-act")) return; // open note / read icons
+      var chev = e.target.closest(".nt-chev");
+      if (chev && !chev.classList.contains("is-leaf") && chev.tagName === "BUTTON") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleNode(chev.closest(".nt-node"));
+        return;
+      }
+      var fold = e.target.closest(".nt-fold");
+      if (fold) {
+        e.preventDefault();
+        toggleNode(fold.closest(".nt-node"));
+        return;
+      }
+      var openRead = e.target.closest(".nt-open-read");
+      if (openRead) {
+        var href = openRead.getAttribute("data-href");
+        if (href) {
+          if (e.metaKey || e.ctrlKey) window.open(href, "_blank");
+          else location.href = href;
+        }
+      }
+    });
+    root.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (e.target.closest(".nt-act")) return;
+      var fold = e.target.closest(".nt-fold");
+      if (fold && e.target === fold) {
+        e.preventDefault();
+        toggleNode(fold.closest(".nt-node"));
+        return;
+      }
+      var openRead = e.target.closest(".nt-open-read");
+      if (openRead && e.target === openRead) {
+        e.preventDefault();
+        var href = openRead.getAttribute("data-href");
+        if (href) location.href = href;
+      }
+    });
+  })();
+  

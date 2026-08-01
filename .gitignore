@@ -8,3 +8,9 @@ pack/notes/*.json
 !pack/notes/1jn.1.json
 !pack/notes/jhn.3.16.json
 !pack/notes/jhn.3.16-18.json
+
+# Elixir
+_build/
+deps/
+*.ez
+.elixir_ls/

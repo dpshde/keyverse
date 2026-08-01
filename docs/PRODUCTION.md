@@ -44,11 +44,14 @@ ciphertext JSON; attachment **blobs** remain content-addressed bytes.
 [ reverse proxy ]     TLS + optional auth
         │
         ▼
-[ node server.mjs ]   one process, many packs (one dir per multiword key)
+[ mix run --no-halt ]   Elixir/Bandit multipack door
         │
         ▼
 [ PACK_DIR/{key}/ on durable disk ]
 ```
+
+Primary host on the `elixir-rewrite` line of work is **Elixir**. See
+[SCALING.md](./SCALING.md) for runtime tradeoffs. `server.mjs` is legacy only.
 
 ### PWA / service worker notes
 
@@ -93,7 +96,9 @@ WorkingDirectory=/opt/keyverse
 Environment=HOST=127.0.0.1
 Environment=PORT=4180
 Environment=PACK_DIR=/var/lib/keyverse/packs
-ExecStart=/usr/bin/node /opt/keyverse/server.mjs
+WorkingDirectory=/opt/keyverse
+ExecStart=/usr/bin/mix run --no-halt
+Environment=MIX_ENV=prod
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
