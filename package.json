@@ -9,7 +9,8 @@
     "dev": "mix run --no-halt",
     "test": "mix test",
     "check": "mix compile --warnings-as-errors",
-    "legacy:node": "node server.mjs"
+    "legacy:node": "node server.mjs",
+    "extract:client": "node scripts/extract_client_js.mjs"
   },
   "dependencies": {
     "grab-bcv": "^0.1.7",
