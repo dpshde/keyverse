@@ -17,11 +17,13 @@ product**; the process is only HTTP access to it.
 ```sh
 git clone https://github.com/dpshde/keyverse.git
 cd keyverse
-pnpm install          # or: npm install
+# Primary host is Elixir
+mix deps.get
 ```
 
-`words-door.txt` ships with the repo (word list for multiword doors).
+Requirements: Elixir 1.15+ / OTP 26+ (`brew install elixir` on macOS).
 
+`words-door.txt` / `priv/words-door.txt` ship with the repo (multiword doors).
 ## Access model (your key)
 
 **There is no username/password account.** Your four-word **key is your pack**.
@@ -64,8 +66,8 @@ Back up both if you care about recovery. File **blobs** under
 ## Run
 
 ```sh
-pnpm dev              # node server.mjs
-# or: pnpm start
+mix run --no-halt
+# or: pnpm start   # proxies to mix
 ```
 
 Example log line:
