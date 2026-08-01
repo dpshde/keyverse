@@ -101,7 +101,13 @@ HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse DOOR=my-study-garden-notes pnpm
 | `CI` | PR + `main` | install, `pnpm check`, smoke `/health` + PWA assets |
 | `Deploy Railway production` | push to `main` | `railway up` → production service |
 
-Set GitHub secret `RAILWAY_TOKEN` (Railway project token) for deploys. Details:
+Set GitHub secret `RAILWAY_TOKEN` on **dpshde/keyverse** (Railway project token) for deploys:
+
+```sh
+gh secret set RAILWAY_TOKEN -R dpshde/keyverse
+```
+
+Details:
 [docs/PRODUCTION.md](docs/PRODUCTION.md#railway-production-reference-deploy).
 
 ## curl (under the door)

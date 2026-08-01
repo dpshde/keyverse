@@ -267,8 +267,10 @@ Do **not** set `DOOR_OPEN` in production.
 (Project → Settings → Tokens), then:
 
 ```sh
-gh secret set RAILWAY_TOKEN -R dpshde/versepack
-# paste token
+gh secret set RAILWAY_TOKEN -R dpshde/keyverse
+# paste token (Railway → keyverse project → Settings → Tokens)
+# If deploy uses GitHub Environment "production", also:
+#   gh secret set RAILWAY_TOKEN -R dpshde/keyverse --env production
 ```
 
 Optional: GitHub Environment `production` (workflow already references it) for

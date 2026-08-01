@@ -40,14 +40,17 @@ jobs:
       - name: Deploy to Railway production
         env:
           # Project token: Railway → keyverse project → Settings → Tokens
-          # Then: gh secret set RAILWAY_TOKEN -R dpshde/versepack
+          # Then: gh secret set RAILWAY_TOKEN -R dpshde/keyverse
+          # (If the job uses environment: production, set the secret on that
+          # Environment as well as/instead of repo secrets.)
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            echo "::error::Missing secret RAILWAY_TOKEN."
+            echo "::error::Missing secret RAILWAY_TOKEN on repo dpshde/keyverse."
             echo "Create a Railway project token (Project → Settings → Tokens),"
-            echo "then: gh secret set RAILWAY_TOKEN -R dpshde/versepack"
+            echo "then:  gh secret set RAILWAY_TOKEN -R dpshde/keyverse"
+            echo "Optional env-scoped secret: same command with --env production"
             exit 1
           fi
           # Project token scopes a single project; still pass service/env explicitly.
