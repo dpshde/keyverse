@@ -39,15 +39,19 @@ jobs:
 
       - name: Deploy to Railway production
         env:
-          # Project token from Railway → Project Settings → Tokens
-          # Scoped to project keyverse / environment production
+          # Project token: Railway → keyverse project → Settings → Tokens
+          # Then: gh secret set RAILWAY_TOKEN -R dpshde/versepack
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error::Missing secret RAILWAY_TOKEN. Create a Railway project token and add it as a GitHub Actions secret."
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Missing secret RAILWAY_TOKEN."
+            echo "Create a Railway project token (Project → Settings → Tokens),"
+            echo "then: gh secret set RAILWAY_TOKEN -R dpshde/versepack"
             exit 1
           fi
+          # Project token scopes a single project; still pass service/env explicitly.
           railway up --ci \
             --service keyverse \
             --environment production \
-            -m "gha ${GITHUB_SHA::7} ${GITHUB_REF_NAME}"
+            -m "gha ${GITHUB_SHA:0:7} ${GITHUB_REF_NAME}"

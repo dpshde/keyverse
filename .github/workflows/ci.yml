@@ -44,7 +44,8 @@ jobs:
             sleep 0.2
           done
           curl -sf "http://127.0.0.1:4180/health" | tee /tmp/health.json
-          grep -q '"ok": true' /tmp/health.json
-          curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/manifest.webmanifest" | grep -q 200
-          curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/sw.js" | grep -q 200
-          curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/icons/icon-192.png" | grep -q 200
+          grep -qE '"ok"[[:space:]]*:[[:space:]]*true' /tmp/health.json
+          code_manifest=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/manifest.webmanifest")
+          code_sw=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/sw.js")
+          code_icon=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:4180/icons/icon-192.png")
+          test "$code_manifest" = "200" && test "$code_sw" = "200" && test "$code_icon" = "200"
