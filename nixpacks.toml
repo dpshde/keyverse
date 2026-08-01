@@ -1,4 +1,4 @@
-# Used when Railpack/Nixpacks builds from mix.exs (no Dockerfile).
+# Railpack/Nixpacks build for the multipack door (release + foreground).
 [phases.setup]
 nixPkgs = ["elixir", "erlang"]
 
@@ -10,7 +10,10 @@ cmds = [
 ]
 
 [phases.build]
-cmds = ["MIX_ENV=prod mix compile"]
+cmds = [
+  "MIX_ENV=prod mix compile",
+  "MIX_ENV=prod mix release"
+]
 
 [start]
-cmd = "MIX_ENV=prod mix run --no-halt"
+cmd = "/app/_build/prod/rel/keyverse/bin/keyverse foreground"

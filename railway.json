@@ -4,7 +4,7 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "MIX_ENV=prod mix run --no-halt",
+    "startCommand": "/app/_build/prod/rel/keyverse/bin/keyverse foreground",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",

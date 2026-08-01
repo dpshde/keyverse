@@ -9,7 +9,14 @@ defmodule Keyverse.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
-      elixirc_paths: elixirc_paths(Mix.env())
+      elixirc_paths: elixirc_paths(Mix.env()),
+      # Railpack runs `mix release` and expects this app name under _build/prod/rel/
+      releases: [
+        keyverse: [
+          include_executables_for: [:unix],
+          applications: [runtime_tools: :permanent]
+        ]
+      ]
     ]
   end
 
