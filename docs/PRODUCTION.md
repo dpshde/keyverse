@@ -29,7 +29,7 @@ Same as self-host ([ADR 0011](./adr/0011-multiword-door-access.md)):
 |--------|------------|
 | Random internet visitor | Multiword door + TLS (do not use `DOOR_OPEN`) |
 | Shared host / curious operator | Client-side pack passphrase ([ADR 0012](./adr/0012-client-side-note-encryption.md)) |
-| Disk theft of `PACK_DIR` | OS/volume encryption (not provided by versepack) + passphrase for sealed notes |
+| Disk theft of `PACK_DIR` | OS/volume encryption (not provided by keyverse) + passphrase for sealed notes |
 | Co-editor with door URL | Share passphrase only if they should read sealed notes |
 
 The server never receives the pack passphrase. Sealed notes on disk are
@@ -55,7 +55,7 @@ ciphertext JSON; attachment **blobs** remain content-addressed bytes.
 ```sh
 export HOST=127.0.0.1
 export PORT=4180
-export PACK_DIR=/var/lib/versepack/pack
+export PACK_DIR=/var/lib/keyverse/pack
 export DOOR=your-fixed-multiword-phrase
 # DOOR_OPEN must remain unset
 # optional: MAX_ATTACH_BYTES=52428800
@@ -73,27 +73,27 @@ export DOOR=your-fixed-multiword-phrase
 ## systemd unit (example)
 
 ```ini
-# /etc/systemd/system/versepack.service
+# /etc/systemd/system/keyverse.service
 [Unit]
-Description=versepack door
+Description=keyverse door
 After=network.target
 
 [Service]
 Type=simple
-User=versepack
-Group=versepack
-WorkingDirectory=/opt/versepack
+User=keyverse
+Group=keyverse
+WorkingDirectory=/opt/keyverse
 Environment=HOST=127.0.0.1
 Environment=PORT=4180
-Environment=PACK_DIR=/var/lib/versepack/pack
+Environment=PACK_DIR=/var/lib/keyverse/pack
 Environment=DOOR=your-fixed-multiword-phrase
-ExecStart=/usr/bin/node /opt/versepack/server.mjs
+ExecStart=/usr/bin/node /opt/keyverse/server.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/versepack/pack
+ReadWritePaths=/var/lib/keyverse/pack
 
 [Install]
 WantedBy=multi-user.target
@@ -101,8 +101,8 @@ WantedBy=multi-user.target
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now versepack
-sudo journalctl -u versepack -f
+sudo systemctl enable --now keyverse
+sudo journalctl -u keyverse -f
 ```
 
 Users open: `https://notes.example.com/your-fixed-multiword-phrase/`
@@ -155,10 +155,10 @@ CMD ["node", "server.mjs"]
 
 ```sh
 docker run --rm -p 4180:4180 \
-  -v /var/lib/versepack:/data \
+  -v /var/lib/keyverse:/data \
   -e PACK_DIR=/data \
   -e DOOR=your-fixed-multiword-phrase \
-  versepack
+  keyverse
 ```
 
 Mount the pack volume; do not bake notes into the image.
@@ -175,7 +175,7 @@ Mount the pack volume; do not bake notes into the image.
 | Pack passphrase | Off-site, if used | **Not** stored in the pack — back it up yourself |
 
 ```sh
-rsync -a --delete /var/lib/versepack/pack/ backup:/versepack/pack/
+rsync -a --delete /var/lib/keyverse/pack/ backup:/keyverse/pack/
 ```
 
 ## Health checks
@@ -191,10 +191,10 @@ curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/$DOOR/"
 ## Updates
 
 ```sh
-cd /opt/versepack
+cd /opt/keyverse
 git pull
 pnpm install --frozen-lockfile
-sudo systemctl restart versepack
+sudo systemctl restart keyverse
 ```
 
 Keep `PACK_DIR` outside the git checkout so deploys never wipe notes.

@@ -1,4 +1,4 @@
-// versepack demo — a cowyo-class capture door over an on-disk pack.
+// keyverse demo — a cowyo-class capture door over an on-disk pack.
 // The pack directory (./pack) is the source of truth; this server is just a door.
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
@@ -11,6 +11,7 @@ import {
   getBookOrder,
   autocompletePassage,
 } from "grab-bcv";
+import QRCode from "qrcode";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // PACK_DIR: absolute or relative path to the pack directory (default ./pack).
@@ -28,6 +29,12 @@ const MAX_ATTACH_BYTES = Number(process.env.MAX_ATTACH_BYTES || 50 * 1024 * 1024
 // DOOR_OPEN=1 disables the door (open LAN demo only).
 const DOOR_OPEN = process.env.DOOR_OPEN === "1" || process.env.DOOR_OPEN === "true";
 const DOOR_FILE = path.join(PACK_DIR, "door");
+// Interop constants (pack/protocol.json + GET /api/protocol)
+const PROTOCOL_NAME = "keyverse";
+const PROTOCOL_VERSION = "0.1-demo";
+// CORS for /api/* : default * (door is the secret). CORS_ORIGIN=off disables.
+// Comma-separated origins for credentialed multi-origin setups.
+const CORS_ORIGIN_RAW = process.env.CORS_ORIGIN;
 
 // ---------- multiword door (frictionless access) ----------
 
@@ -135,7 +142,15 @@ async function ensurePack() {
   } catch {
     await writeFile(
       protocolPath,
-      JSON.stringify({ protocol: "versepack", version: "0.1-demo" }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          protocol: PROTOCOL_NAME,
+          version: PROTOCOL_VERSION,
+          schemas: "schemas/",
+        },
+        null,
+        2,
+      ) + "\n",
     );
   }
   await ensureDoor();
@@ -236,12 +251,11 @@ async function listNotes() {
 
 // ---------- blocks (each note is a miniature outline) ----------
 // A note's content is a flat list of line-blocks in document order:
-//   { id, indent, text }
+//   { id, indent, text, collapsed? }
 // The tree is a projection of `indent` (2 spaces per level in text form),
 // dotflowy-style: flat rows are canonical, the outline is derived. Stable
 // block ids survive edits (LCS line matching for text/curl; the outliner UI
-// sends ids directly). A block written on a verse today can be referenced,
-// merged, or transcluded by a broader note later without losing its identity.
+// sends ids directly). Optional `collapsed` persists in JSON only (ADR 0013).
 
 const newBlockId = () =>
   `b_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -297,6 +311,7 @@ function reconcileBlocks(text, prev = []) {
 
 // Accept client-authored blocks (outliner UI). Preserve ids when unique.
 // Empty text is kept — blank bullets are first-class.
+// Optional collapsed (ADR 0013): only serialized when true.
 function normalizeBlocks(raw) {
   const used = new Set();
   const out = [];
@@ -308,7 +323,11 @@ function normalizeBlocks(raw) {
     let id = typeof item?.id === "string" && /^[\w.-]+$/.test(item.id) ? item.id : null;
     if (!id || used.has(id)) id = newBlockId();
     used.add(id);
-    out.push({ id, indent, text });
+    const row = { id, indent, text };
+    if (item?.collapsed === true || item?.collapsed === "true" || item?.collapsed === 1) {
+      row.collapsed = true;
+    }
+    out.push(row);
   }
   return out;
 }
@@ -418,6 +437,322 @@ async function relatedNotes(scope) {
   rel.contains.sort((x, y) => start(x) - start(y));
   rel.overlaps.sort((x, y) => start(x) - start(y));
   return rel;
+}
+
+// ---------- home list: project notes into a containment tree ----------
+// Storage stays one file per address (ADR 0004). The home page *displays*
+// chapter → verse nesting from OSIS geometry, with synthetic chapter folders
+// when verse notes exist without a chapter note.
+
+function noteEntry(note) {
+  const scope = parseScope(note.scope?.osis || note.scope?.slug);
+  if (!scope) return null;
+  return { note, scope, interval: scopeInterval(scope.parsed) };
+}
+
+/** Nest notes by containment: start asc, wider first, stack of open parents. */
+function buildContainmentForest(entries) {
+  const sorted = [...entries].sort((a, b) => {
+    if (a.interval.book !== b.interval.book) {
+      return (getBookOrder(a.interval.book) ?? 999) - (getBookOrder(b.interval.book) ?? 999);
+    }
+    if (a.interval.s !== b.interval.s) return a.interval.s - b.interval.s;
+    const spanA = a.interval.e - a.interval.s;
+    const spanB = b.interval.e - b.interval.s;
+    if (spanA !== spanB) return spanB - spanA; // wider parent first
+    return a.scope.slug < b.scope.slug ? -1 : a.scope.slug > b.scope.slug ? 1 : 0;
+  });
+  const roots = [];
+  const stack = [];
+  for (const entry of sorted) {
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      const rel = relateScopes(top.entry.interval, entry.interval);
+      if (rel === "contains") break;
+      stack.pop();
+    }
+    const node = { kind: "note", entry, children: [] };
+    if (stack.length) stack[stack.length - 1].children.push(node);
+    else roots.push(node);
+    stack.push(node);
+  }
+  return roots;
+}
+
+function maxUpdatedAt(entries) {
+  let best = "";
+  for (const e of entries) {
+    const t = e.note?.updated_at || "";
+    if (t > best) best = t;
+  }
+  return best;
+}
+
+/**
+ * Home forest: book order → chapter folders (synthetic when needed) →
+ * notes nested by containment. Multi-chapter ranges sit at book level.
+ */
+function buildHomeNoteTree(notes) {
+  const entries = [];
+  for (const note of notes) {
+    const e = noteEntry(note);
+    if (e) entries.push(e);
+  }
+  if (!entries.length) return [];
+
+  const byBook = new Map();
+  for (const e of entries) {
+    const b = e.interval.book;
+    if (!byBook.has(b)) byBook.set(b, []);
+    byBook.get(b).push(e);
+  }
+  const books = [...byBook.keys()].sort(
+    (a, b) => (getBookOrder(a) ?? 999) - (getBookOrder(b) ?? 999),
+  );
+
+  const out = [];
+  for (const book of books) {
+    const bookEntries = byBook.get(book);
+    const byChapter = new Map(); // single-chapter only
+    const multi = [];
+    for (const e of bookEntries) {
+      const sc = e.scope.parsed.start.chapter;
+      const ec = e.scope.parsed.end.chapter;
+      if (sc !== ec) multi.push(e);
+      else {
+        if (!byChapter.has(sc)) byChapter.set(sc, []);
+        byChapter.get(sc).push(e);
+      }
+    }
+
+    const units = [];
+    for (const [ch, list] of byChapter) {
+      units.push({ type: "chapter", chapter: ch, entries: list, s: pos(ch, 1) });
+    }
+    for (const e of multi) {
+      units.push({ type: "multi", entry: e, s: e.interval.s });
+    }
+    units.sort((a, b) => a.s - b.s || (a.type === "chapter" ? -1 : 1));
+
+    for (const unit of units) {
+      if (unit.type === "multi") {
+        out.push({ kind: "note", entry: unit.entry, children: [] });
+        continue;
+      }
+      const forest = buildContainmentForest(unit.entries);
+      const chapterNote = unit.entries.find((e) => e.scope.kind === "chapter");
+      if (chapterNote) {
+        // Chapter note is the folder; nest any same-chapter roots under it.
+        let root = forest.find((n) => n.entry.scope.slug === chapterNote.scope.slug);
+        if (!root) {
+          root = { kind: "note", entry: chapterNote, children: forest };
+        } else {
+          for (const r of forest) {
+            if (r !== root) root.children.push(r);
+          }
+        }
+        out.push(root);
+      } else {
+        const chScope = parseScope(`${book}.${unit.chapter}`);
+        const label = chScope
+          ? formatPassageForDisplay(chScope.parsed)
+          : `${book} ${unit.chapter}`;
+        const slug = chScope?.slug || `${book}.${unit.chapter}`.toLowerCase();
+        out.push({
+          kind: "folder",
+          label,
+          slug,
+          href: chScope ? u(`/read/${chScope.slug}`) : u("/"),
+          children: forest,
+          updated_at: maxUpdatedAt(unit.entries),
+          count: unit.entries.length,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function countTreeNotes(node) {
+  if (node.kind === "note") {
+    let n = 1;
+    for (const c of node.children || []) n += countTreeNotes(c);
+    return n;
+  }
+  let n = 0;
+  for (const c of node.children || []) n += countTreeNotes(c);
+  return n;
+}
+
+const NT_ICON_EDIT = `<svg width="14" height="14" viewBox="0 0 256 256" fill="none" aria-hidden="true"><polygon points="128 160 96 160 96 128 192 32 224 64 128 160" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="168" y1="56" x2="200" y2="88" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M216,128v80a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V48a8,8,0,0,1,8-8h80" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>`;
+const NT_ICON_READ = `<svg width="14" height="14" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,88a32,32,0,0,1,32-32h72V200H160a32,32,0,0,0-32,32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M24,200H96a32,32,0,0,1,32,32V88A32,32,0,0,0,96,56H24Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>`;
+
+function renderHomeTreeNode(node, depth = 0) {
+  const kids = node.children || [];
+  const hasKids = kids.length > 0;
+  const id =
+    node.kind === "folder"
+      ? `folder:${node.slug}`
+      : `note:${node.entry.scope.slug}`;
+
+  let noteHref;
+  let readHref;
+  let ref;
+  let timeIso;
+  let sub;
+  let isChapter = false;
+
+  if (node.kind === "folder") {
+    // Synthetic chapter folder: both icons open that chapter address.
+    noteHref = u(`/note/${node.slug}`);
+    readHref = node.href;
+    ref = node.label;
+    timeIso = node.updated_at;
+    const n = node.count || countTreeNotes(node);
+    sub = `${n} note${n === 1 ? "" : "s"}`;
+    isChapter = true;
+  } else {
+    const { note, scope } = node.entry;
+    noteHref = u(`/note/${scope.slug}`);
+    // Reader accepts verse/range scopes and highlights them in the chapter.
+    readHref = u(`/read/${scope.slug}`);
+    ref = formatPassageForDisplay(scope.parsed);
+    timeIso = note.updated_at;
+    sub = excerpt(note) || "empty";
+    isChapter = scope.kind === "chapter";
+  }
+
+  const chev = hasKids
+    ? `<button type="button" class="nt-chev" aria-label="Collapse" aria-expanded="true"></button>`
+    : `<span class="nt-chev is-leaf" aria-hidden="true"></span>`;
+
+  const rowCls = [
+    "note-row",
+    node.kind === "folder" ? "is-folder" : "",
+    isChapter ? "is-chapter" : "",
+    hasKids ? "has-kids" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  // Meta sits top-right (icons left of modified stamp). Outside the fold button
+  // so we never nest links inside a button.
+  const meta = `<span class="nt-meta">
+      <a class="nt-act nt-open" href="${esc(noteHref)}" title="Open note" aria-label="Open note">${NT_ICON_EDIT}</a>
+      <a class="nt-act nt-read" href="${esc(readHref)}" title="Read" aria-label="Read">${NT_ICON_READ}</a>
+      ${timeIso ? `<span class="muted nt-time">${esc(relTime(timeIso))}</span>` : ""}
+    </span>`;
+  const mainInner = `
+      <span class="nt-top">
+        <span class="ref">${esc(ref)}</span>
+        ${meta}
+      </span>
+      <div class="muted nt-ex">${esc(sub)}</div>`;
+  // Parent rows: click main (except .nt-act) to fold.
+  // Leaf verse/passage rows: click main opens reader at that spot.
+  const main = hasKids
+    ? `<div class="nt-main nt-fold" role="button" tabindex="0" aria-expanded="true">${mainInner}
+    </div>`
+    : `<div class="nt-main nt-open-read" role="link" tabindex="0" data-href="${esc(readHref)}">${mainInner}
+    </div>`;
+
+  const kidsHtml = hasKids
+    ? `<div class="nt-kids">${kids.map((c) => renderHomeTreeNode(c, depth + 1)).join("")}</div>`
+    : "";
+
+  return `<div class="nt-node" data-id="${esc(id)}" data-depth="${depth}">
+    <div class="${rowCls}" style="--depth:${depth}">
+      ${chev}
+      ${main}
+    </div>
+    ${kidsHtml}
+  </div>`;
+}
+
+function renderHomeNoteTree(notes) {
+  const tree = buildHomeNoteTree(notes);
+  if (!tree.length) return "";
+  const body = tree.map((n) => renderHomeTreeNode(n, 0)).join("\n");
+  return `<div class="note-tree" id="note-tree">${body}</div>
+  <script>
+  (function () {
+    var root = document.getElementById("note-tree");
+    if (!root) return;
+    var KEY = "vp_home_fold_" + (typeof BASE === "string" ? BASE : location.pathname.split("/")[1] || "local");
+    function load() {
+      try { return JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { return {}; }
+    }
+    function save(map) {
+      try { localStorage.setItem(KEY, JSON.stringify(map)); } catch (e) {}
+    }
+    var collapsed = load();
+    function setExpanded(node, expanded) {
+      node.classList.toggle("is-collapsed", !expanded);
+      var chev = node.querySelector(":scope > .note-row .nt-chev");
+      if (chev && chev.tagName === "BUTTON") {
+        chev.setAttribute("aria-expanded", expanded ? "true" : "false");
+        chev.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
+      }
+      var fold = node.querySelector(":scope > .note-row .nt-fold");
+      if (fold) fold.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+    function toggleNode(node) {
+      if (!node || !node.querySelector(":scope > .nt-kids")) return;
+      var id = node.getAttribute("data-id");
+      var nowCollapsed = !node.classList.contains("is-collapsed");
+      setExpanded(node, !nowCollapsed);
+      var map = load();
+      if (nowCollapsed) map[id] = 1; else delete map[id];
+      save(map);
+    }
+    root.querySelectorAll(".nt-node").forEach(function (node) {
+      var id = node.getAttribute("data-id");
+      if (!id || !collapsed[id]) return;
+      if (!node.querySelector(":scope > .nt-kids")) return;
+      setExpanded(node, false);
+    });
+    root.addEventListener("click", function (e) {
+      if (e.target.closest(".nt-act")) return; // open note / read icons
+      var chev = e.target.closest(".nt-chev");
+      if (chev && !chev.classList.contains("is-leaf") && chev.tagName === "BUTTON") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleNode(chev.closest(".nt-node"));
+        return;
+      }
+      var fold = e.target.closest(".nt-fold");
+      if (fold) {
+        e.preventDefault();
+        toggleNode(fold.closest(".nt-node"));
+        return;
+      }
+      var openRead = e.target.closest(".nt-open-read");
+      if (openRead) {
+        var href = openRead.getAttribute("data-href");
+        if (href) {
+          if (e.metaKey || e.ctrlKey) window.open(href, "_blank");
+          else location.href = href;
+        }
+      }
+    });
+    root.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (e.target.closest(".nt-act")) return;
+      var fold = e.target.closest(".nt-fold");
+      if (fold && e.target === fold) {
+        e.preventDefault();
+        toggleNode(fold.closest(".nt-node"));
+        return;
+      }
+      var openRead = e.target.closest(".nt-open-read");
+      if (openRead && e.target === openRead) {
+        e.preventDefault();
+        var href = openRead.getAttribute("data-href");
+        if (href) location.href = href;
+      }
+    });
+  })();
+  </script>`;
 }
 
 // ---------- scripture text (BSB, cache-first) ----------
@@ -799,12 +1134,17 @@ const CSS = `
     border-color: color-mix(in srgb, currentColor 45%, transparent); }
   /* passage reference autocomplete (home search) */
   .ref-search { position: relative; }
-  .ref-search input[type=text] { margin: 0; }
+  .ref-search form { margin: 0; }
+  .ref-search input[type=text] { margin: 0; display: block; }
+  .ref-search input[aria-expanded="true"] {
+    border-radius: .4rem .4rem 0 0;
+  }
   .ref-suggest {
-    position: absolute; left: 0; right: 0; top: calc(100% + .25rem); z-index: 40;
-    margin: 0; padding: .25rem 0; list-style: none;
+    position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+    margin: 0; padding: 0; list-style: none;
     border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-    border-radius: .45rem;
+    border-top: 0;
+    border-radius: 0 0 .45rem .45rem;
     background: color-mix(in srgb, Canvas 92%, transparent);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     box-shadow: 0 .4rem 1.25rem color-mix(in srgb, currentColor 10%, transparent);
@@ -833,6 +1173,14 @@ const CSS = `
     .ref-suggest { background: color-mix(in srgb, #1c1c1e 94%, transparent); }
   }
   .muted { color: color-mix(in srgb, currentColor 48%, transparent); font-size: .88rem; }
+  /* ghost text control — matches muted header links (reader expand notes, etc.) */
+  button.text-btn {
+    margin: 0; padding: 0; border: 0; background: transparent;
+    font: inherit; color: inherit; cursor: pointer;
+    text-align: left; appearance: none; -webkit-appearance: none;
+  }
+  button.text-btn:hover { color: inherit; }
+  button.text-btn[hidden] { display: none; }
   .ui { font-family: -apple-system, system-ui, sans-serif; font-size: .88rem; }
   .login {
     max-width: 20rem; margin: 3rem auto 2rem; padding: 0 .5rem;
@@ -889,11 +1237,17 @@ const CSS = `
   .login-more summary:hover { color: inherit; }
   .login-more .login-form { margin-top: .85rem; }
   .login-more p { margin: .65rem 0 0; }
+  /* Share bookplate — overlay; key + seal QR + actions; no layout shift */
+  .door-share-wrap {
+    position: relative; display: inline-block; max-width: 100%;
+    vertical-align: baseline;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
   .door-share {
-    display: inline-flex; align-items: center; gap: .35rem;
-    margin: 0; padding: .2rem .45rem; border: 0; border-radius: .35rem;
+    display: inline-flex; align-items: center; gap: .3rem;
+    margin: 0; padding: .15rem .35rem; border: 0; border-radius: .2rem;
     background: transparent; cursor: pointer;
-    font: inherit; font-family: -apple-system, system-ui, sans-serif;
+    font: inherit; font-family: inherit;
     font-size: .82rem; letter-spacing: .01em;
     color: color-mix(in srgb, currentColor 48%, transparent);
     -webkit-tap-highlight-color: transparent;
@@ -902,14 +1256,161 @@ const CSS = `
   }
   .door-share:hover { color: inherit; background: color-mix(in srgb, currentColor 6%, transparent); }
   .door-share:active { transform: scale(.98); }
-  .door-share[data-flash="1"] { color: inherit; }
+  .door-share:focus-visible {
+    outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+    outline-offset: 2px;
+  }
   .door-share-key {
     font-variant-ligatures: none;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     max-width: min(14rem, 42vw);
   }
   .door-share-hint {
-    flex: 0 0 auto; font-size: .75rem; opacity: .7;
+    flex: 0 0 auto; font-size: .72rem; opacity: .65; line-height: 1;
+  }
+  /* Ghost chip holds header space while the panel floats above */
+  .door-share-wrap[data-open="1"] > .door-share {
+    visibility: hidden; pointer-events: none;
+  }
+  .door-share-panel {
+    position: absolute; right: 0; top: 0; z-index: 60;
+    width: 12.5rem;
+    padding: .65rem .65rem .6rem;
+    border-radius: .12rem;
+    border: 1px solid color-mix(in srgb, #2a241c 16%, transparent);
+    background: #f6f1e7;
+    color: #1c1915;
+    box-shadow:
+      0 .05rem 0 color-mix(in srgb, #2a241c 6%, transparent),
+      0 .55rem 1.6rem color-mix(in srgb, #1c1915 18%, transparent);
+    animation: door-share-in 170ms cubic-bezier(.2, .8, .2, 1) both;
+  }
+  .door-share-panel[hidden] { display: none; animation: none; }
+  @keyframes door-share-in {
+    from { opacity: 0; transform: translateY(-.2rem) scale(.98); }
+    to   { opacity: 1; transform: none; }
+  }
+  .door-share-head {
+    display: flex; align-items: flex-start; gap: .35rem;
+    margin: 0 0 .55rem;
+  }
+  .door-share-title {
+    flex: 1 1 auto; min-width: 0;
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: .88rem; font-weight: 600;
+    letter-spacing: -.015em; line-height: 1.2;
+    color: inherit;
+    white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .door-share-x {
+    flex: 0 0 auto;
+    margin: -.15rem -.2rem 0 0; padding: .2rem .35rem;
+    border: 0; border-radius: .15rem;
+    background: transparent; cursor: pointer;
+    font: inherit; font-size: .95rem; line-height: 1;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .door-share-x:hover { color: inherit; background: color-mix(in srgb, currentColor 7%, transparent); }
+  .door-share-x:focus-visible {
+    outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+    outline-offset: 1px;
+  }
+  .door-share-qr {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; aspect-ratio: 1; margin: 0; padding: 0;
+    border: 1px solid color-mix(in srgb, #2a241c 12%, transparent);
+    border-radius: .08rem;
+    background: #fff;
+    overflow: hidden;
+  }
+  .door-share-qr svg {
+    display: block; width: 100%; height: 100%;
+  }
+  .door-share-qr[aria-busy="true"] {
+    min-height: 8.5rem;
+    background:
+      linear-gradient(90deg,
+        color-mix(in srgb, #2a241c 5%, #fff) 25%,
+        color-mix(in srgb, #2a241c 9%, #fff) 50%,
+        color-mix(in srgb, #2a241c 5%, #fff) 75%);
+    background-size: 200% 100%;
+    animation: door-share-shimmer 1.1s ease-in-out infinite;
+  }
+  @keyframes door-share-shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+  .door-share-actions {
+    display: flex; flex-direction: column; align-items: stretch;
+    gap: .3rem; margin-top: .55rem;
+  }
+  .door-share-action {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; box-sizing: border-box;
+    margin: 0; padding: .48rem .6rem; min-height: 2.05rem;
+    font: inherit; font-size: .82rem; font-weight: 600;
+    letter-spacing: .01em;
+    border: 1px solid #1c1915; border-radius: .1rem; cursor: pointer;
+    background: #1c1915; color: #f6f1e7;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .door-share-action:hover { background: #000; border-color: #000; color: #fff; }
+  .door-share-action:active { transform: scale(.99); }
+  .door-share-action:focus-visible {
+    outline: 2px solid color-mix(in srgb, #1c1915 45%, transparent);
+    outline-offset: 2px;
+  }
+  .door-share-action[data-flash="1"] { opacity: .8; }
+  .door-share-copy {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; margin: 0; padding: .25rem .4rem;
+    border: 0; border-radius: .1rem; cursor: pointer;
+    background: transparent;
+    font: inherit; font-size: .76rem; font-weight: 500;
+    color: color-mix(in srgb, #1c1915 52%, transparent);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, #1c1915 22%, transparent);
+    text-underline-offset: .14em;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .door-share-copy:hover {
+    color: #1c1915;
+    text-decoration-color: color-mix(in srgb, #1c1915 48%, transparent);
+  }
+  .door-share-copy:focus-visible {
+    outline: 2px solid color-mix(in srgb, #1c1915 35%, transparent);
+    outline-offset: 1px;
+  }
+  .door-share-copy[data-flash="1"] { color: #1c1915; }
+  @media (prefers-color-scheme: dark) {
+    .door-share-panel {
+      background: #1a1814;
+      color: #ece6db;
+      border-color: color-mix(in srgb, #ece6db 14%, transparent);
+      box-shadow:
+        0 .05rem 0 color-mix(in srgb, #000 35%, transparent),
+        0 .6rem 1.7rem color-mix(in srgb, #000 45%, transparent);
+    }
+    .door-share-qr {
+      background: #fff;
+      border-color: color-mix(in srgb, #ece6db 10%, transparent);
+    }
+    .door-share-action {
+      background: #ece6db; color: #1a1814; border-color: #ece6db;
+    }
+    .door-share-action:hover { background: #fff; border-color: #fff; color: #111; }
+    .door-share-action:focus-visible {
+      outline-color: color-mix(in srgb, #ece6db 50%, transparent);
+    }
+    .door-share-copy { color: color-mix(in srgb, #ece6db 55%, transparent); }
+    .door-share-copy:hover { color: #ece6db; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .door-share-panel { animation: none; }
+    .door-share-qr[aria-busy="true"] { animation: none; }
   }
   .crypto-bar {
     display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem;
@@ -942,19 +1443,67 @@ const CSS = `
     border-radius: .35rem; background: transparent; cursor: pointer; color: inherit;
     min-height: 2.6rem;
   }
-  header { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; margin-bottom: 1rem;
+  header { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; margin-bottom: 1.75rem;
     row-gap: .35rem; }
   header h1 { font-size: 1.2rem; font-weight: 600; margin: 0; letter-spacing: -.01em;
     min-width: 0; flex: 1 1 auto; }
   #status { margin-left: auto; font-size: .8rem; color: color-mix(in srgb, currentColor 45%, transparent); }
   h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
        font-family: -apple-system, system-ui, sans-serif; }
+  /* Home list: flat by default; indent via --depth for chapter → verse folders */
+  .note-tree { margin-top: .15rem; }
   .note-row {
-    display: block; padding: .55rem 0; text-decoration: none; color: inherit;
+    display: flex; align-items: flex-start; gap: .15rem;
+    padding: .55rem 0; padding-left: calc(var(--depth, 0) * 1.15rem);
+    color: inherit;
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   }
   .note-row:hover { background: color-mix(in srgb, currentColor 4%, transparent);
-    margin: 0 -.35rem; padding-left: .35rem; padding-right: .35rem; border-radius: .25rem; }
+    margin: 0 -.35rem; padding-left: calc(var(--depth, 0) * 1.15rem + .35rem);
+    padding-right: .35rem; border-radius: .25rem; }
+  .note-row .nt-main {
+    flex: 1 1 auto; min-width: 0; color: inherit;
+    display: block; text-align: left;
+  }
+  .note-row .nt-main.nt-fold,
+  .note-row .nt-main.nt-open-read { cursor: pointer; }
+  .note-row .nt-top {
+    display: flex; align-items: center; gap: .35rem; min-width: 0;
+  }
+  .note-row .nt-top .ref {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .note-row .nt-meta {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: .12rem;
+    margin-left: auto;
+  }
+  .note-row .nt-time { font-size: .8rem; margin-left: .2rem; white-space: nowrap; }
+  .note-row .nt-ex { margin-top: .1rem; }
+  .note-row.is-folder .ref,
+  .note-row.is-chapter .ref { font-weight: 600; }
+  .note-row.is-folder .nt-ex,
+  .note-row.is-chapter .nt-ex { font-size: .85rem; }
+  .nt-act {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.25rem; height: 1.25rem; border-radius: .2rem;
+    color: inherit; opacity: .38; text-decoration: none;
+  }
+  .nt-act:hover { opacity: .9; background: color-mix(in srgb, currentColor 8%, transparent); }
+  .nt-act svg { display: block; }
+  .nt-chev {
+    flex: 0 0 auto; width: 1.35rem; height: 1.35rem; margin-top: .05rem;
+    padding: 0; border: 0; background: transparent; color: inherit;
+    cursor: pointer; border-radius: .25rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    opacity: .45; font-size: .7rem; line-height: 1;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  .nt-chev:not(.is-leaf)::before { content: "\\25BE"; } /* ▾ */
+  .nt-chev.is-leaf { visibility: hidden; cursor: default; pointer-events: none; }
+  .nt-chev:not(.is-leaf):hover { opacity: .85; background: color-mix(in srgb, currentColor 6%, transparent); }
+  .nt-node.is-collapsed > .note-row .nt-chev { transform: rotate(-90deg); }
+  .nt-node.is-collapsed > .nt-kids { display: none; }
   .ref { font-weight: 600; margin-right: .4rem; }
   kbd {
     font-family: inherit; font-size: .8em; padding: .05rem .3rem;
@@ -963,23 +1512,89 @@ const CSS = `
 
   /* reading: scripture primary; notes hide until the verse is opened */
   .verse {
+    --v-pad-y: .34rem;
+    --v-pad-x: .75rem;
+    --v-gutter: .72rem; /* left rail only — never overlaps verse text */
     position: relative;
-    padding: .28rem 0 .28rem 0.9rem;
-    margin-left: -0.9rem;
+    padding: var(--v-pad-y) var(--v-pad-x) var(--v-pad-y) var(--v-pad-x);
+    margin-left: 0;
     cursor: pointer;
   }
-  .verse.hl .vtext { background: color-mix(in srgb, currentColor 6%, transparent);
-    margin: 0 -.35rem; padding: 0 .35rem; border-radius: .25rem; }
-  /* has-notes mark lives in the left gutter — outside the verse number */
+  /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
+  /*
+   * Multi-verse selection = one continuous surface.
+   * --sel-x is the single horizontal inset for scripture AND the passage note.
+   * Deep-links (single or multi) reuse this chrome via paintSelection.
+   */
+  .verse.sel {
+    --sel-fill: color-mix(in srgb, currentColor 6.5%, transparent);
+    --sel-edge: color-mix(in srgb, currentColor 11%, transparent);
+    --sel-x: .75rem;
+    --sel-y: .36rem;
+    --sel-radius: .45rem;
+    background: var(--sel-fill);
+    padding: var(--sel-y) var(--sel-x);
+    margin-left: 0;
+  }
+  .verse.sel.sel-lo { border-radius: var(--sel-radius) var(--sel-radius) 0 0; }
+  .verse.sel.sel-hi { border-radius: 0 0 var(--sel-radius) var(--sel-radius); }
+  .verse.sel.sel-lo.sel-hi { border-radius: var(--sel-radius); }
+  /*
+   * Note open on end verse: keep the *outer* bottom curve on .sel-hi and clip
+   * children to it — never zero the radius under a rounded tray (square shows through).
+   */
+  .verse.sel.sel-hi.notes-open,
+  .verse.sel.sel-hi.editing {
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+  /* full-bleed within the card: cancel --sel-x, then re-apply so note text matches verse text */
+  .verse.sel .vnotes {
+    background: var(--sel-fill);
+    margin: .28rem calc(-1 * var(--sel-x)) 0;
+    padding: .5rem var(--sel-x) .55rem;
+    border-top: 1px solid var(--sel-edge);
+    border-radius: 0; /* curve lives on .sel-hi only */
+  }
+  body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
+  body.pick-range-end .verse { cursor: cell; }
+  /*
+   * Note presence: thin left rail, outside verse text.
+   * Contiguous has-notes verses share one continuous bar; only an isolated
+   * single verse (or the ends of a run) get a short/rounded segment.
+   * Passage/range cover = quieter rail; individual verse note = stronger color
+   * (even mid-run when connected to a passage).
+   * Hidden once notes are open (the note itself is the cue).
+   */
   .verse.has-notes:not(.notes-open):not(.editing)::before {
     content: "";
     position: absolute;
-    left: 0.15rem;
-    top: calc(0.28rem + 0.55em - 2.5px);
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: color-mix(in srgb, currentColor 32%, transparent);
+    left: 0;
+    top: var(--v-pad-y, .34rem);
+    bottom: var(--v-pad-y, .34rem);
+    width: 2px;
+    border-radius: 1px;
+    background: color-mix(in srgb, currentColor 22%, transparent);
     pointer-events: none;
+  }
+  .verse.has-verse-note:not(.notes-open):not(.editing)::before {
+    background: color-mix(in srgb, currentColor 55%, transparent);
+  }
+  .verse.sel.has-notes:not(.notes-open):not(.editing)::before {
+    top: var(--sel-y, .36rem);
+    bottom: var(--sel-y, .36rem);
+  }
+  /* Join into next closed has-notes verse */
+  .verse.has-notes:not(.notes-open):not(.editing):has(+ .verse.has-notes:not(.notes-open):not(.editing))::before {
+    bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  /* Join from previous closed has-notes verse */
+  .verse.has-notes:not(.notes-open):not(.editing) + .verse.has-notes:not(.notes-open):not(.editing)::before {
+    top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
   }
   .vtext { margin: 0; }
   .vtext sup {
@@ -991,7 +1606,12 @@ const CSS = `
     color: color-mix(in srgb, currentColor 40%, transparent); margin-left: .35rem; }
   .vnotes {
     display: none;
-    margin: .2rem 0 .4rem 1.35rem;
+    margin: .35rem 0 .45rem 0;
+    padding-left: 0;
+  }
+  .verse:not(.sel).notes-open .vnotes,
+  .verse:not(.sel).editing .vnotes {
+    margin-left: .35rem;
   }
   .verse.notes-open .vnotes,
   .verse.editing .vnotes { display: block; }
@@ -1007,13 +1627,51 @@ const CSS = `
     color: color-mix(in srgb, currentColor 45%, transparent);
     margin: 0 0 .2rem;
   }
+  /* range address: quiet meta above the editor — scope stays obvious while writing */
+  .note[data-kind="range"] {
+    margin: 0;
+  }
+  .note[data-kind="range"] .note-label {
+    display: flex;
+    align-items: baseline;
+    gap: .4rem;
+    flex-wrap: wrap;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .78rem;
+    font-weight: 550;
+    letter-spacing: .01em;
+    color: color-mix(in srgb, currentColor 62%, transparent);
+    margin: 0 0 .4rem;
+    line-height: 1.3;
+  }
+  .note[data-kind="range"] .note-label::before {
+    content: "Passage";
+    flex: 0 0 auto;
+    font-size: .65rem;
+    font-weight: 650;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
   .note-meta { margin: .2rem 0 0; font-size: .8rem;
     color: color-mix(in srgb, currentColor 45%, transparent); }
-  .note-edit { margin: .1rem 0; }
-  .note.editing .note-body,
-  .note.editing .note-label { display: none; }
+  .note-edit { margin: .05rem 0 0; }
+  /* range editor sits inside the selection surface — tighten chrome */
+  .note[data-kind="range"] .note-edit .outliner-shell.compact .otoolbar {
+    margin-top: .4rem;
+    padding-top: .3rem;
+    border-top-color: color-mix(in srgb, currentColor 9%, transparent);
+  }
+  .note[data-kind="range"] .note-edit .otool-btn {
+    font-size: .8rem;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  .note.editing .note-body { display: none; }
+  /* hide generic labels while editing; range labels stay (scope must remain obvious) */
+  .note.editing:not([data-kind="range"]) .note-label { display: none; }
   .note .note-body { cursor: text; }
   .note .note-label { cursor: text; }
+  .note[data-kind="range"] .note-label { cursor: default; }
 
   /* passage notes vs this-verse note under a verse */
   .note-group { margin: 0; }
@@ -1032,6 +1690,13 @@ const CSS = `
   }
   .note-group .note { margin: .25rem 0 .4rem; }
   .note-group .note:last-child { margin-bottom: 0; }
+  .note-group.passage .note[data-kind="range"] { margin: 0; }
+  /* range note when tray is open without selection (rare) — still a quiet card */
+  .verse:not(.sel) .note[data-kind="range"] {
+    padding: .5rem .65rem .45rem;
+    border-radius: .4rem;
+    background: color-mix(in srgb, currentColor 4.5%, transparent);
+  }
 
   /* chapter note sits above scripture — outline only, no redundant label/link */
   .chapter-note {
@@ -1154,17 +1819,18 @@ const CSS = `
 
   /*
    * One indent geometry everywhere (read outline + edit outliner):
-   *   row starts at depth * gutter; bullet is a fixed gutter-wide column; text follows.
+   *   chevron | bullet | text; depth via margin-left.
    */
   .outline, .outliner {
     --note-gutter: 1.25rem;
+    --chev-w: 0.95rem;
     --bullet: 0.4375rem;
     --row-h: 1.55em;
   }
   .outline { margin: 0; padding: 0; display: block; }
   .oline {
     display: grid;
-    grid-template-columns: var(--note-gutter) minmax(0, 1fr);
+    grid-template-columns: var(--chev-w) var(--note-gutter) minmax(0, 1fr);
     align-items: start;
     box-sizing: border-box;
     width: 100%;
@@ -1172,7 +1838,21 @@ const CSS = `
     padding: 0;
     margin: 0 0 0 calc(var(--depth, 0) * var(--note-gutter));
     line-height: 1.45;
+    position: relative;
   }
+  .oline .ochev {
+    width: var(--chev-w); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    font-size: .65rem; user-select: none;
+  }
+  .oline.has-kids .ochev { pointer-events: auto; cursor: pointer; }
+  .oline.has-kids:hover .ochev,
+  .oline.collapsed .ochev { opacity: 1; }
+  .oline .ochev::before { content: "\\25B8"; transition: transform .12s ease; }
+  .oline.collapsed .ochev::before { content: "\\25B8"; }
+  .oline:not(.collapsed).has-kids .ochev::before { content: "\\25BE"; }
   .oline .odot {
     box-sizing: border-box;
     width: var(--note-gutter); height: var(--row-h);
@@ -1184,6 +1864,10 @@ const CSS = `
     width: var(--bullet); height: var(--bullet);
     border-radius: 999px;
     background: color-mix(in srgb, currentColor 28%, transparent);
+  }
+  .oline.collapsed.has-kids .odot::before {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, currentColor 32%, transparent);
+    background: color-mix(in srgb, currentColor 18%, transparent);
   }
   .oline .otxt {
     display: block;
@@ -1237,26 +1921,55 @@ const CSS = `
   .oline.blank .otxt::after { content: "\\00a0"; }
 
   /* outliner — same grid + depth step as .outline */
-  .outliner { padding: .1rem 0; }
+  .outliner { padding: .1rem 0; position: relative; }
   .outliner.page { min-height: 40vh; }
+  .outliner.selecting { user-select: none; }
   .oblock {
     display: grid;
-    grid-template-columns: var(--note-gutter) minmax(0, 1fr);
+    grid-template-columns: var(--chev-w) var(--note-gutter) minmax(0, 1fr);
     align-items: start;
     min-height: var(--row-h);
-    padding: 0.05rem 0;
-    margin-left: calc(var(--depth, 0) * var(--note-gutter));
+    /* indent via padding (not margin) so hover/selection is a flush full-width band */
+    padding: 0.05rem 0 0.05rem calc(var(--depth, 0) * var(--note-gutter));
+    margin: 0;
+    border-radius: 0;
+    position: relative;
   }
+  .oblock:hover { background: color-mix(in srgb, currentColor 3.5%, transparent); }
+  .oblock.selected {
+    background: color-mix(in srgb, currentColor 9%, transparent);
+    border-radius: 0;
+  }
+  .oblock.dragging { opacity: .35; }
+  .oblock .ochev {
+    width: var(--chev-w); height: var(--row-h);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; border: 0; background: transparent; padding: 0;
+    color: color-mix(in srgb, currentColor 45%, transparent);
+    font-size: .65rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .oblock.has-kids .ochev { pointer-events: auto; }
+  .oblock.has-kids:hover .ochev,
+  .oblock.collapsed .ochev,
+  .oblock.has-kids .ochev:focus-visible { opacity: 1; }
+  .oblock .ochev::before { content: "\\25BE"; }
+  .oblock.collapsed .ochev::before { content: "\\25B8"; }
   .obullet {
     width: var(--note-gutter); height: var(--row-h);
     display: flex; align-items: center; justify-content: center;
-    user-select: none;
+    user-select: none; cursor: grab; touch-action: none;
   }
+  .obullet:active { cursor: grabbing; }
   .obullet::before {
     content: "";
     width: var(--bullet); height: var(--bullet);
     border-radius: 999px;
     background: color-mix(in srgb, currentColor 28%, transparent);
+  }
+  .oblock.collapsed.has-kids .obullet::before {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, currentColor 34%, transparent);
+    background: color-mix(in srgb, currentColor 16%, transparent);
   }
   .otext {
     min-width: 0; min-height: var(--row-h); padding: 0; outline: none;
@@ -1268,12 +1981,19 @@ const CSS = `
   .otext:empty::before { content: attr(data-placeholder); opacity: .35; pointer-events: none; }
   .outliner.compact { font-size: .9rem; }
   .outliner.compact .otext { font-size: max(0.9rem, 16px); }
+  .odrop {
+    position: absolute; left: 0; right: 0; height: 2px;
+    background: color-mix(in srgb, currentColor 55%, transparent);
+    pointer-events: none; z-index: 5; display: none;
+    border-radius: 1px;
+  }
+  .odrop.show { display: block; }
   .hint { margin-top: .65rem; }
 
-  /* nest / unnest — same quiet chrome as header links / muted UI, not filled cards */
+  /* nest / unnest / collapse — same quiet chrome as header links */
   .outliner-shell { margin: 0; }
   .otoolbar {
-    display: flex; gap: 1rem; align-items: center;
+    display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
     margin: .45rem 0 0;
     padding: .35rem 0 0;
     border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
@@ -1303,21 +2023,27 @@ const CSS = `
       padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
       font-size: 1.02rem;
     }
-    header { margin-bottom: .85rem; gap: .4rem .55rem; }
+    header { margin-bottom: 1.5rem; gap: .4rem .55rem; }
     header h1 { font-size: 1.12rem; line-height: 1.25; }
-    header a, #status { font-size: .82rem; }
+    header a, header .text-btn, #status { font-size: .82rem; }
     input[type=text] { font-size: 16px; padding: .7rem .75rem; }
     .note-row { padding: .7rem 0; min-height: 2.75rem; }
+    .nt-act { width: 1.75rem; height: 1.75rem; }
     .related-within .inbox-item { padding: .75rem .85rem; min-height: 2.75rem; }
     .related-parent .inbox-item { min-height: 2.5rem; }
     .verse {
-      padding: .4rem 0 .4rem 0.85rem;
-      margin-left: -0.5rem;
+      --v-pad-y: .4rem;
+      --v-pad-x: .7rem;
+      --v-gutter: .72rem;
     }
-    .vnotes { margin-left: .75rem; }
+    .verse.sel {
+      --sel-x: .7rem;
+      --sel-y: .4rem;
+    }
     .vtext { line-height: 1.5; }
     .outline, .outliner { --note-gutter: 1.15rem; --row-h: 1.7em; }
     .outliner.page { min-height: 30vh; }
+    .oblock.has-kids .ochev { opacity: .7; }
     .hint { display: none; }
     .otoolbar {
       position: sticky;
@@ -1330,6 +2056,7 @@ const CSS = `
       background: color-mix(in srgb, Canvas 94%, transparent);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      flex-wrap: nowrap;
     }
     .outliner-shell.compact .otoolbar {
       margin-left: 0; margin-right: 0;
@@ -1337,8 +2064,8 @@ const CSS = `
     .otool-btn {
       flex: 1 1 0;
       min-height: 2.85rem;
-      padding: .55rem .5rem;
-      font-size: .88rem;
+      padding: .55rem .35rem;
+      font-size: .82rem;
       text-align: center;
     }
     .otool-btn + .otool-btn {
@@ -1357,12 +2084,12 @@ const CSS = `
   @media (pointer: coarse) {
     .otool-btn { min-height: 2.5rem; padding: .4rem .35rem; }
     .note-row, .inbox-item { padding-top: .65rem; padding-bottom: .65rem; }
+    .oblock.has-kids .ochev { opacity: .65; }
   }
 `;
 
-// Shared client outliner — sibling/nested rows, no indent syntax to learn.
-// Enter = sibling (or split), Tab/Shift-Tab = nest/unnest, Backspace on empty = delete.
-// Base markdown: stored as markers in text; focused row = source, idle = rendered.
+// Shared client outliner — Dotflowy-class fundamentals on flat indent blocks (ADR 0013).
+// Enter / Tab / collapse / move / undo / multi-select / drag; markdown source on focus.
 const OUTLINER_JS = `
 function newId() {
   return "b_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1492,17 +2219,31 @@ function mountOutliner(host, opts) {
   const slug = opts.slug;
   const statusEl = opts.statusEl || null;
   const compact = !!opts.compact;
-  const placeholder = opts.placeholder || "Write\\u2026";
-  // blank bullets are first-class; seed one empty row only when the note is new
+  const placeholder = opts.placeholder || "Write\u2026";
   let blocks = (opts.blocks && opts.blocks.length)
-    ? opts.blocks.map(b => ({ id: b.id || newId(), indent: b.indent|0, text: b.text || "" }))
-    : [{ id: newId(), indent: 0, text: "" }];
+    ? opts.blocks.map(b => ({
+        id: b.id || newId(),
+        indent: b.indent|0,
+        text: b.text || "",
+        collapsed: !!b.collapsed,
+      }))
+    : [{ id: newId(), indent: 0, text: "", collapsed: false }];
   let timer = null;
   let inflight = null;
   let dirty = false;
   let activeId = blocks[0] ? blocks[0].id : null;
+  let selected = null; // { anchor, focus } ids for multi-select, or null
+  let undoStack = [];
+  let redoStack = [];
+  let typingHistArmed = true;
+  let histTimer = null;
+  const HIST_MAX = 100;
+  // While rebuild DOM, ignore focusout — removing the focused row would otherwise
+  // nested-render in view mode and steal focus from Enter/Tab/etc.
+  let rebuilding = false;
+  let blurTimer = null;
+  let alive = true;
 
-  // shell + nest toolbar (mobile-friendly Tab stand-in)
   const shell = document.createElement("div");
   shell.className = "outliner-shell" + (compact ? " compact" : "");
   host.replaceWith(shell);
@@ -1512,10 +2253,16 @@ function mountOutliner(host, opts) {
   toolbar.className = "otoolbar";
   toolbar.innerHTML =
     '<button type="button" class="otool-btn" data-act="outdent" aria-label="Unnest">' +
-      '<span class="otool-ico" aria-hidden="true">\\u21E4</span>unnest</button>' +
+      '<span class="otool-ico" aria-hidden="true">\u21E4</span>unnest</button>' +
     '<button type="button" class="otool-btn" data-act="indent" aria-label="Nest">' +
-      '<span class="otool-ico" aria-hidden="true">\\u21E5</span>nest</button>';
+      '<span class="otool-ico" aria-hidden="true">\u21E5</span>nest</button>' +
+    '<button type="button" class="otool-btn" data-act="collapse" aria-label="Collapse or expand">' +
+      '<span class="otool-ico" aria-hidden="true">\u25BE</span>fold</button>';
   shell.appendChild(toolbar);
+
+  const dropLine = document.createElement("div");
+  dropLine.className = "odrop";
+  host.appendChild(dropLine);
 
   host.classList.add("outliner");
   if (compact) host.classList.add("compact");
@@ -1524,82 +2271,247 @@ function mountOutliner(host, opts) {
 
   function setStatus(s) { if (statusEl) statusEl.textContent = s; }
 
+  function snap() {
+    return blocks.map(b => ({
+      id: b.id, indent: b.indent, text: b.text, collapsed: !!b.collapsed,
+    }));
+  }
+  function restore(s) {
+    blocks = s.map(b => ({
+      id: b.id, indent: b.indent, text: b.text, collapsed: !!b.collapsed,
+    }));
+  }
+  function pushHistory() {
+    undoStack.push(snap());
+    if (undoStack.length > HIST_MAX) undoStack.shift();
+    redoStack = [];
+  }
+  function undo() {
+    if (!undoStack.length) return;
+    syncFromDom();
+    redoStack.push(snap());
+    restore(undoStack.pop());
+    selected = null;
+    const id = activeId && blocks.some(b => b.id === activeId)
+      ? activeId : (blocks[0] && blocks[0].id);
+    render(id, null);
+    scheduleSave();
+  }
+  function redo() {
+    if (!redoStack.length) return;
+    syncFromDom();
+    undoStack.push(snap());
+    restore(redoStack.pop());
+    selected = null;
+    const id = activeId && blocks.some(b => b.id === activeId)
+      ? activeId : (blocks[0] && blocks[0].id);
+    render(id, null);
+    scheduleSave();
+  }
+  function armTypingHistory() {
+    typingHistArmed = true;
+  }
+  function maybeTextHistory() {
+    if (typingHistArmed) {
+      pushHistory();
+      typingHistArmed = false;
+    }
+    clearTimeout(histTimer);
+    histTimer = setTimeout(armTypingHistory, 450);
+  }
+
   function subtreeEnd(i) {
     const base = blocks[i].indent;
     let j = i + 1;
     while (j < blocks.length && blocks[j].indent > base) j++;
     return j;
   }
-
+  function hasChildren(i) {
+    return i + 1 < blocks.length && blocks[i + 1].indent > blocks[i].indent;
+  }
+  function parentIndex(i) {
+    const base = blocks[i].indent;
+    if (base <= 0) return -1;
+    for (let j = i - 1; j >= 0; j--) {
+      if (blocks[j].indent === base - 1) return j;
+      if (blocks[j].indent < base - 1) return -1;
+    }
+    return -1;
+  }
+  function prevSibling(i) {
+    const base = blocks[i].indent;
+    for (let j = i - 1; j >= 0; j--) {
+      if (blocks[j].indent < base) return -1;
+      if (blocks[j].indent === base) return j;
+    }
+    return -1;
+  }
+  function nextSibling(i) {
+    const base = blocks[i].indent;
+    const end = subtreeEnd(i);
+    if (end < blocks.length && blocks[end].indent === base) return end;
+    return -1;
+  }
+  function isHiddenByCollapse(i) {
+    let ind = blocks[i].indent;
+    for (let j = i - 1; j >= 0 && ind > 0; j--) {
+      if (blocks[j].indent === ind - 1) {
+        if (blocks[j].collapsed) return true;
+        ind = blocks[j].indent;
+      }
+    }
+    return false;
+  }
+  function visibleIndices() {
+    const out = [];
+    for (let i = 0; i < blocks.length; i++) {
+      if (!isHiddenByCollapse(i)) out.push(i);
+    }
+    return out;
+  }
+  function indexOfId(id) {
+    return blocks.findIndex(b => b.id === id);
+  }
   function activeIndex() {
-    let i = blocks.findIndex(b => b.id === activeId);
+    let i = indexOfId(activeId);
     return i < 0 ? 0 : i;
+  }
+  function clampIndent() {
+    for (let i = 0; i < blocks.length; i++) {
+      if (i === 0) blocks[i].indent = 0;
+      else blocks[i].indent = Math.min(blocks[i].indent, blocks[i - 1].indent + 1);
+      blocks[i].indent = Math.max(0, blocks[i].indent);
+      if (!hasChildren(i)) blocks[i].collapsed = false;
+    }
+  }
+  function clearSelection() {
+    selected = null;
+    host.classList.remove("selecting");
+  }
+  function selectionIds() {
+    if (!selected) return [];
+    const vis = visibleIndices();
+    const ia = vis.indexOf(indexOfId(selected.anchor));
+    const ib = vis.indexOf(indexOfId(selected.focus));
+    if (ia < 0 || ib < 0) return [];
+    const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+    return vis.slice(lo, hi + 1).map(i => blocks[i].id);
+  }
+  function selectionRoots() {
+    const ids = selectionIds();
+    const set = new Set(ids);
+    const roots = [];
+    for (const id of ids) {
+      const i = indexOfId(id);
+      if (i < 0) continue;
+      let covered = false;
+      let p = parentIndex(i);
+      while (p >= 0) {
+        if (set.has(blocks[p].id)) { covered = true; break; }
+        p = parentIndex(p);
+      }
+      if (!covered) roots.push(i);
+    }
+    return roots.sort((a, b) => a - b);
   }
 
   function refreshToolbar() {
     const i = activeIndex();
     const outBtn = toolbar.querySelector('[data-act="outdent"]');
     const inBtn = toolbar.querySelector('[data-act="indent"]');
+    const foldBtn = toolbar.querySelector('[data-act="collapse"]');
     if (outBtn) outBtn.disabled = !blocks[i] || blocks[i].indent <= 0;
     if (inBtn) {
       const max = i === 0 ? 0 : blocks[i - 1].indent + 1;
       inBtn.disabled = !blocks[i] || blocks[i].indent >= max;
     }
+    if (foldBtn) foldBtn.disabled = !blocks[i] || !hasChildren(i);
   }
 
-  function render(focusId, caret) {
-    host.innerHTML = "";
-    const fresh = blocks.length === 1 && !blocks[0].text.trim();
+  function serializeBlock(b) {
+    const row = { id: b.id, indent: b.indent, text: b.text };
+    if (b.collapsed) row.collapsed = true;
+    return row;
+  }
+
+  function render(focusId, caret, caretX) {
+    if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
     if (focusId) activeId = focusId;
-    for (const b of blocks) {
+    const selSet = new Set(selectionIds());
+    if (selected) host.classList.add("selecting");
+    else host.classList.remove("selecting");
+    const fresh = blocks.length === 1 && !blocks[0].text.trim();
+
+    rebuilding = true;
+    // Drop all rows; keep .odrop. Guard stops focusout from nested-rendering.
+    const rows = host.querySelectorAll(".oblock");
+    for (const r of rows) r.remove();
+
+    for (let i = 0; i < blocks.length; i++) {
+      if (isHiddenByCollapse(i)) continue;
+      const b = blocks[i];
+      const kids = hasChildren(i);
       const row = document.createElement("div");
       row.className = "oblock";
+      if (kids) row.classList.add("has-kids");
+      if (b.collapsed && kids) row.classList.add("collapsed");
+      if (selSet.has(b.id)) row.classList.add("selected");
       row.dataset.id = b.id;
       row.style.setProperty("--depth", String(Math.max(0, b.indent|0)));
 
+      const chev = document.createElement("button");
+      chev.type = "button";
+      chev.className = "ochev";
+      chev.tabIndex = -1;
+      chev.setAttribute("aria-label", b.collapsed ? "Expand" : "Collapse");
+      if (!kids) chev.style.visibility = "hidden";
+
       const bullet = document.createElement("span");
       bullet.className = "obullet";
-      bullet.title = "Nest / Unnest";
+      bullet.title = "Drag to reorder";
 
       const text = document.createElement("div");
       text.className = "otext";
       text.spellcheck = true;
       text.inputMode = "text";
       text.enterKeyHint = "enter";
-      // placeholder only on a brand-new empty note — blank bullets stay silent
       if (fresh) text.dataset.placeholder = placeholder;
 
-      const editing = b.id === activeId;
+      const editing = !selected && b.id === activeId;
       if (editing) {
-        // source mode: raw markdown markers while typing
         text.contentEditable = "true";
         text.classList.remove("view");
         text.textContent = b.text;
       } else {
-        // view mode: base inline markdown + wiki
         text.contentEditable = "false";
         text.classList.add("view");
         if (b.text && b.text.trim()) text.innerHTML = formatBlockHtml(b.text);
         else text.textContent = "";
       }
 
+      row.appendChild(chev);
       row.appendChild(bullet);
       row.appendChild(text);
-      host.appendChild(row);
+      host.insertBefore(row, dropLine);
     }
-    if (focusId) {
+
+    if (focusId && !selected) {
       const el = host.querySelector('.oblock[data-id="' + CSS.escape(focusId) + '"] .otext');
       if (el && el.isContentEditable) {
-        el.focus();
-        placeCaret(el, caret == null ? endOf(el) : caret);
+        el.focus({ preventScroll: true });
+        if (caretX != null && typeof caretX === "number") {
+          placeCaretAtX(el, caretX);
+        } else {
+          placeCaret(el, caret == null ? endOf(el) : caret);
+        }
       }
     }
+    rebuilding = false;
     refreshToolbar();
   }
 
   function endOf(el) {
-    const len = (el.textContent || "").length;
-    return len;
+    return (el.textContent || "").length;
   }
 
   function placeCaret(el, offset) {
@@ -1618,6 +2530,24 @@ function mountOutliner(host, opts) {
     sel.addRange(range);
   }
 
+  function placeCaretAtX(el, x) {
+    const text = el.textContent || "";
+    if (!text) { placeCaret(el, 0); return; }
+    // binary search offset by caret x
+    let lo = 0, hi = text.length, best = 0, bestDist = Infinity;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      placeCaret(el, mid);
+      const rect = caretLineRect();
+      if (!rect) { best = mid; break; }
+      const dist = Math.abs(rect.left - x);
+      if (dist < bestDist) { bestDist = dist; best = mid; }
+      if (rect.left < x) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    placeCaret(el, best);
+  }
+
   function caretOffset(el) {
     const sel = window.getSelection();
     if (!sel || !sel.rangeCount) return (el.textContent || "").length;
@@ -1629,32 +2559,63 @@ function mountOutliner(host, opts) {
     return pre.toString().length;
   }
 
+  function caretLineRect() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    let rect = range.getBoundingClientRect();
+    if (rect.height === 0) {
+      const first = range.getClientRects()[0];
+      if (first) rect = first;
+    }
+    return rect.height === 0 ? null : rect;
+  }
+  function atLineStart(el) {
+    const rect = caretLineRect();
+    if (!rect) return true;
+    return rect.top - el.getBoundingClientRect().top < rect.height / 2;
+  }
+  function atLineEnd(el) {
+    const rect = caretLineRect();
+    if (!rect) return true;
+    return el.getBoundingClientRect().bottom - rect.bottom < rect.height / 2;
+  }
+  function isCaretAtStart(el) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.startContainer)) return false;
+    return caretOffset(el) === 0;
+  }
+  function isCaretAtEnd(el) {
+    const sel = window.getSelection();
+    if (!sel || !sel.isCollapsed || !sel.rangeCount) return false;
+    return caretOffset(el) === (el.textContent || "").length;
+  }
+
   function syncFromDom() {
-    const rows = [...host.querySelectorAll(".oblock")];
+    const rows = host.querySelectorAll(".oblock");
     for (const row of rows) {
       const b = blocks.find(x => x.id === row.dataset.id);
       const el = row.querySelector(".otext");
-      // only source (contenteditable) rows are authoritative; view mode is HTML
       if (b && el && el.isContentEditable) {
-        b.text = el.textContent.replace(/\\u00a0/g, " ");
+        b.text = el.textContent.replace(/\u00a0/g, " ");
       }
     }
   }
 
   function scheduleSave() {
     dirty = true;
-    setStatus("\\u2026");
+    setStatus("\u2026");
     clearTimeout(timer);
     timer = setTimeout(save, 400);
   }
 
   async function save() {
     syncFromDom();
-    // keep blank bullets; server clears the address only if nothing has text
     let payload = {
-      blocks: blocks.map(b => ({ id: b.id, indent: b.indent, text: b.text })),
+      blocks: blocks.map(serializeBlock),
     };
-    // optional client-side encryption (cowyo-style); passphrase never sent
     try {
       if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
         const atts = (opts.getAttachments && opts.getAttachments()) || opts.attachments || [];
@@ -1663,8 +2624,6 @@ function mountOutliner(host, opts) {
           attachments: atts,
         }, VP_CRYPTO.getPassphrase());
         payload = { encrypted: true, cipher };
-      } else if (opts.attachments) {
-        // when not encrypting, only send blocks (preserve server attachments)
       }
     } catch (err) {
       setStatus("encrypt error");
@@ -1680,7 +2639,7 @@ function mountOutliner(host, opts) {
         if (!r.ok) { setStatus("error"); return; }
         const data = await r.json().catch(() => null);
         if (data && data.deleted) setStatus("cleared");
-        else setStatus(payload.encrypted ? "saved · encrypted" : "saved");
+        else setStatus(payload.encrypted ? "saved \u00b7 encrypted" : "saved");
         dirty = false;
       })
       .catch(() => setStatus("offline"))
@@ -1700,7 +2659,6 @@ function mountOutliner(host, opts) {
     } else {
       if (blocks[i].indent <= 0) return false;
     }
-    const base = blocks[i].indent;
     const end = subtreeEnd(i);
     for (let j = i; j < end; j++) blocks[j].indent += delta;
     return true;
@@ -1708,16 +2666,202 @@ function mountOutliner(host, opts) {
 
   function applyIndent(delta) {
     syncFromDom();
+    pushHistory();
+    if (selected) {
+      const roots = selectionRoots();
+      if (delta > 0) {
+        for (let k = roots.length - 1; k >= 0; k--) indentBlock(roots[k], 1);
+      } else {
+        for (const r of roots) indentBlock(r, -1);
+      }
+      clampIndent();
+      render(null);
+      scheduleSave();
+      return;
+    }
     const i = activeIndex();
     const focusEl = document.activeElement;
     const caret = (focusEl && focusEl.classList && focusEl.classList.contains("otext"))
       ? caretOffset(focusEl) : endOf({ textContent: blocks[i] ? blocks[i].text : "" });
-    if (!indentBlock(i, delta)) { refreshToolbar(); return; }
+    if (!indentBlock(i, delta)) {
+      undoStack.pop();
+      refreshToolbar();
+      return;
+    }
+    clampIndent();
     render(blocks[i].id, caret);
     scheduleSave();
   }
 
-  // keep focus in editor when tapping toolbar (mousedown before blur)
+  function toggleCollapsed(i, force) {
+    if (i < 0 || !hasChildren(i)) return false;
+    pushHistory();
+    if (force === true) blocks[i].collapsed = true;
+    else if (force === false) blocks[i].collapsed = false;
+    else blocks[i].collapsed = !blocks[i].collapsed;
+    return true;
+  }
+
+  function moveUp(i) {
+    if (i < 0) return false;
+    const prev = prevSibling(i);
+    if (prev >= 0) {
+      const end = subtreeEnd(i);
+      const chunk = blocks.splice(i, end - i);
+      blocks.splice(prev, 0, ...chunk);
+      return true;
+    }
+    const p = parentIndex(i);
+    if (p < 0) return false;
+    const uncle = prevSibling(p);
+    if (uncle < 0) return false;
+    const end = subtreeEnd(i);
+    const chunk = blocks.splice(i, end - i);
+    const delta = (blocks[uncle].indent + 1) - chunk[0].indent;
+    for (const b of chunk) b.indent = Math.max(0, b.indent + delta);
+    const insertAt = subtreeEnd(uncle);
+    blocks.splice(insertAt, 0, ...chunk);
+    clampIndent();
+    return true;
+  }
+
+  function moveDown(i) {
+    if (i < 0) return false;
+    const next = nextSibling(i);
+    if (next >= 0) {
+      const end = subtreeEnd(i);
+      const chunk = blocks.splice(i, end - i);
+      const next2 = next - chunk.length;
+      const insertAt = subtreeEnd(next2);
+      blocks.splice(insertAt, 0, ...chunk);
+      return true;
+    }
+    const p = parentIndex(i);
+    if (p < 0) return false;
+    const end = subtreeEnd(i);
+    const chunk = blocks.splice(i, end - i);
+    const pEnd = subtreeEnd(p);
+    if (pEnd >= blocks.length || blocks[pEnd].indent !== blocks[p].indent) {
+      blocks.splice(i, 0, ...chunk);
+      return false;
+    }
+    const uncle = pEnd;
+    const delta = (blocks[uncle].indent + 1) - chunk[0].indent;
+    for (const b of chunk) b.indent = Math.max(0, b.indent + delta);
+    blocks.splice(uncle + 1, 0, ...chunk);
+    clampIndent();
+    return true;
+  }
+
+  function deleteSubtreeAt(i) {
+    if (i < 0) return -1;
+    const end = subtreeEnd(i);
+    const prevId = i > 0 ? blocks[i - 1].id : null;
+    blocks.splice(i, end - i);
+    if (!blocks.length) blocks.push({ id: newId(), indent: 0, text: "", collapsed: false });
+    return prevId ? indexOfId(prevId) : 0;
+  }
+
+  function doMove(dir) {
+    syncFromDom();
+    pushHistory();
+    if (selected) {
+      const roots = selectionRoots();
+      if (!roots.length) return;
+      const ids = roots.map(r => blocks[r].id);
+      if (dir < 0) {
+        for (const id of ids) {
+          const idx = indexOfId(id);
+          if (idx < 0 || !moveUp(idx)) break;
+        }
+      } else {
+        for (let k = ids.length - 1; k >= 0; k--) {
+          const idx = indexOfId(ids[k]);
+          if (idx >= 0) moveDown(idx);
+        }
+      }
+      clampIndent();
+      render(null);
+      scheduleSave();
+      return;
+    }
+    const i = activeIndex();
+    const id = blocks[i].id;
+    const ok = dir < 0 ? moveUp(i) : moveDown(i);
+    if (!ok) {
+      undoStack.pop();
+      return;
+    }
+    clampIndent();
+    render(id, null);
+    scheduleSave();
+  }
+
+  function doDeleteSubtree() {
+    syncFromDom();
+    pushHistory();
+    if (selected) {
+      let focusAfter = null;
+      let roots = selectionRoots();
+      // If anchor/focus were hidden by collapse, still delete the anchor node.
+      if (!roots.length && selected.anchor) {
+        const ai = indexOfId(selected.anchor);
+        if (ai >= 0) roots = [ai];
+      }
+      if (!roots.length) {
+        undoStack.pop();
+        clearSelection();
+        render(activeId || (blocks[0] && blocks[0].id), null);
+        return;
+      }
+      // Prefer focus after the node above the first (lowest-index) root.
+      const firstRoot = roots[0];
+      const preferPrev = firstRoot > 0 ? blocks[firstRoot - 1].id : null;
+      const ids = roots.map(r => blocks[r].id);
+      for (let k = ids.length - 1; k >= 0; k--) {
+        const idx = indexOfId(ids[k]);
+        if (idx >= 0) {
+          const fi = deleteSubtreeAt(idx);
+          if (fi >= 0 && blocks[fi]) focusAfter = blocks[fi].id;
+        }
+      }
+      clampIndent();
+      clearSelection();
+      const nextId = (preferPrev && indexOfId(preferPrev) >= 0)
+        ? preferPrev
+        : (focusAfter || (blocks[0] && blocks[0].id));
+      render(nextId, null);
+      scheduleSave();
+      return;
+    }
+    const i = activeIndex();
+    const focusI = deleteSubtreeAt(i);
+    clampIndent();
+    const id = blocks[Math.max(0, focusI)].id;
+    const caret = blocks[Math.max(0, focusI)].text.length;
+    render(id, caret);
+    scheduleSave();
+  }
+
+  /** Multi-node select: whole visible run from anchor id to focus id. */
+  function setNodeSelection(anchorId, focusId) {
+    if (!anchorId || indexOfId(anchorId) < 0) return;
+    const focus = focusId && indexOfId(focusId) >= 0 ? focusId : anchorId;
+    selected = { anchor: anchorId, focus };
+    activeId = focus;
+    const el = document.activeElement;
+    if (el && host.contains(el) && el.blur) el.blur();
+    window.getSelection() && window.getSelection().removeAllRanges();
+    render(null);
+  }
+
+  function selectAllVisible() {
+    const vis = visibleIndices();
+    if (!vis.length) return;
+    setNodeSelection(blocks[vis[0]].id, blocks[vis[vis.length - 1]].id);
+  }
+
+  // toolbar
   toolbar.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".otool-btn")) e.preventDefault();
   });
@@ -1725,16 +2869,49 @@ function mountOutliner(host, opts) {
     const btn = e.target.closest("[data-act]");
     if (!btn || btn.disabled) return;
     e.preventDefault();
-    applyIndent(btn.dataset.act === "indent" ? 1 : -1);
+    const act = btn.dataset.act;
+    if (act === "indent") applyIndent(1);
+    else if (act === "outdent") applyIndent(-1);
+    else if (act === "collapse") {
+      syncFromDom();
+      const i = activeIndex();
+      if (toggleCollapsed(i)) {
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+    }
+  });
+
+  host.addEventListener("click", (e) => {
+    const chev = e.target.closest(".ochev");
+    if (chev && host.contains(chev)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const row = chev.closest(".oblock");
+      if (!row) return;
+      const i = indexOfRow(row);
+      syncFromDom();
+      if (toggleCollapsed(i)) {
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+      return;
+    }
+    const a = e.target.closest("a[href]");
+    if (a && host.contains(a)) {
+      e.stopPropagation();
+    }
   });
 
   host.addEventListener("focusin", (e) => {
-    // focusing a link should not open the source editor
     if (e.target.closest && e.target.closest("a")) return;
+    if (e.target.closest && e.target.closest(".ochev")) return;
     const row = e.target.closest(".oblock");
     if (!row) return;
+    if (selected) {
+      clearSelection();
+    }
     const el = row.querySelector(".otext");
-    // click a view-mode row → switch to source for that line
     if (el && !el.isContentEditable) {
       const id = row.dataset.id;
       const b = blocks.find(x => x.id === id);
@@ -1747,68 +2924,381 @@ function mountOutliner(host, opts) {
   });
 
   host.addEventListener("focusout", (e) => {
+    if (rebuilding) return;
     if (!e.target.classList || !e.target.classList.contains("otext")) return;
-    // when leaving the outliner (not moving to another row), re-render to show markdown
     const next = e.relatedTarget;
-    if (next && host.contains(next)) return;
-    syncFromDom();
-    const id = activeId;
-    activeId = null;
-    render(null);
-    activeId = id;
-    refreshToolbar();
+    if (next && (host.contains(next) || toolbar.contains(next))) return;
+    // Defer: Enter/Tab destroy the node then focus a new one in the same turn.
+    // relatedTarget is often null even when we are about to focus another row.
+    if (blurTimer) clearTimeout(blurTimer);
+    blurTimer = setTimeout(function () {
+      blurTimer = null;
+      if (rebuilding || !alive) return;
+      if (host.contains(document.activeElement)) return;
+      if (toolbar.contains(document.activeElement)) return;
+      syncFromDom();
+      const id = activeId;
+      activeId = null;
+      render(null);
+      activeId = id;
+      refreshToolbar();
+    }, 0);
   });
 
   host.addEventListener("pointerdown", (e) => {
-    // let wiki / markdown / attachment links navigate
     if (e.target.closest("a")) return;
+    if (e.target.closest(".ochev")) return;
+    const row = e.target.closest(".oblock");
+    // Shift+click: multi-node select (extend or start from active/anchor)
+    if (e.shiftKey && row && host.contains(row)) {
+      e.preventDefault();
+      const id = row.dataset.id;
+      syncFromDom();
+      if (selected) {
+        setNodeSelection(selected.anchor, id);
+      } else {
+        const anchor = (activeId && indexOfId(activeId) >= 0) ? activeId : id;
+        setNodeSelection(anchor, id);
+      }
+      return;
+    }
+    // drag from bullet
+    const bullet = e.target.closest(".obullet");
+    if (bullet && host.contains(bullet)) {
+      if (!row) return;
+      e.preventDefault();
+      startDrag(e, row);
+      return;
+    }
     const el = e.target.closest(".otext.view");
     if (!el) return;
-    const row = el.closest(".oblock");
     if (!row) return;
-    // enter source mode before focus so caret lands in plain text
+    if (selected) {
+      clearSelection();
+    }
     e.preventDefault();
     const id = row.dataset.id;
     const b = blocks.find(x => x.id === id);
     render(id, b && b.text ? b.text.length : 0);
   });
 
-  // capture click on links so focusin doesn't fight navigation
-  host.addEventListener("click", (e) => {
-    const a = e.target.closest("a[href]");
-    if (!a || !host.contains(a)) return;
-    // allow default navigation (same tab) for internal wiki links
-    e.stopPropagation();
-  });
+  // --- drag reorder ---
+  let drag = null;
+  function startDrag(e, row) {
+    const i = indexOfRow(row);
+    if (i < 0) return;
+    syncFromDom();
+    drag = {
+      id: blocks[i].id,
+      startY: e.clientY,
+      startX: e.clientX,
+      moved: false,
+      pointerId: e.pointerId,
+    };
+    try { row.setPointerCapture(e.pointerId); } catch (err) {}
+    const onMove = (ev) => {
+      if (!drag) return;
+      if (!drag.moved) {
+        if (Math.abs(ev.clientY - drag.startY) < 4 && Math.abs(ev.clientX - drag.startX) < 4) return;
+        drag.moved = true;
+        pushHistory();
+        const r = host.querySelector('.oblock[data-id="' + CSS.escape(drag.id) + '"]');
+        if (r) r.classList.add("dragging");
+      }
+      updateDropIndicator(ev);
+    };
+    const onUp = (ev) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      dropLine.classList.remove("show");
+      const r = host.querySelector('.oblock[data-id="' + CSS.escape(d.id) + '"]');
+      if (r) r.classList.remove("dragging");
+      if (!d.moved) {
+        // treat as click: focus row
+        clearSelection();
+        const b = blocks.find(x => x.id === d.id);
+        render(d.id, b && b.text ? b.text.length : 0);
+        return;
+      }
+      applyDrop(d.id, ev);
+      scheduleSave();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  function updateDropIndicator(ev) {
+    const rows = [...host.querySelectorAll(".oblock")];
+    if (!rows.length) return;
+    let target = null;
+    let after = false;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      if (ev.clientY < mid) {
+        target = row;
+        after = false;
+        break;
+      }
+      target = row;
+      after = true;
+    }
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    dropLine.classList.add("show");
+    dropLine.style.top = (after ? rect.bottom : rect.top) - hostRect.top + host.scrollTop + "px";
+    // depth from x
+    const gutter = parseFloat(getComputedStyle(host).getPropertyValue("--note-gutter")) || 20;
+    const chev = parseFloat(getComputedStyle(host).getPropertyValue("--chev-w")) || 15;
+    const relX = ev.clientX - hostRect.left;
+    const depth = Math.max(0, Math.min(8, Math.round((relX - chev) / gutter)));
+    dropLine.dataset.afterId = target.dataset.id;
+    dropLine.dataset.after = after ? "1" : "0";
+    dropLine.dataset.depth = String(depth);
+    dropLine.style.marginLeft = (depth * gutter) + "px";
+  }
+
+  function applyDrop(dragId, ev) {
+    updateDropIndicator(ev);
+    const afterId = dropLine.dataset.afterId;
+    const after = dropLine.dataset.after === "1";
+    let depth = parseInt(dropLine.dataset.depth || "0", 10) || 0;
+    dropLine.classList.remove("show");
+    if (!afterId || afterId === dragId) {
+      // cancel history push if no-op - already pushed; leave it
+      render(dragId, null);
+      return;
+    }
+    const from = indexOfId(dragId);
+    if (from < 0) return;
+    // refuse drop inside own subtree
+    const fromEnd = subtreeEnd(from);
+    const toIdx = indexOfId(afterId);
+    if (toIdx >= from && toIdx < fromEnd) {
+      render(dragId, null);
+      return;
+    }
+    const end = subtreeEnd(from);
+    const chunk = blocks.splice(from, end - from);
+    let insertAt = indexOfId(afterId);
+    if (insertAt < 0) {
+      blocks.splice(from, 0, ...chunk);
+      render(dragId, null);
+      return;
+    }
+    if (after) insertAt = subtreeEnd(insertAt);
+    // adjust depth
+    if (insertAt > 0) {
+      const max = blocks[insertAt - 1] ? blocks[insertAt - 1].indent + 1 : 0;
+      depth = Math.min(depth, max);
+    } else depth = 0;
+    const delta = depth - chunk[0].indent;
+    for (const b of chunk) b.indent = Math.max(0, b.indent + delta);
+    blocks.splice(insertAt, 0, ...chunk);
+    clampIndent();
+    clearSelection();
+    render(dragId, null);
+  }
 
   host.addEventListener("input", (e) => {
     if (!e.target.classList.contains("otext") || !e.target.isContentEditable) return;
+    maybeTextHistory();
     const row = e.target.closest(".oblock");
     const b = blocks.find(x => x.id === row.dataset.id);
-    if (b) b.text = e.target.textContent.replace(/\\u00a0/g, " ");
+    if (b) b.text = e.target.textContent.replace(/\u00a0/g, " ");
     if (row) activeId = row.dataset.id;
     scheduleSave();
   });
 
+  function enterNodeSelect(id) {
+    setNodeSelection(id, id);
+  }
+  function extendSelect(dir) {
+    if (!selected) return;
+    const vis = visibleIndices();
+    const fi = vis.indexOf(indexOfId(selected.focus));
+    if (fi < 0) return;
+    const ni = fi + dir;
+    if (ni < 0 || ni >= vis.length) return;
+    selected.focus = blocks[vis[ni]].id;
+    activeId = selected.focus;
+    render(null);
+  }
+
+  function handleSelectionKeys(e) {
+    if (!selected) return false;
+    const mod = e.metaKey || e.ctrlKey;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      const id = selected.focus;
+      clearSelection();
+      render(id, null);
+      return true;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      applyIndent(e.shiftKey ? -1 : 1);
+      return true;
+    }
+    // Multi-node delete: remove every selected root (and each subtree)
+    if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
+      e.stopPropagation();
+      doDeleteSubtree();
+      return true;
+    }
+    if (mod && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      selectAllVisible();
+      return true;
+    }
+    if (mod && e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      doMove(e.key === "ArrowUp" ? -1 : 1);
+      return true;
+    }
+    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      extendSelect(e.key === "ArrowUp" ? -1 : 1);
+      return true;
+    }
+    if (mod && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return true;
+    }
+    if (mod && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      redo();
+      return true;
+    }
+    // arrow without shift leaves selection
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const id = selected.focus;
+      clearSelection();
+      const i = indexOfId(id);
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      let target = id;
+      if (e.key === "ArrowUp" && vi > 0) target = blocks[vis[vi - 1]].id;
+      if (e.key === "ArrowDown" && vi >= 0 && vi < vis.length - 1) target = blocks[vis[vi + 1]].id;
+      render(target, null);
+      return true;
+    }
+    return false;
+  }
+
+  // Capture-phase window keys while multi-selecting (caret is blurred off the row)
+  function onWinKey(e) {
+    if (!alive || !selected || !shell.isConnected) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && ae !== document.documentElement) {
+      const tag = (ae.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      // Another editor has focus — don't steal Backspace/Delete
+      if (ae.isContentEditable && !host.contains(ae)) return;
+    }
+    handleSelectionKeys(e);
+  }
+  window.addEventListener("keydown", onWinKey, true);
+
   host.addEventListener("keydown", (e) => {
+    // undo/redo always
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (mod && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (mod && (e.key === "b" || e.key === "i" || e.key === "u")) {
+      e.preventDefault();
+      return;
+    }
+
+    if (selected) {
+      handleSelectionKeys(e);
+      return;
+    }
+
     const textEl = e.target.closest(".otext");
-    if (!textEl) return;
+    if (!textEl || !textEl.isContentEditable) return;
     const row = textEl.closest(".oblock");
     const i = indexOfRow(row);
     if (i < 0) return;
 
+    // collapse / expand
+    if (mod && !e.shiftKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      if (hasChildren(i) && !blocks[i].collapsed) {
+        syncFromDom();
+        toggleCollapsed(i, true);
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+      return;
+    }
+    if (mod && !e.shiftKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      if (hasChildren(i) && blocks[i].collapsed) {
+        syncFromDom();
+        toggleCollapsed(i, false);
+        render(blocks[i].id, null);
+        scheduleSave();
+      }
+      return;
+    }
+
+    // move among siblings
+    if (mod && e.shiftKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      doMove(-1);
+      return;
+    }
+    if (mod && e.shiftKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      doMove(1);
+      return;
+    }
+
+    // delete subtree
+    if (mod && e.shiftKey && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault();
+      doDeleteSubtree();
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       syncFromDom();
+      pushHistory();
       const off = caretOffset(textEl);
       const cur = blocks[i];
       const left = cur.text.slice(0, off);
       const right = cur.text.slice(off);
+      const atEnd = off === cur.text.length;
       cur.text = left;
-      // new sibling after this item's whole subtree (blank bullets allowed)
-      const nb = { id: newId(), indent: cur.indent, text: right };
-      blocks.splice(subtreeEnd(i), 0, nb);
-      render(nb.id, 0);
+      if (atEnd && hasChildren(i) && !cur.collapsed) {
+        // first child
+        const nb = { id: newId(), indent: cur.indent + 1, text: right, collapsed: false };
+        blocks.splice(i + 1, 0, nb);
+        render(nb.id, 0);
+      } else {
+        const nb = { id: newId(), indent: cur.indent, text: right, collapsed: false };
+        blocks.splice(subtreeEnd(i), 0, nb);
+        render(nb.id, 0);
+      }
       scheduleSave();
       return;
     }
@@ -1820,62 +3310,118 @@ function mountOutliner(host, opts) {
       return;
     }
 
+    // enter multi-select (and extend one step so a range is multi-node immediately)
+    if (e.shiftKey && e.key === "ArrowUp" && atLineStart(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      enterNodeSelect(blocks[i].id);
+      extendSelect(-1);
+      return;
+    }
+    if (e.shiftKey && e.key === "ArrowDown" && atLineEnd(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      enterNodeSelect(blocks[i].id);
+      extendSelect(1);
+      return;
+    }
+
+    // select all visible nodes → Backspace/Delete removes them as multi-node delete
+    if (mod && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      syncFromDom();
+      selectAllVisible();
+      return;
+    }
+
     if (e.key === "Backspace") {
       const off = caretOffset(textEl);
-      const t = textEl.textContent || "";
       if (off === 0 && i > 0) {
         e.preventDefault();
         syncFromDom();
-        // if has children and empty, outdent first / delete and reparent
+        pushHistory();
         if (!blocks[i].text) {
           const end = subtreeEnd(i);
           if (end > i + 1) {
-            // has children: outdent them into place, remove empty
             for (let j = i + 1; j < end; j++) blocks[j].indent = Math.max(0, blocks[j].indent - 1);
           }
           const prev = blocks[i - 1];
           const caret = prev.text.length;
           blocks.splice(i, 1);
-          if (!blocks.length) blocks.push({ id: newId(), indent: 0, text: "" });
+          if (!blocks.length) blocks.push({ id: newId(), indent: 0, text: "", collapsed: false });
+          clampIndent();
           render(prev.id, caret);
           scheduleSave();
           return;
         }
-        // merge into previous; children keep their indents (still under nearer ancestor)
         const prev = blocks[i - 1];
         const caret = prev.text.length;
         prev.text += blocks[i].text;
         blocks.splice(i, 1);
+        clampIndent();
         render(prev.id, caret);
         scheduleSave();
         return;
       }
     }
 
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-      const off = caretOffset(textEl);
-      // only move between blocks when at edge or no soft wrap concern — always allow with meta? simple: always on arrow at line level
-      const atStart = off === 0;
-      const atEnd = off === (textEl.textContent || "").length;
-      if (e.key === "ArrowUp" && atStart && i > 0) {
-        e.preventDefault();
-        syncFromDom();
-        render(blocks[i - 1].id, endOf({ textContent: blocks[i - 1].text }));
-      } else if (e.key === "ArrowDown" && atEnd && i < blocks.length - 1) {
-        e.preventDefault();
-        syncFromDom();
-        render(blocks[i + 1].id, 0);
+    if (e.key === "ArrowUp" && !e.shiftKey && !mod) {
+      if (!atLineStart(textEl)) return;
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi > 0) {
+        const rect = caretLineRect();
+        const x = rect ? rect.left : null;
+        render(blocks[vis[vi - 1]].id, null, x);
       }
+      return;
+    }
+    if (e.key === "ArrowDown" && !e.shiftKey && !mod) {
+      if (!atLineEnd(textEl)) return;
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi >= 0 && vi < vis.length - 1) {
+        const rect = caretLineRect();
+        const x = rect ? rect.left : null;
+        render(blocks[vis[vi + 1]].id, null, x);
+      }
+      return;
+    }
+    if (e.key === "ArrowLeft" && !e.shiftKey && !mod && isCaretAtStart(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi > 0) {
+        const prev = blocks[vis[vi - 1]];
+        render(prev.id, prev.text.length);
+      }
+      return;
+    }
+    if (e.key === "ArrowRight" && !e.shiftKey && !mod && isCaretAtEnd(textEl)) {
+      e.preventDefault();
+      syncFromDom();
+      const vis = visibleIndices();
+      const vi = vis.indexOf(i);
+      if (vi >= 0 && vi < vis.length - 1) {
+        render(blocks[vis[vi + 1]].id, 0);
+      }
+      return;
     }
   });
 
   host.addEventListener("paste", (e) => {
     const textEl = e.target.closest(".otext");
-    if (!textEl) return;
+    if (!textEl || !textEl.isContentEditable) return;
     e.preventDefault();
     const paste = (e.clipboardData || window.clipboardData).getData("text") || "";
     const lines = paste.replace(/\\r\\n/g, "\\n").split("\\n");
     syncFromDom();
+    pushHistory();
     const i = indexOfRow(textEl.closest(".oblock"));
     const off = caretOffset(textEl);
     const cur = blocks[i];
@@ -1891,7 +3437,12 @@ function mountOutliner(host, opts) {
     const created = [];
     for (let k = 1; k < lines.length; k++) {
       const isLast = k === lines.length - 1;
-      const nb = { id: newId(), indent: cur.indent, text: lines[k] + (isLast ? after : "") };
+      const nb = {
+        id: newId(),
+        indent: cur.indent,
+        text: lines[k] + (isLast ? after : ""),
+        collapsed: false,
+      };
       created.push(nb);
     }
     blocks.splice(i + 1, 0, ...created);
@@ -1900,14 +3451,8 @@ function mountOutliner(host, opts) {
     scheduleSave();
   });
 
-  // prevent rich formatting shortcuts from injecting html
-  host.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && (e.key === "b" || e.key === "i" || e.key === "u")) e.preventDefault();
-  });
-
   render(opts.autofocus ? blocks[0].id : null, opts.autofocus ? endOf({ textContent: blocks[0].text }) : null);
   if (opts.autofocus) {
-    // focus last block end for editor pages with content
     const last = blocks[blocks.length - 1];
     render(last.id, endOf({ textContent: last.text }));
   }
@@ -1923,10 +3468,9 @@ function mountOutliner(host, opts) {
     },
     getBlocks() {
       syncFromDom();
-      return blocks.map(b => ({ id: b.id, indent: b.indent, text: b.text }));
+      return blocks.map(serializeBlock);
     },
     setAttachments(list) {
-      if (opts.getAttachments) { /* live via getAttachments */ }
       opts.attachments = list || [];
     },
     async flush(force) {
@@ -1935,9 +3479,13 @@ function mountOutliner(host, opts) {
       else if (inflight) await inflight;
     },
     destroy() {
+      alive = false;
+      window.removeEventListener("keydown", onWinKey, true);
       clearTimeout(timer);
+      clearTimeout(histTimer);
+      if (blurTimer) clearTimeout(blurTimer);
       host.innerHTML = "";
-      host.classList.remove("outliner", "compact", "page");
+      host.classList.remove("outliner", "compact", "page", "selecting");
       if (shell.parentNode) {
         shell.parentNode.insertBefore(host, shell);
         shell.remove();
@@ -1945,6 +3493,7 @@ function mountOutliner(host, opts) {
     },
   };
 }
+
 `;
 
 // Client-side pack passphrase encryption (cowyo-style).
@@ -2124,7 +3673,7 @@ function renderEnterDoor({ error = "", local = false } = {}) {
   if (showLocal) {
     // One primary action. Key form only if they open “Use a different key”.
     body = `
-      <h1>versepack</h1>
+      <h1>keyverse</h1>
       <p class="lead">Scripture notes on this machine.</p>
       ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
       <a class="login-btn" href="${esc(openHref)}">Open my notes</a>
@@ -2134,7 +3683,7 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       </details>`;
   } else {
     body = `
-      <h1>versepack</h1>
+      <h1>keyverse</h1>
       <p class="lead">Open your notes with your key.</p>
       ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
       ${keyForm({ required: true, autofocus: true, btn: "Open notes" })}
@@ -2145,7 +3694,7 @@ function renderEnterDoor({ error = "", local = false } = {}) {
   }
 
   return page(
-    "versepack",
+    "keyverse",
     `<div class="login">${body}</div>
     <script>
     (function () {
@@ -2191,13 +3740,36 @@ function excerpt(note) {
 
 // Read-only outline — same depth grid as the outliner (margin-left: depth * gutter).
 // Block text: base markdown + wiki [[passage]] + embeds ![[att:…]] / ![[https://…]].
+// Honors collapsed (ADR 0013): hides descendants of collapsed parents.
 function renderOutline(blocks, attachments = []) {
   const items = blocks || [];
   if (!items.length) return "";
-  return `<div class="outline">${items.map((b) => {
+  const hidden = new Set();
+  for (let i = 0; i < items.length; i++) {
+    if (!items[i].collapsed) continue;
+    const base = Math.max(0, Number(items[i].indent) || 0);
+    for (let j = i + 1; j < items.length; j++) {
+      const d = Math.max(0, Number(items[j].indent) || 0);
+      if (d <= base) break;
+      hidden.add(j);
+    }
+  }
+  return `<div class="outline">${items.map((b, i) => {
+    if (hidden.has(i)) return "";
     const depth = Math.max(0, Number(b.indent) || 0);
     const empty = !String(b.text || "").trim();
-    return `<div class="oline${empty ? " blank" : ""}" style="--depth:${depth}" title="${esc(b.id)}">
+    const hasKids =
+      i + 1 < items.length &&
+      Math.max(0, Number(items[i + 1].indent) || 0) > depth;
+    const collapsed = !!(b.collapsed && hasKids);
+    const cls = [
+      "oline",
+      empty ? "blank" : "",
+      hasKids ? "has-kids" : "",
+      collapsed ? "collapsed" : "",
+    ].filter(Boolean).join(" ");
+    return `<div class="${cls}" style="--depth:${depth}" title="${esc(b.id)}">
+      <span class="ochev" aria-hidden="true"></span>
       <span class="odot" aria-hidden="true"></span>
       <span class="otxt">${empty ? "" : formatBlockText(b.text, attachments)}</span>
     </div>`;
@@ -2299,9 +3871,15 @@ function relatedSection(kind, label, sub, entries) {
 // label: false for the page chapter note (title already names the passage).
 function readerNoteHtml({ scope, note, label = true }) {
   const display = formatPassageForDisplay(scope.parsed);
+  const lo = scope.parsed.start.verse ?? "";
+  const hi = scope.parsed.end.verse ?? lo;
+  const rangeAttrs =
+    scope.kind === "range"
+      ? ` data-lo="${esc(String(lo))}" data-hi="${esc(String(hi))}"`
+      : "";
   if (isEncryptedNote(note)) {
     const showLabel = label && scope.kind !== "verse";
-    return `<div class="note encrypted" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}" data-encrypted="1">
+    return `<div class="note encrypted" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}"${rangeAttrs} data-encrypted="1">
       ${showLabel ? `<div class="note-label">${esc(display)}</div>` : ""}
       <div class="note-body"><p class="muted ui" style="margin:.35rem 0">Encrypted — <a href="${u(`/note/${scope.slug}`)}">open to unlock</a></p></div>
       <div class="note-edit" hidden></div>
@@ -2312,7 +3890,7 @@ function readerNoteHtml({ scope, note, label = true }) {
   if (!has && scope.kind !== "verse") return "";
   const showLabel = label && scope.kind !== "verse";
   const attHtml = renderAttachmentsBoard(note?.attachments || [], { editable: false });
-  return `<div class="note" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}">
+  return `<div class="note" data-kind="${esc(scope.kind)}" data-slug="${esc(scope.slug)}"${rangeAttrs}>
     ${showLabel ? `<div class="note-label">${esc(display)}</div>` : ""}
     <div class="note-body">${blocks.length ? renderOutline(blocks, note?.attachments) : ""}</div>
     ${attHtml}
@@ -2333,73 +3911,217 @@ function blocksJson(blocks) {
   return JSON.stringify(blocks || []);
 }
 
-/** Clickable multiword key → native share sheet (fallback: copy link). */
+/**
+ * Public origin for share links / QR. Prefer client-provided origin (matches
+ * what the browser bar shows); fall back to Forwarded / Host headers.
+ */
+function publicOrigin(req, originParam) {
+  if (originParam) {
+    try {
+      const parsed = new URL(String(originParam));
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        if (!parsed.username && !parsed.password) return parsed.origin;
+      }
+    } catch { /* fall through */ }
+  }
+  const xfProto = req.headers["x-forwarded-proto"];
+  const proto = String(Array.isArray(xfProto) ? xfProto[0] : xfProto || "")
+    .split(",")[0]
+    .trim() || (req.socket?.encrypted ? "https" : "http");
+  const xfHost = req.headers["x-forwarded-host"];
+  const host = String(Array.isArray(xfHost) ? xfHost[0] : xfHost || "")
+    .split(",")[0]
+    .trim() || req.headers.host || `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
+/** Full pack door URL (trailing slash) for sharing. */
+function packShareUrl(req, originParam) {
+  if (DOOR_OPEN || !DOOR) return publicOrigin(req, originParam) + "/";
+  return `${publicOrigin(req, originParam)}/${DOOR}/`;
+}
+
+async function shareQrSvg(text) {
+  return QRCode.toString(text, {
+    type: "svg",
+    errorCorrectionLevel: "M",
+    margin: 1,
+    width: 200,
+    color: { dark: "#111111", light: "#ffffff" },
+  });
+}
+
+/** Multiword key → bookplate overlay (serif key + QR seal + Share / Copy). */
 function doorShareChipHtml() {
   if (DOOR_OPEN || !DOOR) return "";
-  return `<button type="button" class="door-share" id="door-share"
-      title="Share your notes link" aria-label="Share notes link: ${esc(DOOR)}">
-      <span class="door-share-key">${esc(DOOR)}</span>
+  const keyLabel = esc(DOOR);
+  return `<div class="door-share-wrap" id="door-share-wrap" data-open="0">
+    <button type="button" class="door-share" id="door-share"
+      title="Share your notes link" aria-label="Share notes link: ${keyLabel}"
+      aria-expanded="false" aria-controls="door-share-panel">
+      <span class="door-share-key">${keyLabel}</span>
       <span class="door-share-hint" aria-hidden="true">↗</span>
     </button>
-    <script>
-    (function () {
-      var btn = document.getElementById("door-share");
-      if (!btn) return;
-      var key = ${JSON.stringify(DOOR)};
-      var hint = btn.querySelector(".door-share-hint");
-      function packUrl() {
-        return location.origin + "/" + key + "/";
+    <div class="door-share-panel" id="door-share-panel" role="dialog"
+      aria-label="Share your notes" hidden>
+      <div class="door-share-head">
+        <div class="door-share-title" id="door-share-title">${keyLabel}</div>
+        <button type="button" class="door-share-x" id="door-share-close"
+          title="Close" aria-label="Close share">×</button>
+      </div>
+      <div class="door-share-qr" id="door-share-qr" aria-busy="true"></div>
+      <div class="door-share-actions">
+        <button type="button" class="door-share-action" id="door-share-action">Share</button>
+        <button type="button" class="door-share-copy" id="door-share-copy">Copy link</button>
+      </div>
+    </div>
+  </div>
+  <script>
+  (function () {
+    var wrap = document.getElementById("door-share-wrap");
+    var btn = document.getElementById("door-share");
+    var panel = document.getElementById("door-share-panel");
+    var closeBtn = document.getElementById("door-share-close");
+    var qrEl = document.getElementById("door-share-qr");
+    var action = document.getElementById("door-share-action");
+    var copyBtn = document.getElementById("door-share-copy");
+    if (!wrap || !btn || !panel || !closeBtn || !qrEl || !action || !copyBtn) return;
+    var key = ${JSON.stringify(DOOR)};
+    var ready = false;
+    var loading = false;
+
+    function packUrl() {
+      return location.origin + "/" + key + "/";
+    }
+
+    function ensureContent() {
+      if (ready || loading) return;
+      loading = true;
+      qrEl.setAttribute("aria-busy", "true");
+      var qrUrl = (typeof BASE === "string" ? BASE : "") + "/api/share-qr?origin=" +
+        encodeURIComponent(location.origin);
+      fetch(qrUrl, { credentials: "same-origin" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("qr " + r.status);
+          return r.text();
+        })
+        .then(function (svg) {
+          qrEl.innerHTML = svg;
+          var s = qrEl.querySelector("svg");
+          if (s) {
+            s.setAttribute("role", "img");
+            s.setAttribute("aria-label", "QR code for notes link");
+            s.removeAttribute("width");
+            s.removeAttribute("height");
+            s.style.width = "100%";
+            s.style.height = "100%";
+          }
+          ready = true;
+        })
+        .catch(function () {
+          qrEl.innerHTML = "<span style=\\"font-size:.75rem;opacity:.55\\">QR unavailable</span>";
+        })
+        .finally(function () {
+          loading = false;
+          qrEl.setAttribute("aria-busy", "false");
+        });
+    }
+
+    function isOpen() { return wrap.dataset.open === "1"; }
+    function openPop() {
+      ensureContent();
+      panel.hidden = false;
+      wrap.dataset.open = "1";
+      btn.setAttribute("aria-expanded", "true");
+    }
+    function closePop() {
+      panel.hidden = true;
+      wrap.dataset.open = "0";
+      btn.setAttribute("aria-expanded", "false");
+    }
+    function togglePop() {
+      if (isOpen()) closePop(); else openPop();
+    }
+
+    function flashEl(el, msg) {
+      var prev = el.textContent;
+      el.textContent = msg;
+      el.dataset.flash = "1";
+      setTimeout(function () {
+        el.textContent = prev;
+        el.dataset.flash = "0";
+      }, 1400);
+    }
+
+    async function copyUrl(feedbackEl) {
+      var url = packUrl();
+      var target = feedbackEl || copyBtn;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = url; ta.setAttribute("readonly", "");
+          ta.style.position = "fixed"; ta.style.left = "-9999px";
+          document.body.appendChild(ta); ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        flashEl(target, "Copied");
+      } catch (e) {
+        flashEl(target, "—");
+        window.prompt("Copy your notes link:", url);
       }
-      function flash(msg) {
-        if (!hint) return;
-        var prev = hint.textContent;
-        hint.textContent = msg;
-        btn.dataset.flash = "1";
-        setTimeout(function () {
-          hint.textContent = prev;
-          btn.dataset.flash = "0";
-        }, 1400);
-      }
-      async function copyUrl() {
-        var url = packUrl();
+    }
+
+    async function shareUrl() {
+      var url = packUrl();
+      if (navigator.share) {
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(url);
-          } else {
-            var ta = document.createElement("textarea");
-            ta.value = url; ta.setAttribute("readonly", "");
-            ta.style.position = "fixed"; ta.style.left = "-9999px";
-            document.body.appendChild(ta); ta.select();
-            document.execCommand("copy");
-            document.body.removeChild(ta);
-          }
-          flash("copied");
-        } catch (e) {
-          flash("—");
-          window.prompt("Copy your notes link:", url);
+          await navigator.share({
+            title: "keyverse",
+            text: "Open my scripture notes",
+            url: url,
+          });
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") return;
         }
       }
-      btn.addEventListener("click", async function () {
-        var url = packUrl();
-        if (navigator.share) {
-          try {
-            await navigator.share({
-              title: "versepack",
-              text: "Open my scripture notes",
-              url: url,
-            });
-            return;
-          } catch (err) {
-            // user cancelled or share failed — fall through only on real errors
-            if (err && err.name === "AbortError") return;
-          }
-        }
-        await copyUrl();
-      });
-      // remember key for bare-/ prefill
-      try { localStorage.setItem("vp_door_key", key); } catch (e) {}
-    })();
-    </script>`;
+      await copyUrl(action);
+    }
+
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      togglePop();
+    });
+    closeBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      closePop();
+      btn.focus();
+    });
+    action.addEventListener("click", function (e) {
+      e.stopPropagation();
+      shareUrl();
+    });
+    copyBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      copyUrl(copyBtn);
+    });
+    panel.addEventListener("click", function (e) { e.stopPropagation(); });
+    document.addEventListener("click", function () {
+      if (isOpen()) closePop();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && isOpen()) {
+        closePop();
+        btn.focus();
+      }
+    });
+
+    try { localStorage.setItem("vp_door_key", key); } catch (e) {}
+  })();
+  </script>`;
 }
 
 /** Passage autocomplete for the home search box (grab-bcv autocompletePassage). */
@@ -2586,25 +4308,16 @@ function refSearchHtml() {
 
 async function renderIndex() {
   const notes = await listNotes();
-  const rows = notes
-    .map((n) => {
-      const scope = parseScope(n.scope.osis);
-      const display = scope ? formatPassageForDisplay(scope.parsed) : n.scope.osis;
-      return `<a class="note-row" href="${u(`/note/${n.scope.slug}`)}">
-        <span class="ref">${esc(display)}</span>
-        <span class="muted" style="float:right">${esc(relTime(n.updated_at))}</span>
-        <div class="muted">${esc(excerpt(n)) || "empty"}</div></a>`;
-    })
-    .join("\n");
+  const treeHtml = renderHomeNoteTree(notes);
   return page(
-    "versepack",
-    `<header><h1>versepack</h1>
+    "keyverse",
+    `<header><h1>keyverse</h1>
       ${doorShareChipHtml()}
     </header>
     ${cryptoBarHtml()}
     ${refSearchHtml()}
     <p class="muted ui" style="margin-top:.75rem">${notes.length} note${notes.length === 1 ? "" : "s"}</p>
-    ${rows || `<p class="muted">Type a passage above.</p>`}`,
+    ${treeHtml || `<p class="muted">Type a passage above.</p>`}`,
   );
 }
 
@@ -2981,6 +4694,8 @@ function renderEditor(scope, note, rel) {
 
 // ---------- reading view ----------
 // Scripture first. Click a verse → show/hide all of its notes (all or none).
+// Header "expand notes" opens every tray with content (VBV analysis).
+// Multi-verse: shift+click, mouse-drag, or long-press then tap → passage note.
 // Click a visible verse-note outline → edit. No per-note chevrons.
 
 async function renderRead(scope) {
@@ -2989,7 +4704,7 @@ async function renderRead(scope) {
   try {
     text = await getChapterText(book, chapter);
   } catch (err) {
-    return page("versepack", `<p>Could not fetch text (${esc(err?.message || err)}).
+    return page("keyverse", `<p>Could not fetch text (${esc(err?.message || err)}).
       <a href="${u(`/note/${scope.slug}`)}">Open note editor</a>.</p>`);
   }
   const chapterScope = parseScope(`${book}.${chapter}`);
@@ -2997,7 +4712,9 @@ async function renderRead(scope) {
   const hl = scope.kind === "chapter" ? null : scopeInterval(scope.parsed);
 
   const verseNotes = new Map();
+  // Range notes sit under the *end* verse so the full passage reads first, then the note.
   const rangeNotes = new Map();
+  const rangeCover = new Set(); // every verse inside a range that has a note
   let chapterNote = null;
   for (const note of await listNotes()) {
     const other = parseScope(note.scope.osis);
@@ -3007,9 +4724,12 @@ async function renderRead(scope) {
     if (other.kind === "chapter") chapterNote = note;
     else if (other.kind === "verse") verseNotes.set(other.parsed.start.verse, note);
     else {
-      const list = rangeNotes.get(other.parsed.start.verse) || [];
+      const startV = other.parsed.start.verse;
+      const endV = other.parsed.end.verse ?? startV;
+      const list = rangeNotes.get(endV) || [];
       list.push({ note, scope: other });
-      rangeNotes.set(other.parsed.start.verse, list);
+      rangeNotes.set(endV, list);
+      for (let vv = startV; vv <= endV; vv++) rangeCover.add(vv);
     }
   }
 
@@ -3029,17 +4749,20 @@ async function renderRead(scope) {
       }
       const vScope = parseScope(slug);
       const hasVerse = !!(note && (isEncryptedNote(note) || note?.blocks?.some((b) => b.text.trim())));
-      const hasNotes = hasVerse || ranges.length > 0;
+      const hasNotes = hasVerse || ranges.length > 0 || rangeCover.has(v);
       const rangeHtml = ranges
         .map((e) => readerNoteHtml({ scope: e.scope, note: e.note }))
         .join("\n");
       const verseHtml = hasVerse
         ? readerNoteHtml({ scope: vScope, note })
         : "";
-      // separate passage-scope notes from this-verse notes when both appear
+      // passage notes (full range) vs this-verse notes — separate when both appear
       let notesInner = "";
       if (rangeHtml) {
-        notesInner += `<div class="note-group passage">${rangeHtml}</div>`;
+        notesInner += `<div class="note-group passage">
+          ${!verseHtml ? "" : `<div class="note-group-title">Passage</div>`}
+          ${rangeHtml}
+        </div>`;
       }
       if (verseHtml) {
         notesInner += `<div class="note-group verse-local">
@@ -3047,7 +4770,15 @@ async function renderRead(scope) {
           ${verseHtml}
         </div>`;
       }
-      return `<div class="verse${inHl ? " hl" : ""}${hasNotes ? " has-notes" : ""}" data-slug="${esc(slug)}" id="v${v}">
+      const vCls = [
+        "verse",
+        inHl ? "hl" : "",
+        hasNotes ? "has-notes" : "",
+        hasVerse ? "has-verse-note" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `<div class="${vCls}" data-slug="${esc(slug)}" data-v="${v}" id="v${v}">
         <p class="vtext"><sup>${v}</sup>${esc(t)}<span class="vstatus"></span></p>
         <div class="vnotes">${notesInner}</div>
       </div>`;
@@ -3059,6 +4790,8 @@ async function renderRead(scope) {
     `<header class="ui">
       <a href="${u("/")}" class="muted">&larr;</a>
       <h1>${esc(display)}</h1>
+      <button type="button" class="muted text-btn" id="expand-notes"
+        aria-pressed="false" aria-label="Expand all verse notes">expand notes</button>
       <a class="muted" href="${u(`/note/${chapterScope.slug}`)}">chapter note</a>
     </header>
     ${chapterNote ? `<div class="chapter-note">${readerNoteHtml({ scope: chapterScope, note: chapterNote, label: false })}</div>` : ""}
@@ -3067,9 +4800,25 @@ async function renderRead(scope) {
     <script>
       ${OUTLINER_JS}
       const seeds = JSON.parse(document.getElementById("verse-seeds").textContent);
+      const chapterDisplay = ${JSON.stringify(display)};
       // slug → { api, noteEl }
       const editors = new Map();
+      let anchorV = null;       // last plain-clicked verse number (shift+click base)
+      let selRange = null;      // { lo, hi } while a multi-verse selection is active
+      let pickRangeEnd = false; // long-press started; next verse tap completes range
+      // Ignore dismiss/click noise right after opening a passage note (drag/shift tail events).
+      let suppressDismissUntil = 0;
       document.querySelector(".verse.hl")?.scrollIntoView({ block: "center" });
+
+      function verseNum(el) {
+        if (!el) return null;
+        const n = Number(el.dataset.v);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function verseEl(n) {
+        return document.getElementById("v" + n);
+      }
 
       function outlineHtml(blocks) {
         const items = blocks || [];
@@ -3089,24 +4838,125 @@ async function renderRead(scope) {
         return null;
       }
 
-      function syncHasNotes(verse) {
-        if (!verse) return;
-        const vslug = verse.dataset.slug;
-        const hasVerse = !!(seeds[vslug] && seeds[vslug].some(b => b.text.trim()))
-          || !!verse.querySelector('.note[data-kind="verse"][data-encrypted="1"]');
-        const hasOther = [...verse.querySelectorAll(".note")].some((n) => {
-          if (n.dataset.kind === "verse") return false;
-          if (n.dataset.encrypted === "1") return true;
-          const blocks = seeds[n.dataset.slug];
-          return blocks ? blocks.some(b => b.text.trim()) : !!n.querySelector(".oline, .otxt");
+      function clearSelection() {
+        selRange = null;
+        document.querySelectorAll(".verse.sel").forEach((v) => {
+          v.classList.remove("sel", "sel-lo", "sel-hi");
         });
-        verse.classList.toggle("has-notes", hasVerse || hasOther);
+        document.body.classList.remove("pick-range-end");
+        pickRangeEnd = false;
+      }
+
+      function dismissSuppressed() {
+        return performance.now() < suppressDismissUntil;
+      }
+
+      function armDismissSuppress(ms) {
+        suppressDismissUntil = performance.now() + (ms || 450);
+        swallowClick = true;
+      }
+
+      /** Drop multi-verse highlight; optionally finish/close the passage note UI. */
+      async function dismissMultiSelect({ closeNotes = true } = {}) {
+        if (dismissSuppressed()) return;
+        const range = selRange ? { ...selRange } : null;
+        const wasPicking = pickRangeEnd;
+        clearSelection();
+        if (!closeNotes) return;
+        if (range && range.lo !== range.hi) {
+          const host = verseEl(range.hi);
+          if (host) {
+            await closeAllOnVerse(host);
+            host.classList.remove("notes-open", "editing");
+          }
+        } else if (wasPicking && anchorV != null) {
+          verseEl(anchorV)?.classList.remove("notes-open", "editing");
+        }
+        syncAllHasNotes();
+      }
+
+      function paintSelection(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        selRange = { lo: a, hi: b };
+        document.querySelectorAll(".verse").forEach((v) => {
+          const n = verseNum(v);
+          const on = n != null && n >= a && n <= b;
+          v.classList.toggle("sel", on);
+          v.classList.toggle("sel-lo", on && n === a);
+          v.classList.toggle("sel-hi", on && n === b);
+        });
+      }
+
+      function rangeSlug(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        const el = verseEl(a);
+        if (!el) return null;
+        const m = String(el.dataset.slug || "").match(/^(.*)\\.(\\d+)$/);
+        if (!m) return null;
+        if (a === b) return m[1] + "." + a;
+        return m[1] + "." + a + "-" + b;
+      }
+
+      function rangeLabel(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        if (a === b) return chapterDisplay + ":" + a;
+        return chapterDisplay + ":" + a + "\\u2013" + b;
+      }
+
+      function noteHasContent(noteEl) {
+        if (!noteEl) return false;
+        if (noteEl.dataset.encrypted === "1") return true;
+        const blocks = seeds[noteEl.dataset.slug];
+        if (blocks) return blocks.some((b) => b.text.trim());
+        return !!noteEl.querySelector(".oline:not(.blank), .otxt");
+      }
+
+      /** Recompute gutter rails from real note content only (never from bare selection). */
+      function syncAllHasNotes() {
+        const cover = new Set();
+        const verseOnly = new Set();
+        document.querySelectorAll(".note").forEach((n) => {
+          if (!noteHasContent(n)) return;
+          if (n.dataset.kind === "range") {
+            let lo = Number(n.dataset.lo), hi = Number(n.dataset.hi);
+            if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+              const m = String(n.dataset.slug || "").match(/\\.(\\d+)-(\\d+)$/);
+              if (m) { lo = Number(m[1]); hi = Number(m[2]); }
+            }
+            if (Number.isFinite(lo) && Number.isFinite(hi)) {
+              for (let i = lo; i <= hi; i++) cover.add(i);
+            }
+            // host verse always
+            const host = n.closest(".verse");
+            const hv = verseNum(host);
+            if (hv != null) cover.add(hv);
+          } else if (n.dataset.kind === "verse") {
+            const host = n.closest(".verse");
+            const hv = verseNum(host);
+            if (hv != null) {
+              cover.add(hv);
+              verseOnly.add(hv);
+            }
+          }
+        });
+        document.querySelectorAll(".verse").forEach((v) => {
+          const n = verseNum(v);
+          v.classList.toggle("has-notes", n != null && cover.has(n));
+          v.classList.toggle("has-verse-note", n != null && verseOnly.has(n));
+        });
+      }
+
+      function syncHasNotes(verse) {
+        // Keep single-verse callers cheap; full recompute is correct for ranges.
+        syncAllHasNotes();
+        if (verse) { /* verse param retained for call sites */ }
       }
 
       async function closeNoteEditor(slug) {
         const ed = editors.get(slug);
         if (!ed) return;
         const { api, noteEl } = ed;
+        const kind = noteEl.dataset.kind;
         await api.flush();
         const blocks = api.getBlocks();
         api.destroy();
@@ -3125,12 +4975,21 @@ async function renderRead(scope) {
         if (!blocks.some(b => b.text.trim())) {
           delete seeds[slug];
           noteEl.remove();
+          // drop empty passage group shell
+          if (verse) {
+            verse.querySelectorAll(".note-group").forEach((g) => {
+              if (!g.querySelector(".note")) g.remove();
+            });
+            if (!verse.querySelector(".note")) verse.classList.remove("notes-open");
+          }
         } else {
           seeds[slug] = blocks;
           body.innerHTML = outlineHtml(blocks);
           if (verse) verse.classList.add("notes-open", "has-notes");
         }
-        syncHasNotes(verse);
+        syncAllHasNotes();
+        if (!editors.size && kind === "range") clearSelection();
+        syncExpandNotesBtn();
       }
 
       async function closeAllOnVerse(verse) {
@@ -3154,13 +5013,29 @@ async function renderRead(scope) {
         const host = noteEl.querySelector(".note-edit");
         host.hidden = false;
         host.innerHTML = "";
+        // Keep / restore range address label so scope stays obvious while writing.
+        if (noteEl.dataset.kind === "range") {
+          let lab = noteEl.querySelector(".note-label");
+          if (!lab) {
+            lab = document.createElement("div");
+            lab.className = "note-label";
+            noteEl.insertBefore(lab, noteEl.firstChild);
+          }
+          if (!lab.textContent.trim()) {
+            const m = String(slug).match(/\\.(\\d+)-(\\d+)$/);
+            if (m) lab.textContent = rangeLabel(Number(m[1]), Number(m[2]));
+            else lab.textContent = slug;
+          }
+        }
+        // Label already names the passage — keep the field quiet.
+        const ph = "Write\\u2026";
         const api = mountOutliner(host, {
           slug,
           blocks: seeds[slug] || [{ id: newId(), indent: 0, text: "" }],
           statusEl: statusElFor(noteEl),
           compact: true,
           autofocus: true,
-          placeholder: "Write\\u2026",
+          placeholder: ph,
         });
         editors.set(slug, { api, noteEl });
       }
@@ -3168,13 +5043,357 @@ async function renderRead(scope) {
       function openVerseNoteEditor(verse) {
         let el = verse.querySelector('.note[data-kind="verse"]');
         if (!el) {
-          verse.querySelector(".vnotes").insertAdjacentHTML("beforeend",
+          // place under verse-local group when passage notes already exist
+          let host = verse.querySelector(".vnotes");
+          let group = host.querySelector(".note-group.verse-local");
+          if (!group && host.querySelector(".note-group.passage")) {
+            group = document.createElement("div");
+            group.className = "note-group verse-local";
+            group.innerHTML = '<div class="note-group-title">This verse</div>';
+            host.appendChild(group);
+            host = group;
+          } else if (group) {
+            host = group;
+          }
+          host.insertAdjacentHTML("beforeend",
             '<div class="note" data-kind="verse" data-slug="' + verse.dataset.slug + '">' +
             '<div class="note-body"></div><div class="note-edit" hidden></div></div>');
           el = verse.querySelector('.note[data-kind="verse"]');
         }
         openNoteEditor(el);
       }
+
+      function ensurePassageNoteEl(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        const slug = rangeSlug(a, b);
+        if (!slug) return null;
+        // Sit under the *last* verse so the full passage reads above the note.
+        const hostVerse = verseEl(b);
+        if (!hostVerse) return null;
+        let el = document.querySelector('.note[data-slug="' + CSS.escape(slug) + '"]');
+        if (el) {
+          // Re-home under end verse if an older render left it on the start.
+          const owner = el.closest(".verse");
+          if (owner && owner !== hostVerse) {
+            let group = hostVerse.querySelector(".vnotes .note-group.passage");
+            if (!group) {
+              group = document.createElement("div");
+              group.className = "note-group passage";
+              const local = hostVerse.querySelector(".vnotes .note-group.verse-local");
+              const vnotes = hostVerse.querySelector(".vnotes");
+              if (local) vnotes.insertBefore(group, local);
+              else vnotes.appendChild(group);
+            }
+            group.appendChild(el);
+            const oldGroup = owner.querySelector(".note-group.passage");
+            if (oldGroup && !oldGroup.querySelector(".note")) oldGroup.remove();
+          }
+          let lab = el.querySelector(".note-label");
+          if (!lab) {
+            lab = document.createElement("div");
+            lab.className = "note-label";
+            el.insertBefore(lab, el.firstChild);
+          }
+          lab.textContent = rangeLabel(a, b);
+          return el;
+        }
+        const vnotes = hostVerse.querySelector(".vnotes");
+        let group = vnotes.querySelector(".note-group.passage");
+        if (!group) {
+          group = document.createElement("div");
+          group.className = "note-group passage";
+          const local = vnotes.querySelector(".note-group.verse-local");
+          if (local) vnotes.insertBefore(group, local);
+          else vnotes.appendChild(group);
+        }
+        const local = vnotes.querySelector(".note-group.verse-local");
+        if (local && !local.querySelector(".note-group-title") && local.querySelector(".note")) {
+          local.insertAdjacentHTML("afterbegin", '<div class="note-group-title">This verse</div>');
+        }
+        if (local && local.querySelector(".note") && !group.querySelector(".note-group-title")) {
+          group.insertAdjacentHTML("afterbegin", '<div class="note-group-title">Passage</div>');
+        }
+        const labelHtml = '<div class="note-label">' + rangeLabel(a, b).replace(/&/g,"&amp;").replace(/</g,"&lt;") + '</div>';
+        group.insertAdjacentHTML("beforeend",
+          '<div class="note" data-kind="range" data-slug="' + slug + '" data-lo="' + a + '" data-hi="' + b + '">' +
+          labelHtml +
+          '<div class="note-body"></div><div class="note-edit" hidden></div></div>');
+        return group.querySelector('.note[data-slug="' + CSS.escape(slug) + '"]');
+      }
+
+      /** Open exactly one passage note for lo–hi and focus its editor. */
+      function openPassageNote(lo, hi) {
+        const a = Math.min(lo, hi), b = Math.max(lo, hi);
+        pickRangeEnd = false;
+        document.body.classList.remove("pick-range-end");
+        armDismissSuppress(500);
+        if (a === b) {
+          clearSelection();
+          const verse = verseEl(a);
+          if (!verse) return;
+          anchorV = a;
+          openVerseNoteEditor(verse);
+          return;
+        }
+        paintSelection(a, b);
+        const last = verseEl(b);
+        if (!last) return;
+        // Close any other open verse trays so only this passage note is front-and-center.
+        document.querySelectorAll(".verse.notes-open, .verse.editing").forEach((v) => {
+          if (v !== last) {
+            v.classList.remove("notes-open", "editing");
+          }
+        });
+        // Close other inline editors (single focus).
+        for (const [slug, ed] of [...editors.entries()]) {
+          if (ed.noteEl.dataset.slug !== rangeSlug(a, b)) {
+            // fire-and-forget flush of unrelated editors
+            closeNoteEditor(slug);
+          }
+        }
+        const targetSlug = rangeSlug(a, b);
+        // Close other inline editors so only this passage note is open.
+        for (const [slug] of [...editors.entries()]) {
+          if (slug !== targetSlug) closeNoteEditor(slug);
+        }
+        last.classList.add("notes-open", "editing");
+        const el = ensurePassageNoteEl(a, b);
+        if (!el) return;
+        openNoteEditor(el);
+        syncExpandNotesBtn();
+        // Bring the note (under last verse) into view after the passage.
+        last.scrollIntoView({ block: "nearest" });
+        // Focus after layout so the outliner caret lands cleanly.
+        requestAnimationFrame(() => {
+          const ed = editors.get(el.dataset.slug);
+          if (ed) ed.api.focus();
+        });
+      }
+
+      function rangeNoteForVerse(v) {
+        for (const el of document.querySelectorAll('.note[data-kind="range"]')) {
+          if (!noteHasContent(el) && !editors.has(el.dataset.slug)) continue;
+          let lo = Number(el.dataset.lo), hi = Number(el.dataset.hi);
+          if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+            const m = String(el.dataset.slug || "").match(/\\.(\\d+)-(\\d+)$/);
+            if (!m) continue;
+            lo = Number(m[1]); hi = Number(m[2]);
+          }
+          if (v >= lo && v <= hi) return el;
+        }
+        return null;
+      }
+
+      function activateVerseClick(verse, { shiftKey = false } = {}) {
+        const v = verseNum(verse);
+        if (v == null) return;
+
+        // long-press pick mode: same verse again cancels; other verse completes range
+        if (pickRangeEnd && anchorV != null && !shiftKey) {
+          if (v === anchorV) {
+            dismissMultiSelect({ closeNotes: false });
+            return;
+          }
+          openPassageNote(anchorV, v);
+          return;
+        }
+
+        // shift+click → passage from last anchor (or this verse alone)
+        if (shiftKey) {
+          const base = anchorV != null ? anchorV : v;
+          anchorV = base;
+          openPassageNote(base, v);
+          return;
+        }
+
+        // multi-verse select active: click inside = unselect; outside = clear then act
+        if (selRange && selRange.lo !== selRange.hi) {
+          if (dismissSuppressed()) return;
+          const inSel = v >= selRange.lo && v <= selRange.hi;
+          dismissMultiSelect({ closeNotes: true }).then(() => {
+            anchorV = v;
+            if (inSel) return; // unselect only
+            activateVerseClick(verse, { shiftKey: false });
+          });
+          return;
+        }
+
+        anchorV = v;
+
+        // verse text = all-or-none toggle; while editing, finish + hide
+        const editingHere = [...editors.values()].some(ed => ed.noteEl.closest(".verse") === verse);
+        if (editingHere) {
+          closeAllOnVerse(verse).then(() => {
+            verse.classList.remove("notes-open");
+            clearSelection();
+            syncAllHasNotes();
+            syncExpandNotesBtn();
+          });
+          return;
+        }
+        if (verse.classList.contains("notes-open")) {
+          verse.classList.remove("notes-open");
+          clearSelection();
+          syncExpandNotesBtn();
+          return;
+        }
+        // Prefer this verse's own note tray when it has content. A covering
+        // multi-verse passage must not steal the click (e.g. JHN.3.16 under 16–18).
+        const localVerseNote = verse.querySelector('.note[data-kind="verse"]');
+        const hasLocalVerse = localVerseNote && noteHasContent(localVerseNote);
+        if (hasLocalVerse || verse.querySelector('.note[data-kind="verse"] .oline, .note[data-kind="verse"] .otxt')) {
+          verse.classList.add("notes-open");
+          const only = verse.querySelectorAll(".vnotes .note");
+          // Single local note → edit-ready; multiple (passage host + verse) → show tray.
+          if (only.length === 1) openNoteEditor(only[0]);
+          syncExpandNotesBtn();
+          return;
+        }
+        // No local verse note: open a multi-verse passage that covers this verse.
+        const rangeNote = rangeNoteForVerse(v);
+        if (rangeNote) {
+          const lo = Number(rangeNote.dataset.lo);
+          const hi = Number(rangeNote.dataset.hi);
+          if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
+            openPassageNote(lo, hi);
+            return;
+          }
+        }
+        // Other local content (e.g. only a hosted range on this end verse) or empty.
+        if (verse.classList.contains("has-notes") || verse.querySelector(".note .oline, .note .otxt")) {
+          verse.classList.add("notes-open");
+          const only = verse.querySelectorAll(".vnotes .note");
+          if (only.length === 1) openNoteEditor(only[0]);
+          syncExpandNotesBtn();
+          return;
+        }
+        openVerseNoteEditor(verse);
+        syncExpandNotesBtn();
+      }
+
+      // --- multi-verse: mouse drag + long-press (touch) ---
+      let drag = null; // { startV, pointerId, moved, longTimer }
+      let swallowClick = false; // true after pointer path already handled the gesture
+      const LONG_MS = 480;
+
+      function verseFromPoint(x, y) {
+        const stack = document.elementsFromPoint(x, y);
+        for (const node of stack) {
+          const v = node.closest?.(".verse");
+          if (v && v.dataset.v) return v;
+        }
+        return null;
+      }
+
+      function endDrag(e, commit) {
+        if (!drag) return;
+        if (drag.longTimer) clearTimeout(drag.longTimer);
+        document.body.classList.remove("selecting-verses");
+        const d = drag;
+        drag = null;
+        // Always release capture from the verse that took it (not e.target —
+        // capture retargets events, so target may not own the capture).
+        try {
+          const capturer = verseEl(d.startV);
+          if (capturer && d.pointerId != null && capturer.releasePointerCapture) {
+            capturer.releasePointerCapture(d.pointerId);
+          }
+        } catch (_) {}
+        if (!commit) return;
+
+        // multi-verse drag (mouse, or touch after long-press)
+        if (d.moved && d.curV != null && d.curV !== d.startV) {
+          armDismissSuppress(500);
+          openPassageNote(d.startV, d.curV);
+          return;
+        }
+        // long-press without drag → wait for end verse
+        if (d.longPressed && !d.moved) {
+          swallowClick = true;
+          pickRangeEnd = true;
+          document.body.classList.add("pick-range-end");
+          anchorV = d.startV;
+          paintSelection(d.startV, d.startV);
+          return;
+        }
+        // Plain tap/click: activate here. Do not rely on the synthetic click —
+        // setPointerCapture makes click.target the .verse, so closest(".vtext")
+        // fails and the click listener used to no-op (single-verse expand broken).
+        if (!d.moved && !d.longPressed) {
+          swallowClick = true;
+          const verse = verseEl(d.startV);
+          if (verse) activateVerseClick(verse, { shiftKey: !!d.shiftKey });
+        }
+      }
+
+      /** True when the event is on verse scripture text (not the note tray). */
+      function isVerseTextTarget(el) {
+        if (!el || !el.closest) return false;
+        const verse = el.closest(".verse");
+        if (!verse) return false;
+        if (el.closest(".vnotes, .note, .note-edit, .outliner, .otext, .obullet, .note-body, .note-label")) {
+          return false;
+        }
+        // .vtext, its children (sup, status), or the .verse shell itself after capture
+        return !!(el.closest(".vtext") || el === verse || verse.contains(el));
+      }
+
+      document.addEventListener("pointerdown", (e) => {
+        if (e.button != null && e.button !== 0) return;
+        if (e.target.closest("a, .otext, .obullet, .outliner, .note-edit, .note-body, .note-label")) return;
+        const verse = e.target.closest(".verse");
+        if (!verse || !isVerseTextTarget(e.target)) return;
+        const v = verseNum(verse);
+        if (v == null) return;
+        swallowClick = false;
+        drag = {
+          startV: v,
+          curV: v,
+          pointerId: e.pointerId,
+          pointerType: e.pointerType || "mouse",
+          moved: false,
+          longPressed: false,
+          shiftKey: e.shiftKey,
+          longTimer: null,
+        };
+        // mouse: drag-select across verses; touch: long-press then pick end
+        if ((e.pointerType || "mouse") === "mouse") {
+          try { verse.setPointerCapture(e.pointerId); } catch (_) {}
+        } else {
+          drag.longTimer = setTimeout(() => {
+            if (!drag || drag.moved) return;
+            drag.longPressed = true;
+            anchorV = drag.startV;
+            paintSelection(drag.startV, drag.startV);
+            if (navigator.vibrate) try { navigator.vibrate(12); } catch (_) {}
+          }, LONG_MS);
+        }
+      });
+
+      document.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const over = verseFromPoint(e.clientX, e.clientY);
+        const n = over ? verseNum(over) : null;
+        if (n == null) return;
+        if (n !== drag.curV || n !== drag.startV) {
+          if (n === drag.startV && !drag.moved) return;
+          // touch: only drag-extend after long-press (avoids scroll-as-select)
+          if (drag.pointerType !== "mouse" && !drag.longPressed) {
+            if (drag.longTimer) { clearTimeout(drag.longTimer); drag.longTimer = null; }
+            return;
+          }
+          if (n !== drag.startV) {
+            if (drag.longTimer) { clearTimeout(drag.longTimer); drag.longTimer = null; }
+            drag.moved = true;
+            drag.curV = n;
+            document.body.classList.add("selecting-verses");
+            paintSelection(drag.startV, n);
+          }
+        }
+      });
+
+      document.addEventListener("pointerup", (e) => endDrag(e, true));
+      document.addEventListener("pointercancel", (e) => endDrag(e, false));
 
       document.addEventListener("click", (e) => {
         if (e.target.closest("a")) return;
@@ -3194,24 +5413,26 @@ async function renderRead(scope) {
           return;
         }
 
-        const verse = e.target.closest(".verse");
-        if (!verse || !e.target.closest(".vtext")) return;
+        // pointer path already handled (plain click, drag, touch, long-press, passage open)
+        if (swallowClick || dismissSuppressed()) {
+          swallowClick = false;
+          return;
+        }
 
-        // verse text = all-or-none toggle; while editing, finish + hide
-        const editingHere = [...editors.values()].some(ed => ed.noteEl.closest(".verse") === verse);
-        if (editingHere) {
-          closeAllOnVerse(verse).then(() => verse.classList.remove("notes-open"));
+        const verse = e.target.closest(".verse");
+        // click outside scripture (or on note tray) → unselect multi-verse
+        if (!verse || !isVerseTextTarget(e.target)) {
+          if ((selRange && selRange.lo !== selRange.hi) || pickRangeEnd) {
+            // clicks inside the open passage note/editor must not dismiss
+            if (!e.target.closest(".note, .vnotes, .chapter-note, .outliner, .note-edit")) {
+              dismissMultiSelect({ closeNotes: true });
+            }
+          }
           return;
         }
-        if (verse.classList.contains("notes-open")) {
-          verse.classList.remove("notes-open");
-          return;
-        }
-        if (verse.classList.contains("has-notes") || verse.querySelector(".note .oline, .note .otxt")) {
-          verse.classList.add("notes-open");
-          return;
-        }
-        openVerseNoteEditor(verse);
+
+        // Fallback if pointerdown didn't run (e.g. keyboard-activated click)
+        activateVerseClick(verse, { shiftKey: e.shiftKey });
       });
 
       document.addEventListener("keydown", (e) => {
@@ -3219,23 +5440,168 @@ async function renderRead(scope) {
         if (editors.size) {
           e.preventDefault();
           const last = [...editors.keys()].pop();
-          closeNoteEditor(last);
+          closeNoteEditor(last).then(syncExpandNotesBtn);
+          return;
+        }
+        if (pickRangeEnd || (selRange && selRange.lo !== selRange.hi)) {
+          e.preventDefault();
+          dismissMultiSelect({ closeNotes: true }).then(syncExpandNotesBtn);
+          return;
+        }
+        if (selRange) {
+          e.preventDefault();
+          clearSelection();
+          return;
+        }
+        // With all notes open (VBV), Esc collapses everything in one step.
+        if (allNotesExpanded()) {
+          e.preventDefault();
+          collapseAllNotes();
           return;
         }
         const open = document.querySelector(".verse.notes-open");
-        if (open) { e.preventDefault(); open.classList.remove("notes-open"); }
+        if (open) {
+          e.preventDefault();
+          open.classList.remove("notes-open");
+          clearSelection();
+          syncExpandNotesBtn();
+        }
       });
 
-      // deep-link: show notes on highlighted verses
+      // --- expand / collapse all verse notes (VBV analysis) ---
+      function versesWithNoteEls() {
+        return [...document.querySelectorAll(".verse")].filter((v) =>
+          v.querySelector(".vnotes .note")
+        );
+      }
+
+      function allNotesExpanded() {
+        const vs = versesWithNoteEls();
+        return vs.length > 0 && vs.every((v) => v.classList.contains("notes-open"));
+      }
+
+      function syncExpandNotesBtn() {
+        const btn = document.getElementById("expand-notes");
+        if (!btn) return;
+        const vs = versesWithNoteEls();
+        if (!vs.length) {
+          btn.hidden = true;
+          return;
+        }
+        btn.hidden = false;
+        const open = allNotesExpanded();
+        btn.textContent = open ? "collapse notes" : "expand notes";
+        btn.setAttribute("aria-pressed", open ? "true" : "false");
+        btn.setAttribute(
+          "aria-label",
+          open ? "Collapse all verse notes" : "Expand all verse notes"
+        );
+      }
+
+      function expandAllNotes() {
+        clearSelection();
+        // View only — do not open editors. Show every note tray that has content.
+        versesWithNoteEls().forEach((v) => v.classList.add("notes-open"));
+        syncExpandNotesBtn();
+      }
+
+      async function collapseAllNotes() {
+        clearSelection();
+        for (const slug of [...editors.keys()]) {
+          await closeNoteEditor(slug);
+        }
+        document.querySelectorAll(".verse.notes-open, .verse.editing").forEach((v) => {
+          v.classList.remove("notes-open", "editing");
+        });
+        syncExpandNotesBtn();
+      }
+
+      document.getElementById("expand-notes")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (allNotesExpanded()) collapseAllNotes();
+        else expandAllNotes();
+      });
+
+      // deep-link: same selection chrome for single- and multi-verse; open notes on target
+      const hlVerses = [...document.querySelectorAll(".verse.hl")];
+      if (hlVerses.length) {
+        const nums = hlVerses.map(verseNum).filter((n) => n != null);
+        if (nums.length) paintSelection(Math.min(...nums), Math.max(...nums));
+      }
       document.querySelectorAll(".verse.hl.has-notes").forEach((v) => v.classList.add("notes-open"));
+      syncExpandNotesBtn();
     </script>`,
   );
 }
 
 // ---------- http ----------
 
+/** CORS for API routes. Door path is the access key; CORS is for browser SPAs. */
+function corsDisabled() {
+  const v = CORS_ORIGIN_RAW;
+  return v === "off" || v === "0" || v === "false" || v === "no";
+}
+
+function applyCors(req, res) {
+  if (corsDisabled()) return;
+  const conf = CORS_ORIGIN_RAW == null || CORS_ORIGIN_RAW === "" ? "*" : CORS_ORIGIN_RAW.trim();
+  let allow = "*";
+  if (conf !== "*") {
+    const allowed = conf.split(",").map((s) => s.trim()).filter(Boolean);
+    const origin = req.headers.origin;
+    if (origin && allowed.includes(origin)) allow = origin;
+    else if (allowed.length) allow = allowed[0];
+    else allow = "*";
+    if (allow !== "*") res.setHeader("vary", "origin");
+  }
+  res.setHeader("access-control-allow-origin", allow);
+  res.setHeader("access-control-allow-methods", "GET, PUT, POST, DELETE, OPTIONS");
+  res.setHeader("access-control-allow-headers", "content-type, x-filename, accept");
+  res.setHeader("access-control-max-age", "86400");
+  res.setHeader("access-control-expose-headers", "content-type, content-disposition, content-length");
+}
+
+function protocolInfo() {
+  return {
+    protocol: PROTOCOL_NAME,
+    version: PROTOCOL_VERSION,
+    door: !DOOR_OPEN && !!DOOR,
+    door_open: DOOR_OPEN,
+    cors: !corsDisabled(),
+    max_attach_bytes: MAX_ATTACH_BYTES,
+    features: {
+      notes: true,
+      attachments: true,
+      encryption: true,
+      suggest: true,
+      resolve: true,
+      share_qr: !DOOR_OPEN && !!DOOR,
+    },
+    endpoints: [
+      "GET /api/protocol",
+      "GET /api/notes",
+      "GET /api/resolve?q=",
+      "GET /api/suggest?q=&limit=",
+      "GET /api/note/<slug>",
+      "GET /api/note/<slug>?raw",
+      "PUT /api/note/<slug>",
+      "POST /api/note/<slug>/attachments",
+      "DELETE /api/note/<slug>/attachments/<att_id>",
+      "GET /api/attachments/<sha256>",
+      "GET /api/share-qr?origin=",
+    ],
+    schemas: "schemas/",
+    docs: {
+      protocol: "PROTOCOL.md",
+      http: "docs/API.md",
+      llms: "llms.txt",
+    },
+  };
+}
+
 const json = (res, code, obj) => {
-  res.writeHead(code, { "content-type": "application/json" });
+  res.writeHead(code, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(obj, null, 2) + "\n");
 };
 const html = (res, code, body) => {
@@ -3303,8 +5669,8 @@ const server = http.createServer(async (req, res) => {
         return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
       }
       // wrong key: do not confirm whether a pack exists
-      return html(res, 404, page("versepack", `<div class="login">
-        <h1>versepack</h1>
+      return html(res, 404, page("keyverse", `<div class="login">
+        <h1>keyverse</h1>
         <p class="lead">Nothing here.</p>
         <p class="muted"><a href="/">Sign in</a></p>
       </div>`));
@@ -3313,7 +5679,59 @@ const server = http.createServer(async (req, res) => {
     // normalize trailing slash on app root inside door
     if (p === "") p = "/";
 
+    // CORS + preflight for all /api/* (browser SPAs against the door)
+    if (p === "/api" || p.startsWith("/api/")) {
+      applyCors(req, res);
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        return res.end();
+      }
+    }
+
     if (req.method === "GET" && p === "/") return html(res, 200, await renderIndex());
+
+    // GET /api/protocol — version + feature discovery (interop)
+    if (req.method === "GET" && p === "/api/protocol") {
+      return json(res, 200, protocolInfo());
+    }
+
+    // GET /api/resolve?q=John+3:16 — normalize human ref → scope (no note IO)
+    if (req.method === "GET" && p === "/api/resolve") {
+      const q = String(url.searchParams.get("q") || "").slice(0, 200);
+      if (!q.trim()) return json(res, 400, { ok: false, error: "missing q" });
+      const scope = parseScope(q);
+      if (!scope) return json(res, 400, { ok: false, error: "invalid passage address", q });
+      let label = scope.osis;
+      try {
+        label = formatPassageForDisplay(scope.parsed) || scope.osis;
+      } catch { /* keep osis */ }
+      return json(res, 200, {
+        ok: true,
+        q,
+        scope: { kind: scope.kind, osis: scope.osis, slug: scope.slug },
+        label,
+      });
+    }
+
+    // GET /api/share-qr?origin=https%3A%2F%2Fhost — SVG QR for this pack’s door URL
+    if (req.method === "GET" && p === "/api/share-qr") {
+      if (DOOR_OPEN || !DOOR) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        return res.end("no door");
+      }
+      const packUrl = packShareUrl(req, url.searchParams.get("origin"));
+      try {
+        const svg = await shareQrSvg(packUrl);
+        res.writeHead(200, {
+          "content-type": "image/svg+xml; charset=utf-8",
+          "cache-control": "private, max-age=300",
+        });
+        return res.end(svg);
+      } catch (err) {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        return res.end("qr failed");
+      }
+    }
 
     // GET /api/suggest?q=john+3  — passage reference autocomplete (grab-bcv)
     if (req.method === "GET" && p === "/api/suggest") {
@@ -3339,7 +5757,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && p === "/go") {
       const scope = parseScope(url.searchParams.get("q") || "");
       if (!scope) {
-        return html(res, 200, page("versepack", `<p>Could not parse that passage. <a href="${u("/")}">Back</a></p>`));
+        return html(res, 200, page("keyverse", `<p>Could not parse that passage. <a href="${u("/")}">Back</a></p>`));
       }
       // chapters open as readable, annotatable text; verses/ranges as editors
       res.writeHead(302, {
@@ -3677,9 +6095,9 @@ server.listen(PORT, HOST, () => {
   const hostLabel = HOST === "0.0.0.0" ? "localhost" : HOST;
   const root = `http://${hostLabel}:${PORT}`;
   if (DOOR_OPEN) {
-    console.log(`versepack: ${root}/  (DOOR_OPEN — open access, no key)`);
+    console.log(`keyverse: ${root}/  (DOOR_OPEN — open access, no key)`);
   } else {
-    console.log(`versepack: ${root}/${DOOR}/`);
+    console.log(`keyverse: ${root}/${DOOR}/`);
     console.log(`open that link (or ${root}/ on this computer → “Open my notes”).`);
     console.log(`your key: ${DOOR}`);
   }

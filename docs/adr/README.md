@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-record/architecture-decision-record) (Context / Decision / Consequences) to record durable choices for versepack.
+We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-record/architecture-decision-record) (Context / Decision / Consequences) to record durable choices for keyverse.
 
 | ADR | Title | Status |
 |-----|--------|--------|
@@ -16,6 +16,7 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0010](./0010-attachments-files-and-urls.md) | Attachments: any file type and URLs | Accepted |
 | [0011](./0011-multiword-door-access.md) | Multiword door URL is the access key (cowyo-style) | Accepted |
 | [0012](./0012-client-side-note-encryption.md) | Client-side note encryption (cowyo-style passphrase) | Accepted |
+| [0013](./0013-outline-collapse-and-structural-ops.md) | Outline collapse and structural ops on flat blocks | Accepted |
 
 ## How to add an ADR
 
@@ -74,3 +75,4 @@ confidentiality layer under frictionlessness, not a permanence/sync feature.
 | Deploy | [../PRODUCTION.md](../PRODUCTION.md) |
 | UI how-to | [../USAGE.md](../USAGE.md) |
 | Interop format | [../../PROTOCOL.md](../../PROTOCOL.md) |
+| HTTP matrix / LLMs | [../API.md](../API.md), [../../llms.txt](../../llms.txt), [../../schemas/](../../schemas/) |

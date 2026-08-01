@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-versepack has no accounts (ADR 0005). Self-host and shared packs still need a
+keyverse has no accounts (ADR 0005). Self-host and shared packs still need a
 simple way to keep a pack from being world-writable on an open network. Cowyo’s
 answer was: a random multiword path *is* the secret — no login form, no email.
 

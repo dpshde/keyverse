@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://keyverse.local/schemas/protocol.schema.json",
+  "title": "keyverse pack/protocol.json",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["protocol", "version"],
+  "properties": {
+    "protocol": { "const": "keyverse" },
+    "version": {
+      "type": "string",
+      "description": "Pack format version (e.g. 0.1-demo)"
+    },
+    "schemas": {
+      "type": "string",
+      "description": "Relative path to JSON Schema directory"
+    }
+  }
+}

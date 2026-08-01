@@ -10,11 +10,12 @@ Users want sibling and nested notes without learning indent syntax, but we also 
 
 ## Decision
 
-Note content is a **flat ordered list** of line-blocks `{ id, indent, text }`. The outline tree is a **projection** of `indent`, never stored nested.
+Note content is a **flat ordered list** of line-blocks `{ id, indent, text, … }`. The outline tree is a **projection** of `indent`, never stored nested.
 
-- UI: outliner (Enter / Nest / Unnest); no required formatting language.
-- Interchange: 2-space indent text for curl/`?raw`.
+- UI: outliner (Enter / Nest / Unnest / collapse / move / …); no required formatting language.
+- Interchange: 2-space indent text for curl/`?raw` (text-only fields).
 - IDs: client may send stable `b_*` ids; text PUT uses LCS line matching as a demo stand-in for op-log identity.
+- Optional UI fields (e.g. `collapsed`) may ride on the JSON block; see [ADR 0013](./0013-outline-collapse-and-structural-ops.md).
 
 Blank bullets are first-class. A note is deleted only when **all** blocks lack text.
 

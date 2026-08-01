@@ -10,7 +10,7 @@ The multiword door (ADR 0011) keeps casual strangers off the HTTP surface, but
 anyone with the door URL—or filesystem access to `pack/notes/`—can read every
 note in cleartext. Cowyo offered an optional page password that encrypted
 content in the browser so the server never saw plaintext. Users asked for the
-same layer on versepack without introducing accounts (ADR 0005).
+same layer on keyverse without introducing accounts (ADR 0005).
 
 Server-side encryption at rest, multi-device key exchange, and blob encryption
 remain deferred permanence work (ADR 0008). This ADR covers the optional

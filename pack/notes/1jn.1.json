@@ -1,11 +1,113 @@
 {
-  "id": "note_sample1jn1",
+  "id": "note_ms9rgyejydwqox",
   "scope": {
     "kind": "chapter",
     "osis": "1JN.1",
     "slug": "1jn.1"
   },
-  "body": "# 1 John 1 — walking in the light\n\nv1 — \"That which was from the beginning\" echoes Gen 1:1 and Jn 1:1. Eyewitness chain: heard, seen, looked upon, touched.\n\nv3 — fellowship (koinonia) is the stated purpose of proclamation, not just information transfer.\n\nv5 — God is light; no darkness *at all*. The absolute framing sets up the impossibility of v6.\n\nv7 — walking in the light does not mean sinlessness (v8 immediately denies that) — it means living exposed, not hidden.\n\nv9 — confession is agreement with the light, and the promise is double: forgive AND cleanse.\n\nQ: how does v9's conditionality relate to the finished cleansing in v7?\n",
-  "created_at": "2026-07-31T09:00:00.000Z",
-  "updated_at": "2026-07-31T09:00:00.000Z"
+  "blocks": [
+    {
+      "id": "b_ms9rgyeifporl4",
+      "indent": 0,
+      "text": "**Questions do not reveal Truth, the Holy Spirit reveals Truth.**"
+    },
+    {
+      "id": "b_ms9rgyeior7dwo",
+      "indent": 1,
+      "text": "_John introduces fellowship here as a concept to be experienced with GOD_"
+    },
+    {
+      "id": "b_ms9rgyeilqkr62",
+      "indent": 0,
+      "text": "Study questions by section"
+    },
+    {
+      "id": "b_ms9rgyeimirnmq",
+      "indent": 0,
+      "text": "vv. 1-4"
+    },
+    {
+      "id": "b_ms9rgyei9hanrz",
+      "indent": 1,
+      "text": "Why do you think John says “Word of life” here instead of simply saying “Jesus”?"
+    },
+    {
+      "id": "b_ms9rgyeipx59oe",
+      "indent": 1,
+      "text": "What does John seem to mean by calling Jesus “the eternal life” who was with the Father?"
+    },
+    {
+      "id": "b_ms9rgyeim0rhop",
+      "indent": 1,
+      "text": "What do these verses show us about where real joy comes from?"
+    },
+    {
+      "id": "b_ms9rgyeivw3ys2",
+      "indent": 0,
+      "text": "vv. 5-7"
+    },
+    {
+      "id": "b_ms9rgyei64j810",
+      "indent": 1,
+      "text": "What do you think it means to “walk in darkness”?"
+    },
+    {
+      "id": "b_ms9rgyeiesazt7",
+      "indent": 1,
+      "text": "Can a believer drift into darkness, and if so, what does that look like?"
+    },
+    {
+      "id": "b_ms9rgyeim7s38h",
+      "indent": 1,
+      "text": "How does hidden sin affect fellowship in the Body of Christ?"
+    },
+    {
+      "id": "b_ms9rgyeitbx3hu",
+      "indent": 1,
+      "text": "Read [[Matthew 5:23-24]]. How does this help us think about our relationship with God and our relationships with one another?"
+    },
+    {
+      "id": "b_ms9rgyeis5uggz",
+      "indent": 0,
+      "text": "vv. 8-10"
+    },
+    {
+      "id": "b_ms9rgyein7jd2s",
+      "indent": 1,
+      "text": "Why do you think people are tempted to minimize or deny their sin?"
+    },
+    {
+      "id": "b_ms9rgyeio36sqz",
+      "indent": 1,
+      "text": "What stands out to you about the pattern of denial, confession, and denial again in verses 8-10?"
+    },
+    {
+      "id": "b_ms9rgyeie7mzcy",
+      "indent": 1,
+      "text": "How is confession different from simply feeling guilty?"
+    },
+    {
+      "id": "b_ms9rgyeiq8ggmq",
+      "indent": 1,
+      "text": "What do these verses show us about what happens when we refuse to be honest about our sin?"
+    },
+    {
+      "id": "b_ms9rgyeiopcqhb",
+      "indent": 0,
+      "text": "Key synthesis"
+    },
+    {
+      "id": "b_ms9rgyeiwb170y",
+      "indent": 1,
+      "text": "Hidden sin keeps us in darkness, confession brings us into the light, reconciliation repairs fellowship, and unity in the Body becomes the visible fruit of walking with God in truth"
+    },
+    {
+      "id": "b_ms9rgyei6u0pic",
+      "indent": 1,
+      "text": "How does receiving God’s forgiveness change the way we show grace, compassion, and forgiveness to each other in the Body of Christ? ([1 John 1:9](https://route.bible/?q=1%20John%201%3A9&utm_source=chatgpt&utm_medium=prompt), [Ephesians 4:32](https://route.bible/?q=Ephesians%204%3A32&utm_source=chatgpt&utm_medium=prompt), [Colossians 3:12-13](https://route.bible/?q=Colossians%203%3A12-13&utm_source=chatgpt&utm_medium=prompt))."
+    }
+  ],
+  "attachments": [],
+  "created_at": "2026-05-05T00:00:00.000Z",
+  "updated_at": "2026-05-05T00:00:00.000Z"
 }

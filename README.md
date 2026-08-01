@@ -1,4 +1,4 @@
-# versepack
+# keyverse
 
 A **cowyo-class** capture door over an on-disk scripture note pack.
 
@@ -9,14 +9,14 @@ A **cowyo-class** capture door over an on-disk scripture note pack.
 | Idea | How it shows up |
 |------|------------------|
 | **Address = passage** | `/note/jhn.3.16` — home search with **reference autocomplete** (books → chapters → verses) |
-| **Open → type → saved** | Outliner (Enter, Nest/Unnest, Tab). Autosave. No save button. No account form. |
+| **Open → type → saved** | Outliner (Enter, nest/unnest, collapse, move, undo, multi-select, drag). Autosave. No save button. No account form. |
 | **Pack is the truth** | `pack/notes/<slug>.json` — readable with the server dead |
-| **Outlines** | Flat `{id, indent, text}` blocks; tree projected from indent |
+| **Outlines** | Flat `{id, indent, text, collapsed?}` blocks; tree projected from indent ([ADR 0013](docs/adr/0013-outline-collapse-and-structural-ops.md)) |
 | **Markdown** | Base inline: `**bold**` `*italic*` `` `code` `` `~~strike~~` `[links](url)` + wiki |
-| **Compose, don’t absorb** | Containment from OSIS geometry; each address keeps its own file |
+| **Compose, don’t absorb** | Containment from OSIS geometry; each address keeps its own file. Home list nests chapter → verse as folders |
 | **Cross-refs** | `[[John 3:16]]` or `[[John 3:16\|label]]` in any block ([PROTOCOL §4.1](PROTOCOL.md)) |
 | **Attachments** | Any file type + URL refs ([PROTOCOL §5](PROTOCOL.md)); UI on the note page |
-| **Reading view** | `/read/jhn.3` — BSB chapter text (cached), notes under verses |
+| **Reading view** | `/read/jhn.3` — BSB chapter text (cached), notes under verses; multi-select a passage (shift+click / drag / long-press) to note a range |
 | **Access** | Multiword URL is the key — cowyo-style ([ADR 0011](docs/adr/0011-multiword-door-access.md)) |
 | **Encryption** | Optional pack passphrase; notes save as AES-GCM ciphertext in the browser ([ADR 0012](docs/adr/0012-client-side-note-encryption.md)) |
 
@@ -26,7 +26,7 @@ There is **no account**. On first start the server creates a four-word key and
 prints a link. Same key is the path in every notes URL.
 
 ```text
-versepack: http://localhost:4180/quiet-river-lantern/
+keyverse: http://localhost:4180/quiet-river-lantern/
 your key: quiet-river-lantern
 ```
 
@@ -73,26 +73,34 @@ pnpm dev
 | `DOOR` / `PACK_DOOR` | auto → `pack/door` | Multiword access phrase |
 | `DOOR_OPEN` | off | `1` = disable door (open demo only) |
 | `MAX_ATTACH_BYTES` | `52428800` (50 MiB) | Max file upload size |
+| `CORS_ORIGIN` | `*` (on) | API CORS; `off` disables; or comma-list of origins |
 
 ```sh
-HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/versepack DOOR=my-study-garden-notes pnpm start
+HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse DOOR=my-study-garden-notes pnpm start
 ```
 
 ## Documentation
 
 | Doc | Contents |
 |-----|----------|
+| [llms.txt](llms.txt) | Machine/LLM index (pack + door, must/must-not) |
+| [docs/API.md](docs/API.md) | HTTP status/body matrix for second clients |
+| [schemas/](schemas/) | JSON Schema for note, attachment, cipher, protocol |
+| [PROTOCOL.md](PROTOCOL.md) | Pack format + HTTP door (normative interop) |
 | [docs/SELF_HOST.md](docs/SELF_HOST.md) | Install, env, backup, offline BSB, troubleshooting |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | systemd, reverse proxy, Docker sketch, hardening |
 | [docs/USAGE.md](docs/USAGE.md) | Day-to-day UI: editor, reader, wiki links, attachments, encryption |
-| [PROTOCOL.md](PROTOCOL.md) | Pack format + HTTP door (interop contract; §3.1 encryption) |
-| [docs/adr/](docs/adr/) | Architecture Decision Records (Nygard format; 0012 = encryption) |
+| [docs/adr/](docs/adr/) | Architecture Decision Records (Nygard format) |
 
 ## curl (under the door)
 
 ```sh
 DOOR=$(tr -d '\n' < pack/door)
 BASE="http://localhost:4180/$DOOR"
+
+# discover
+curl -s "$BASE/api/protocol"
+curl -s "$BASE/api/resolve?q=John+3:16"
 
 # write (text interchange: 2 spaces = one indent)
 echo "Nicodemus came at night." | curl -X PUT --data-binary @- "$BASE/api/note/jhn.3.16"

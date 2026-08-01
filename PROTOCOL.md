@@ -1,10 +1,17 @@
-# versepack protocol v0.1-demo
+# keyverse protocol v0.1-demo
 
-versepack is a *pack format*, not an app. The protocol is: how notes are
+keyverse is a *pack format*, not an app. The protocol is: how notes are
 addressed, how they are laid out on disk, and what a record contains. Anything
-that reads and writes a conforming pack directory is a versepack client — the
+that reads and writes a conforming pack directory is a keyverse client — the
 bundled server is just the reference client (a door). Two clients pointed at
 the same pack interoperate with no coordination beyond the filesystem.
+
+| Audience | Start here |
+|----------|------------|
+| Machines / LLMs | [llms.txt](llms.txt) |
+| HTTP status matrix | [docs/API.md](docs/API.md) |
+| JSON Schema | [schemas/](schemas/) |
+| Runtime discovery | `GET /{door}/api/protocol` |
 
 ## 1. Addressing
 
@@ -25,12 +32,15 @@ v0.1 — reserved for the op-log extension).
 
 ```
 pack/
-  protocol.json              {"protocol": "versepack", "version": "0.1-demo"}
+  protocol.json              {"protocol":"keyverse","version":"0.1-demo","schemas":"schemas/"}
   door                       optional multiword access phrase for HTTP doors (secret)
-  notes/<slug>.json          one record per addressed note
+  notes/<slug>.json          one record per addressed note (see schemas/note.schema.json)
   attachments/<sha256>       raw file bytes (content-addressed); absent for URL-only refs
   text/                      derived scripture-text cache; disposable, never user data
 ```
+
+Repo-root `schemas/` holds JSON Schema for protocol manifest, notes, attachments,
+and cipher envelopes. Clients MUST ignore unknown properties.
 
 - The pack MUST remain fully readable with no server running: plain JSON,
   UTF-8, pretty-printed, newline-terminated for notes; attachment binaries are
@@ -130,8 +140,13 @@ projection of `indent`; it is never stored nested.
   when projected.
 - `text`: one line, no newlines. Markers for inline formatting stay **in the
   string** (source of truth); clients render them for display.
+- `collapsed` (optional boolean): when true, clients SHOULD hide this block's
+  descendants until expanded. Only meaningful when the block has children in
+  the indent projection. Omitted or `false` = expanded. JSON notes only —
+  text interchange does **not** encode collapse; a text PUT may drop it
+  ([ADR 0013](docs/adr/0013-outline-collapse-and-structural-ops.md)).
 - Interchange form: `"  ".repeat(indent) + text` joined by `\n`. Parsing and
-  serializing MUST round-trip.
+  serializing MUST round-trip for `indent`/`text` (not `collapsed`).
 
 ### 4.0 Inline markdown (base)
 
@@ -259,15 +274,21 @@ URL is access. The reference client stores the phrase in `pack/door` or env
 `DOOR`. Clients MUST prefix API and page routes with the same door base when
 the door is enabled.
 
-A serving client SHOULD expose (under `/{door}/` when enabled):
+A serving client SHOULD expose (under `/{door}/` when enabled). Full status/body
+matrix: [docs/API.md](docs/API.md).
 
-- `GET /api/notes` — every record in the pack.
+- `GET /api/protocol` — pack/protocol discovery: `{ protocol, version, door,
+  features, endpoints, … }`. Clients SHOULD call this first over HTTP.
+- `GET /api/resolve?q=<passage>` — normalize human/slug input to
+  `{ ok, scope: { kind, osis, slug }, label }` without reading notes. Same
+  normalizer as addressing (`grab-bcv` in the reference client).
+- `GET /api/notes` — every record in the pack (reference sort: `updated_at` desc).
 - `GET /api/suggest?q=<partial>&limit=8` — passage reference autocomplete
   (book / chapter / verse / range). Response:
   `{ "q": "…", "suggestions": [{ "label", "insertText", "canonical", "kind" }] }`.
   Powered by the same BCV library used for addressing; empty `q` → empty list.
-- `GET /api/note/<slug>` — one record; `?raw` returns the block interchange
-  form as `text/plain`.
+- `GET /api/note/<slug>` — one record; `?raw` (or `Accept: text/plain`) returns
+  the block interchange form as `text/plain`.
 - `PUT /api/note/<slug>` — body is either:
   - raw interchange text (`text/plain`), or
   - `{"blocks":[...], "attachments"?: [...]}` (`application/json`), or
@@ -294,11 +315,34 @@ A serving client SHOULD expose (under `/{door}/` when enabled):
   re-encrypts. Optional `?sha256=` triggers best-effort blob GC.
 - `GET /api/attachments/<sha256>` — raw file bytes (`Content-Type` from a
   referencing note when known, else `application/octet-stream`).
+- `GET /api/share-qr?origin=<url-origin>` — SVG QR code for this pack’s door
+  URL (`{origin}/{door}/`). `origin` SHOULD be the browser’s `location.origin`
+  so the code matches the URL the user sees; when omitted, the server derives
+  origin from `Forwarded` / `Host`. Door-only (404 when the door is open/disabled).
+  Response: `image/svg+xml`. Used by the home share popup (QR + Share).
 
-## 8. Reserved extensions (not fully specified in v0.1)
+### 7.1 CORS (browser clients)
+
+Serving clients that expect cross-origin SPAs SHOULD send CORS headers on
+`/api/*` (including `OPTIONS` preflight → 204). The reference door defaults to
+`Access-Control-Allow-Origin: *` (access control is the multiword door path).
+Disable with `CORS_ORIGIN=off`, or restrict with `CORS_ORIGIN=https://app.example`
+(comma-separated list allowed).
+
+## 8. Minimum client checklist
+
+1. Read `pack/protocol.json` or `GET /api/protocol`.
+2. Normalize every address (same BCV rules as the door, or `GET /api/resolve`).
+3. List notes (`notes/*.json` or `GET /api/notes`).
+4. Read/write note JSON; preserve block `id`s and attachment rows when editing text.
+5. Treat empty plaintext + no attachments as delete.
+6. Handle sealed notes without sending a passphrase to the server (`409` on raw).
+7. Ignore unknown keys; optionally validate with `schemas/`.
+
+## 9. Reserved extensions (not fully specified in v0.1)
 
 **In v0.1 already:** attachments (CAS + URLs), multiword door access, client-side
-note encryption (§3.1).
+note encryption (§3.1), protocol discovery, resolve, CORS, JSON Schema.
 
 **Reserved / deferred** (layer *under* the pack; must not change addressing or
 the no-account capture surface):

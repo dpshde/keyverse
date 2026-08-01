@@ -1,4 +1,4 @@
-# Self-hosting versepack
+# Self-hosting keyverse
 
 Run the reference door on your own machine or LAN. The **pack directory is the
 product**; the process is only HTTP access to it.
@@ -15,8 +15,8 @@ product**; the process is only HTTP access to it.
 ## Install
 
 ```sh
-git clone https://github.com/dpshde/versepack.git
-cd versepack
+git clone https://github.com/dpshde/keyverse.git
+cd keyverse
 pnpm install          # or: npm install
 ```
 
@@ -71,10 +71,10 @@ pnpm dev              # node server.mjs
 Example log line:
 
 ```text
-versepack door: http://localhost:4180/form-file-said-duty/
+keyverse door: http://localhost:4180/form-file-said-duty/
 bookmark that URL — the multiword path is your key (cowyo-style).
 no account. share the door words only with co-editors.
-pack on disk:   /path/to/versepack/pack
+pack on disk:   /path/to/keyverse/pack
 ```
 
 (Optional encryption is set in the browser after you open the door — not in env.)
@@ -89,12 +89,13 @@ pack on disk:   /path/to/versepack/pack
 | `DOOR` / `PACK_DOOR` | auto → `$PACK_DIR/door` | Multiword access phrase (`a-b-c-d`) |
 | `DOOR_OPEN` | off | `1` / `true` = no door prefix (open access) |
 | `MAX_ATTACH_BYTES` | `52428800` | Max attachment upload size |
+| `CORS_ORIGIN` | `*` (enabled) | CORS for `/api/*`; `off` / `false` disables; comma-list of origins |
 
 Examples:
 
 ```sh
 HOST=127.0.0.1 PORT=8080 pnpm start
-PACK_DIR=/Volumes/notes/my-versepack pnpm start
+PACK_DIR=/Volumes/notes/my-keyverse pnpm start
 DOOR=my-study-garden-notes pnpm start
 DOOR_OPEN=1 pnpm start   # demos only
 ```
@@ -121,18 +122,23 @@ DOOR=$(tr -d '\n' < pack/door)
 BASE="http://localhost:4180/$DOOR"
 
 curl -s -o /dev/null -w '%{http_code}\n' "$BASE/"          # 200
+curl -s "$BASE/api/protocol" | head
+curl -s "$BASE/api/resolve?q=John+3:16"
 curl -s "$BASE/api/notes" | head
 curl -s "$BASE/api/note/jhn.3.16?raw"
 ```
+
+Interop docs: [API.md](./API.md), [../llms.txt](../llms.txt), [../schemas/](../schemas/).
+
 
 ## Backup / move
 
 Copy the **whole pack** (include `door` or you lose the multiword key):
 
 ```sh
-tar czf versepack-backup.tgz -C /var/lib/versepack pack
+tar czf keyverse-backup.tgz -C /var/lib/keyverse pack
 # restore
-tar xzf versepack-backup.tgz -C /restore
+tar xzf keyverse-backup.tgz -C /restore
 PACK_DIR=/restore/pack pnpm start
 ```
 

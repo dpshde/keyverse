@@ -1,4 +1,4 @@
-# Using versepack
+# Using keyverse
 
 Day-to-day product surface of the reference door. Paths below assume you already
 opened your **multiword door** (`/{door}/…`). See [SELF_HOST.md](./SELF_HOST.md)
@@ -14,7 +14,7 @@ There is no account. Your **key** is four words (also the path in your notes URL
 | **Link from the terminal** | Open the full URL it printed — you’re in |
 | **Phone / another device** | Open the site → enter your key → **Open notes** |
 | **Return visit** | Bookmark after first open; key is remembered for prefilling |
-| **Share your link** | On home, tap the four-word key → native share sheet (or copies the link) |
+| **Share your link** | On home, tap the four-word key → popup with QR code + **Share** (or copies the link) |
 
 Wrong key → try again (the app won’t tell strangers whether a pack exists).
 
@@ -56,14 +56,54 @@ for sealed notes.
 | `/go?q=Rom+8:28-30` | Same normalization |
 | Sloppy URL `/note/john.3.16` | 302 to canonical `/note/jhn.3.16` |
 
+### Home note list (folders)
+
+Notes are still **one file per address** ([ADR 0004](./adr/0004-compose-dont-absorb.md)).
+The home list *projects* a tree from OSIS geometry:
+
+| What you see | Meaning |
+|--------------|---------|
+| **Chapter folder** (e.g. John 3) | Verse/range notes in that chapter when there is no chapter note |
+| **Chapter note** as folder | If you have a note on the whole chapter, it is the parent row; contained notes nest under it |
+| **Click a parent row** | Expand / collapse that branch (same as the chevron; remembered in this browser) |
+| **Click a leaf verse/passage** | Opens the reader scrolled to that spot (highlighted) |
+| **Edit icon** (pencil, every row) | Opens the note editor for that address |
+| **Read icon** (book, every row) | Opens the reading view (verse/range scopes highlight in the chapter) |
+| **Indent** | Contained passages (e.g. John 3:16 under John 3:16–18 under John 3) |
+| **Chevron** | Collapse / expand a branch |
+
+Sort is scripture order (book → chapter → verse), not recency. Multi-chapter ranges sit at book level.
+
 API: `GET /api/suggest?q=john+3` (see PROTOCOL §7).
 
 ## Editor (`/note/<slug>`)
 
-- **Outliner:** each line is a bullet. **Enter** new item; **Nest** / **Unnest**
-  (or Tab / Shift-Tab) change indent. Blank bullets are allowed.
+- **Outliner:** each line is a bullet (Dotflowy-style fundamentals). Blank
+  bullets are allowed. Collapse state is saved on the note ([ADR 0013](./adr/0013-outline-collapse-and-structural-ops.md)).
 - **Autosave** after a short debounce. Status shows “saved” / “saved · encrypted” /
   “cleared” / errors.
+
+### Keyboard (fundamentals)
+
+| Key | Action |
+|-----|--------|
+| **Enter** | Split at caret → new sibling (at end of an **expanded** bullet with children → new **first child**) |
+| **Tab** / **Shift+Tab** | Nest / unnest (moves whole subtree) |
+| **⌘/Ctrl+Shift+↑** / **↓** | Move among siblings; at the edge reparent under the parent’s adjacent sibling |
+| **⌘/Ctrl+↑** / **↓** | Collapse / expand |
+| **Backspace** at start of empty bullet | Delete and focus previous |
+| **Backspace** at start with text | Join into previous |
+| **⌘/Ctrl+Shift+Backspace** | Delete bullet and its whole subtree |
+| **↑** / **↓** at line edges | Move between bullets (keeps caret column) |
+| **←** / **→** at line edges | Snake to previous / next bullet |
+| **⌘/Ctrl+Z** / **⌘/Ctrl+Shift+Z** | Undo / redo |
+| **Shift+↑** / **↓** at line edges | Select whole nodes (extends one step; then Tab indents, **Backspace/Delete** removes all selected roots + subtrees, Esc clears) |
+| **⌘/Ctrl+A** | Select all visible nodes (then Backspace/Delete for multi-node delete) |
+
+**Mouse / touch:** hover chevron to fold; drag the **bullet** to reorder/reparent;
+**Shift+click** a bullet/row to extend multi-node selection; mobile toolbar has
+unnest / nest / fold.
+
 - **Inline markdown** (stored as markers, like Dotflowy):
 
   | Type | Example |
@@ -82,19 +122,36 @@ API: `GET /api/suggest?q=john+3` (see PROTOCOL §7).
 - **Within / Part of / Overlaps:** inbox cards — open the related note; they are
   not embedded editors (compose-don’t-absorb).
 
-Mobile: Nest/Unnest toolbar sticks above the home indicator; large tap targets.
+Mobile: Nest/Unnest/Fold toolbar sticks above the home indicator; large tap targets.
 
 ## Reading view (`/read/<slug>`)
 
 - BSB chapter text (fetched once, cached under `pack/text/bsb/`).
-- **Click verse text:** show/hide all notes for that verse (all or none).
-- Small gutter dot = verse has notes while collapsed (including sealed notes).
-- **Passage** notes (ranges starting here) vs **This verse** notes are separated
-  when both exist.
+- **Click verse text:** show/hide all notes for that verse (all or none). Empty
+  verse → start a note on that verse.
+- **Expand notes** (header): open every verse tray that has notes — useful for
+  verse-by-verse (VBV) review. Toggles to **collapse notes**; **Esc** also
+  collapses all when everything is open. Hidden when the chapter has no notes.
+- **Select a passage** (multi-verse note):
+
+  | Gesture | Result |
+  |---------| |--------|
+  | **Shift+click** another verse | Note on the continuous range (e.g. John 3:16–18) |
+  | **Drag** across verses (mouse) | Same — release to write |
+  | **Long-press** a verse, then tap the end (touch) | Same |
+- Selected verses highlight as one block; the passage note opens **after** the
+  last verse (so you read the whole passage, then the note). Address is still
+  `jhn.3.16-18`. Label shows **Passage · John 3:16–18** while reading and writing.
+- Small gutter dot = verse has notes while collapsed (including sealed notes, and
+  every verse inside a range note).
+- **Passage** notes vs **This verse** notes are separated when both exist under
+  the same end verse.
 - Click an outline (or passage label) to edit that note **inline**.
 - **Encrypted** notes show a short “open to unlock” link (full editor unlock
   flow) instead of an inline outline.
-- Esc steps back: editing → notes shown → notes hidden.
+- **Unselect** a multi-verse selection: click any selected verse again, click
+  outside the scripture, or **Esc** (also cancels long-press “pick end” mode).
+- Esc steps back: editing → selection/notes → clear.
 
 Chapter note (if any) sits above the chapter text; click to edit.
 

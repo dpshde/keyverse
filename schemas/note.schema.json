@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://keyverse.local/schemas/note.schema.json",
+  "title": "keyverse note record",
+  "description": "On-disk note under pack/notes/<slug>.json. See PROTOCOL.md §3.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "scope", "created_at", "updated_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Durable record id (note_…). Reserved for future op-log."
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["kind", "osis", "slug"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["verse", "range", "chapter"]
+        },
+        "osis": {
+          "type": "string",
+          "description": "Canonical OSIS (e.g. JHN.3.16)"
+        },
+        "slug": {
+          "type": "string",
+          "description": "osis lowercased; filename and URL segment"
+        }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "description": "Flat outline rows. Empty when encrypted:true.",
+      "items": { "$ref": "#/$defs/block" }
+    },
+    "attachments": {
+      "type": "array",
+      "description": "Empty when encrypted:true (metadata sealed in cipher).",
+      "items": { "$ref": "attachment.schema.json" }
+    },
+    "encrypted": {
+      "type": "boolean",
+      "description": "When true, cipher is required; blocks/attachments empty"
+    },
+    "cipher": {
+      "$ref": "cipher.schema.json"
+    },
+    "body": {
+      "type": "string",
+      "description": "Legacy flat text; clients MUST hydrate to blocks on read"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "encrypted": { "const": true } },
+        "required": ["encrypted"]
+      },
+      "then": {
+        "required": ["cipher"],
+        "properties": {
+          "cipher": { "$ref": "cipher.schema.json" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "block": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "indent", "text"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[\\w.-]+$",
+          "description": "Stable across edits; preserve on rewrite"
+        },
+        "indent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32,
+          "description": "Outline depth; at most +1 vs previous block"
+        },
+        "text": {
+          "type": "string",
+          "description": "One line, no newlines; markers stored literally"
+        },
+        "collapsed": {
+          "type": "boolean",
+          "description": "When true, hide descendants until expanded (JSON only)"
+        }
+      }
+    }
+  }
+}

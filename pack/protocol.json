@@ -1,4 +1,5 @@
 {
-  "protocol": "versepack",
-  "version": "0.1-demo"
+  "protocol": "keyverse",
+  "version": "0.1-demo",
+  "schemas": "schemas/"
 }

@@ -1,0 +1,101 @@
+# keyverse
+
+> Pack format for OSIS-addressed scripture notes. Frictionlessness > portability > permanence.
+> The pack directory is the product; the HTTP door is an optional access surface.
+
+## Protocol
+
+- Name: `keyverse`
+- Version: `0.1-demo` (demo-era; expect breaking refinements before 1.0)
+- Normative: PROTOCOL.md
+- HTTP matrix: docs/API.md
+- Schemas: schemas/ (note, attachment, cipher, protocol)
+- Manifest: pack/protocol.json → `{"protocol":"keyverse","version":"0.1-demo"}`
+- Discovery: GET /{door}/api/protocol
+
+## Preferred integration: pack filesystem
+
+```
+pack/
+  protocol.json
+  door                    # optional multiword HTTP key (secret)
+  notes/<slug>.json       # one note per OSIS address
+  attachments/<sha256>    # content-addressed file bytes
+  text/                   # disposable scripture cache — not user data
+```
+
+- Address = canonical OSIS lowercased (slug). Example: John 3:16 → `JHN.3.16` → `jhn.3.16`.
+- Scope kinds: `verse` | `range` (same-chapter in v0.1) | `chapter`.
+- Note body: flat `blocks[]` of `{id, indent, text, collapsed?}`. Tree is projected from indent.
+- Legacy `body` string: hydrate to one block per line (indent = leading spaces / 2).
+- Attachments: `kind: file` (sha256 CAS) or `kind: url` (http/https).
+- Encryption (optional): `{encrypted:true, cipher:{v,alg,kdf,iter,salt,iv,ct}}`; blocks/attachments empty on disk.
+- Cipher plaintext is UTF-8 JSON `{"blocks":[…],"attachments":[…]}` (AES-256-GCM, PBKDF2-HMAC-SHA-256, 210000 iter).
+- Containment is computed from OSIS geometry — never merge/copy note bodies between addresses.
+
+## HTTP door (optional)
+
+Prefix every route with `/{door}/` when the door is enabled (`pack/door` or `DOOR=`).  
+`DOOR_OPEN=1` disables the prefix (demo only).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | /api/protocol | Version + features |
+| GET | /api/notes | All notes (updated_at desc) |
+| GET | /api/resolve?q= | Human ref → `{kind,osis,slug}` |
+| GET | /api/suggest?q=&limit= | Passage autocomplete |
+| GET | /api/note/`<slug>` | Note JSON; `?raw` → text/plain (409 if sealed) |
+| PUT | /api/note/`<slug>` | Create/update/delete/seal |
+| POST | /api/note/`<slug>`/attachments | URL JSON or raw file (`X-Filename`) |
+| DELETE | /api/note/`<slug>`/attachments/`<id>` | Detach; optional `?sha256=` GC |
+| GET | /api/attachments/`<sha256>` | Blob bytes |
+| GET | /api/share-qr?origin= | Door URL as SVG QR |
+| OPTIONS | /api/* | CORS preflight → 204 |
+
+### PUT bodies
+
+- `text/plain` (or non-JSON): interchange text, 2 spaces = one indent. Empty → delete if no attachments.
+- `application/json` `{ "blocks":[…], "attachments"?: […] }` — omit attachments to preserve.
+- `application/json` `{ "encrypted": true, "cipher": {…} }` — seal.
+
+### CORS
+
+Default `Access-Control-Allow-Origin: *` on `/api/*`. Set `CORS_ORIGIN=off` to disable, or a comma-list of origins. Access control = knowing the door URL.
+
+## Must
+
+- Normalize human references before write (grab-bcv or GET /api/resolve).
+- Preserve surviving `blocks[].id` across edits.
+- Preserve `attachments` when only updating blocks (omit key on PUT).
+- Treat empty plaintext + no attachments as delete.
+- Ignore unknown JSON keys.
+- Keep passphrase client-side only (never send to server).
+
+## Must not
+
+- Absorb or reparent notes by containment.
+- Treat `text/` as user data.
+- Assume multi-writer merge / sync (undefined in v0.1).
+- Expect attachment *bytes* to be passphrase-encrypted (only note metadata is sealed).
+
+## Docs map
+
+- PROTOCOL.md — pack + door normative rules
+- docs/API.md — HTTP status/body matrix
+- docs/USAGE.md — human UI
+- docs/SELF_HOST.md — run/env/backup
+- docs/PRODUCTION.md — deploy hardening
+- docs/adr/ — architecture decisions
+- schemas/ — JSON Schema
+- README.md — quick start + curl
+
+## Example curl
+
+```sh
+DOOR=$(tr -d '\n' < pack/door)
+BASE="http://localhost:4180/$DOOR"
+curl -s "$BASE/api/protocol"
+curl -s "$BASE/api/resolve?q=John+3:16"
+curl -s -X PUT "$BASE/api/note/jhn.3.16" -H 'content-type: application/json' \
+  -d '{"blocks":[{"id":"b1","indent":0,"text":"See [[John 3:17]]."}]}'
+```
