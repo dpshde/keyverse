@@ -151,13 +151,15 @@ Mobile: Nest/Unnest/Fold toolbar sticks above the home indicator; large tap targ
 - **Expand notes** (header): open every verse tray that has notes — useful for
   verse-by-verse (VBV) review. Toggles to **collapse notes**; **Esc** also
   collapses all when everything is open. Hidden when the chapter has no notes.
+- **Long-press** a verse: always open/create a **single-verse** note (even when
+  a multi-verse passage note covers that verse).
 - **Select a passage** (multi-verse note):
 
   | Gesture | Result |
   |---------| |--------|
   | **Shift+click** another verse | Note on the continuous range (e.g. John 3:16–18) |
   | **Drag** across verses (mouse) | Same — release to write |
-  | **Long-press** a verse, then tap the end (touch) | Same |
+  | **Long-press then drag** to another verse (touch) | Same |
 - Selected verses highlight as one block; the passage note opens **after** the
   last verse (so you read the whole passage, then the note). Address is still
   `jhn.3.16-18`. Label shows **Passage · John 3:16–18** while reading and writing.
@@ -169,7 +171,7 @@ Mobile: Nest/Unnest/Fold toolbar sticks above the home indicator; large tap targ
 - **Encrypted** notes show a short “open to unlock” link (full editor unlock
   flow) instead of an inline outline.
 - **Unselect** a multi-verse selection: click any selected verse again, click
-  outside the scripture, or **Esc** (also cancels long-press “pick end” mode).
+  outside the scripture, or **Esc**.
 - Esc steps back: editing → selection/notes → clear.
 
 Chapter note (if any) sits above the chapter text; click to edit.

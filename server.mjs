@@ -1572,36 +1572,64 @@ const CSS = `
   /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
   /*
    * Multi-verse selection = one continuous surface.
+   * Fill is painted on ::after (not the box background) with an opaque Canvas mix
+   * so edges never double-stack transparency (that looked like dark seam bars).
+   * ::before stays free for the has-notes left rail.
    * --sel-x is the single horizontal inset for scripture AND the passage note.
-   * Deep-links (single or multi) reuse this chrome via paintSelection.
    */
   .verse.sel {
-    --sel-fill: color-mix(in srgb, currentColor 6.5%, transparent);
-    --sel-edge: color-mix(in srgb, currentColor 11%, transparent);
+    --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
+    --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
     --sel-x: .75rem;
     --sel-y: .36rem;
     --sel-radius: .45rem;
-    background: var(--sel-fill);
+    background: transparent;
     padding: var(--sel-y) var(--sel-x);
-    margin-left: 0;
-    /* stack later verses over earlier so 1px overlaps hide hairline seams */
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
     position: relative;
+    isolation: isolate; /* keep z-index:-1 ::after inside this verse */
   }
-  .verse.sel.sel-lo { border-radius: var(--sel-radius) var(--sel-radius) 0 0; }
-  .verse.sel.sel-hi { border-radius: 0 0 var(--sel-radius) var(--sel-radius); }
-  .verse.sel.sel-lo.sel-hi { border-radius: var(--sel-radius); }
+  /* Continuous selection fill */
+  .verse.sel::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: -1;
+    background-color: var(--sel-fill);
+    pointer-events: none;
+    border-radius: 0;
+  }
+  .verse.sel.sel-lo::after {
+    border-radius: var(--sel-radius) var(--sel-radius) 0 0;
+  }
+  .verse.sel.sel-hi::after {
+    border-radius: 0 0 var(--sel-radius) var(--sel-radius);
+  }
+  .verse.sel.sel-lo.sel-hi::after {
+    border-radius: var(--sel-radius);
+  }
   /*
-   * Multi-verse stitch: pull each following .sel up by 1px and re-pad so the
-   * continuous surface has no dark/light hairline between boxes (common on
-   * retina with semi-transparent fills).
+   * Stitch: extend each following selected verse's fill up into the previous
+   * so subpixel gaps cannot show page background as a seam. Collapse doubled
+   * vertical padding between run members so the range reads as one block.
    */
-  .verse.sel + .verse.sel {
-    margin-top: -1px;
-    padding-top: calc(var(--sel-y) + 1px);
+  .verse.sel:not(.sel-lo)::after {
+    top: -4px;
   }
-  /* bleed fill 1px past the bottom of non-terminal selected verses */
+  .verse.sel:not(.sel-lo) {
+    padding-top: 0.12rem;
+  }
   .verse.sel:not(.sel-hi) {
-    box-shadow: 0 1px 0 var(--sel-fill);
+    padding-bottom: 0.12rem;
+  }
+  .verse.sel + .verse.sel {
+    margin-top: 0;
   }
   /*
    * Note open on end verse: keep the *outer* bottom curve on .sel-hi and clip
@@ -1614,11 +1642,13 @@ const CSS = `
   }
   /* full-bleed within the card: cancel --sel-x, then re-apply so note text matches verse text */
   .verse.sel .vnotes {
-    background: var(--sel-fill);
+    background-color: var(--sel-fill);
     margin: .28rem calc(-1 * var(--sel-x)) 0;
     padding: .5rem var(--sel-x) .55rem;
     border-top: 1px solid var(--sel-edge);
     border-radius: 0; /* curve lives on .sel-hi only */
+    box-shadow: none;
+    position: relative;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }
@@ -1628,7 +1658,9 @@ const CSS = `
    * single verse (or the ends of a run) get a short/rounded segment.
    * Passage/range cover = quieter rail; individual verse note = stronger color
    * (even mid-run when connected to a passage).
-   * Hidden once notes are open (the note itself is the cue).
+   * Hidden once notes are open (the note itself is the cue) — including mid
+   * verses of a multi-verse selection when the tray is open under another
+   * member of the run (range notes host on the end verse only).
    */
   .verse.has-notes:not(.notes-open):not(.editing)::before {
     content: "";
@@ -1647,6 +1679,18 @@ const CSS = `
   .verse.sel.has-notes:not(.notes-open):not(.editing)::before {
     top: var(--sel-y, .36rem);
     bottom: var(--sel-y, .36rem);
+  }
+  /*
+   * Expanded selection: drop rails on every .sel in the run once any member
+   * has its tray open (mids are not .notes-open themselves).
+   */
+  .verse.sel.has-notes:has(~ .verse.sel.notes-open)::before,
+  .verse.sel.has-notes:has(~ .verse.sel.editing)::before,
+  .verse.sel.notes-open ~ .verse.sel.has-notes::before,
+  .verse.sel.editing ~ .verse.sel.has-notes::before {
+    content: none;
+    width: 0;
+    background: transparent;
   }
   /* Join into next closed has-notes verse */
   .verse.has-notes:not(.notes-open):not(.editing):has(+ .verse.has-notes:not(.notes-open):not(.editing))::before {
@@ -1677,8 +1721,17 @@ const CSS = `
   .verse:not(.sel).editing .vnotes {
     margin-left: .35rem;
   }
-  .verse.notes-open .vnotes,
+  /* Only show trays that actually host a note (range cover mids stay closed). */
+  .verse.notes-open .vnotes:has(.note),
+  .verse.editing .vnotes:has(.note),
   .verse.editing .vnotes { display: block; }
+  /* Empty trays (range-cover mid verses) must not paint border/padding seams. */
+  .vnotes:not(:has(.note)) {
+    display: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
 
   /* plain note block in reader (no per-note collapse) */
   .note {
@@ -4956,7 +5009,8 @@ function renderEditor(scope, note, rel) {
 // ---------- reading view ----------
 // Scripture first. Click a verse → show/hide all of its notes (all or none).
 // Header "expand notes" opens every tray with content (VBV analysis).
-// Multi-verse: shift+click, mouse-drag, or long-press then tap → passage note.
+// Multi-verse: shift+click, or drag across verses (touch: long-press then drag).
+// Long-press without drag → force a single-verse note (even under a range cover).
 // Click a visible verse-note outline → edit. No per-note chevrons.
 
 async function renderRead(scope) {
@@ -5384,6 +5438,25 @@ async function renderRead(scope) {
         openNoteEditor(el);
       }
 
+      /** Long-press: always open/create this verse's own note (never a covering range). */
+      function forceSingleVerseNote(verse) {
+        if (!verse) return;
+        pickRangeEnd = false;
+        document.body.classList.remove("pick-range-end");
+        clearSelection();
+        const v = verseNum(verse);
+        if (v != null) anchorV = v;
+        armDismissSuppress(400);
+        openVerseNoteEditor(verse);
+        syncExpandNotesBtn();
+        verse.scrollIntoView({ block: "nearest" });
+        requestAnimationFrame(() => {
+          const el = verse.querySelector('.note[data-kind="verse"]');
+          const ed = el && editors.get(el.dataset.slug);
+          if (ed) ed.api.focus();
+        });
+      }
+
       function ensurePassageNoteEl(lo, hi) {
         const a = Math.min(lo, hi), b = Math.max(lo, hi);
         const slug = rangeSlug(a, b);
@@ -5622,19 +5695,17 @@ async function renderRead(scope) {
         } catch (_) {}
         if (!commit) return;
 
-        // multi-verse drag (mouse, or touch after long-press)
+        // multi-verse drag (mouse, or touch after long-press then drag)
         if (d.moved && d.curV != null && d.curV !== d.startV) {
           armDismissSuppress(500);
           openPassageNote(d.startV, d.curV);
           return;
         }
-        // long-press without drag → wait for end verse
+        // long-press without drag → force single-verse note (even under a range)
         if (d.longPressed && !d.moved) {
           swallowClick = true;
-          pickRangeEnd = true;
-          document.body.classList.add("pick-range-end");
-          anchorV = d.startV;
-          paintSelection(d.startV, d.startV);
+          const verse = verseEl(d.startV);
+          if (verse) forceSingleVerseNote(verse);
           return;
         }
         // Plain tap/click: activate here. Do not rely on the synthetic click —
@@ -5678,18 +5749,18 @@ async function renderRead(scope) {
           shiftKey: e.shiftKey,
           longTimer: null,
         };
-        // mouse: drag-select across verses; touch: long-press then pick end
+        // mouse: capture for drag-select; both: long-press forces single-verse note
         if ((e.pointerType || "mouse") === "mouse") {
           try { verse.setPointerCapture(e.pointerId); } catch (_) {}
-        } else {
-          drag.longTimer = setTimeout(() => {
-            if (!drag || drag.moved) return;
-            drag.longPressed = true;
-            anchorV = drag.startV;
-            paintSelection(drag.startV, drag.startV);
-            if (navigator.vibrate) try { navigator.vibrate(12); } catch (_) {}
-          }, LONG_MS);
         }
+        drag.longTimer = setTimeout(() => {
+          if (!drag || drag.moved) return;
+          drag.longPressed = true;
+          anchorV = drag.startV;
+          // Quiet hold feedback (do not enter multi-verse pick mode)
+          paintSelection(drag.startV, drag.startV);
+          if (navigator.vibrate) try { navigator.vibrate(12); } catch (_) {}
+        }, LONG_MS);
       });
 
       document.addEventListener("pointermove", (e) => {
@@ -5854,13 +5925,17 @@ async function renderRead(scope) {
         else expandAllNotes();
       });
 
-      // deep-link: same selection chrome for single- and multi-verse; open notes on target
+      // deep-link: same selection chrome for single- and multi-verse; open notes
+      // only on verses that actually host note nodes (not empty range-cover mids —
+      // those empty trays painted border/padding seams between stitched verses).
       const hlVerses = [...document.querySelectorAll(".verse.hl")];
       if (hlVerses.length) {
         const nums = hlVerses.map(verseNum).filter((n) => n != null);
         if (nums.length) paintSelection(Math.min(...nums), Math.max(...nums));
       }
-      document.querySelectorAll(".verse.hl.has-notes").forEach((v) => v.classList.add("notes-open"));
+      document.querySelectorAll(".verse.hl").forEach((v) => {
+        if (v.querySelector(".vnotes .note")) v.classList.add("notes-open");
+      });
       syncExpandNotesBtn();
     </script>`,
   );
