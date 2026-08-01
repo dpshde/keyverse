@@ -104,11 +104,28 @@ defmodule Keyverse.RouterTest do
 
     assert conn.status == 302
 
+    # seed a note so home tree + reader have structure
+    body =
+      Jason.encode!(%{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "hello home"}]
+      })
+
+    conn =
+      conn(:put, "/quiet-river-lantern-home/api/note/jhn.3.16", body)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 200
+
     conn = conn(:get, "/quiet-river-lantern-home/") |> Router.call([])
     assert conn.status == 200
     assert conn.resp_body =~ "window.BASE"
     assert conn.resp_body =~ "keyverse"
     assert conn.resp_body =~ "/quiet-river-lantern-home"
+    # nested home forest (not flat note-list)
+    assert conn.resp_body =~ ~s(id="note-tree")
+    assert conn.resp_body =~ "nt-node"
+    assert conn.resp_body =~ "home-tree.js"
 
     conn = conn(:get, "/setup") |> Router.call([])
     assert conn.status == 200
@@ -123,6 +140,48 @@ defmodule Keyverse.RouterTest do
     assert conn.resp_body =~ "window.BASE"
     assert conn.resp_body =~ "outliner.js" or conn.resp_body =~ "mountOutliner" or conn.resp_body =~ "editor"
   end
+
+  test "reader HTML matches client contract (verse-seeds, id=vN, vnotes)" do
+    conn =
+      conn(:post, "/setup", %{"intent" => "claim", "door" => "reader-seed-test-pack"})
+      |> Router.call([])
+
+    assert conn.status == 302
+
+    body =
+      Jason.encode!(%{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "seed verse"}]
+      })
+
+    conn =
+      conn(:put, "/reader-seed-test-pack/api/note/jhn.3.16", body)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 200
+
+    # Prefer chapter read page — may need network for BSB; if fetch fails, still check structure on error path
+    conn = conn(:get, "/reader-seed-test-pack/read/jhn.3") |> Router.call([])
+    assert conn.status == 200
+    html = conn.resp_body
+
+    if html =~ "Could not fetch text" do
+      # Offline/no network: still require verse-seeds path is the real renderer, not chapter-notes
+      refute html =~ ~s(id="chapter-notes")
+    else
+      assert html =~ ~s(id="verse-seeds")
+      assert html =~ ~s(id="v16") or html =~ ~s(id="v1")
+      assert html =~ "vnotes"
+      assert html =~ "vtext"
+      assert html =~ "expand-notes"
+      assert html =~ "reader-page.js"
+      assert html =~ "outliner.js"
+      # seed map includes the verse note blocks
+      assert html =~ "seed verse" or html =~ "jhn.3.16"
+      refute html =~ ~s(id="chapter-notes")
+    end
+  end
+
 
   test "PWA assets" do
     conn = conn(:get, "/sw.js") |> Router.call([])

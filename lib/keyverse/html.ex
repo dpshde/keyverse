@@ -1,7 +1,7 @@
 defmodule Keyverse.Html do
   @moduledoc "Server-rendered HTML shells; client JS/CSS from priv/static."
 
-  alias Keyverse.{Config, Note, Scope}
+  alias Keyverse.{Config, Note, Scope, Tree}
 
   def esc(nil), do: ""
   def esc(s), do: Plug.HTML.html_escape(to_string(s))
@@ -314,57 +314,115 @@ defmodule Keyverse.Html do
     page("keyverse", body, base: base)
   end
 
-  defp home_tree_html([], _base) do
-    ~s(<p class="muted">No notes yet. Search a passage above to start.</p>)
-  end
-
   defp home_tree_html(notes, base) do
-    items =
-      Enum.map(notes, fn n ->
-        scope = n["scope"] || %{}
-        slug = scope["slug"] || ""
-        osis = scope["osis"] || slug
-        kind = scope["kind"] || "verse"
+    tree = Tree.build_home_note_tree(notes)
 
-        label =
-          case Scope.parse(slug) do
-            nil -> osis
-            s -> Scope.display(s)
-          end
-
-        href =
-          if kind == "chapter",
-            do: "#{base}/read/#{slug}",
-            else: "#{base}/note/#{slug}"
-
-        excerpt = excerpt_note(n)
-
-        """
-        <li class="note-row">
-          <a href="#{esc(href)}">
-            <span class="note-ref">#{esc(label)}</span>
-            <span class="note-ex">#{esc(excerpt)}</span>
-          </a>
-        </li>
-        """
-      end)
-
-    ~s(<ul class="note-list">#{Enum.join(items, "\n")}</ul>)
-  end
-
-  defp excerpt_note(note) do
-    cond do
-      Note.encrypted?(note) ->
-        "Encrypted"
-
-      true ->
-        (note["blocks"] || [])
-        |> Enum.map(& &1["text"])
-        |> Enum.join(" ")
-        |> String.trim()
-        |> String.slice(0, 120)
+    if tree == [] do
+      ~s(<p class="muted">No notes yet. Search a passage above to start.</p>)
+    else
+      body = Enum.map_join(tree, "\n", &render_home_tree_node(&1, 0, base))
+      ~s(<div class="note-tree" id="note-tree">#{body}</div>)
     end
   end
+
+  @nt_icon_edit ~s(<svg width="14" height="14" viewBox="0 0 256 256" fill="none" aria-hidden="true"><polygon points="128 160 96 160 96 128 192 32 224 64 128 160" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="168" y1="56" x2="200" y2="88" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M216,128v80a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V48a8,8,0,0,1,8-8h80" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>)
+  @nt_icon_read ~s(<svg width="14" height="14" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,88a32,32,0,0,1,32-32h72V200H160a32,32,0,0,0-32,32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M24,200H96a32,32,0,0,1,32,32V88A32,32,0,0,0,96,56H24Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>)
+
+  defp render_home_tree_node(node, depth, base) do
+    kids = Map.get(node, :children) || []
+    has_kids = kids != []
+
+    {id, note_href, read_href, ref, time_iso, sub, is_chapter} =
+      case node do
+        %{kind: :folder} = n ->
+          c = n[:count] || Tree.count_tree_notes(n)
+          sub = "#{c} note" <> if(c == 1, do: "", else: "s")
+
+          {
+            "folder:#{n.slug}",
+            "#{base}/note/#{n.slug}",
+            "#{base}/read/#{n.slug}",
+            n.label,
+            n.updated_at,
+            sub,
+            true
+          }
+
+        %{kind: :note, entry: entry} ->
+          scope = entry.scope
+          note = entry.note
+
+          {
+            "note:#{scope.slug}",
+            "#{base}/note/#{scope.slug}",
+            "#{base}/read/#{scope.slug}",
+            Scope.display(scope),
+            note["updated_at"],
+            Tree.excerpt(note),
+            scope.kind == "chapter"
+          }
+      end
+
+    chev =
+      if has_kids do
+        ~s(<button type="button" class="nt-chev" aria-label="Collapse" aria-expanded="true"></button>)
+      else
+        ~s(<span class="nt-chev is-leaf" aria-hidden="true"></span>)
+      end
+
+    row_cls =
+      [
+        "note-row",
+        if(match?(%{kind: :folder}, node), do: "is-folder", else: nil),
+        if(is_chapter, do: "is-chapter", else: nil),
+        if(has_kids, do: "has-kids", else: nil)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" ")
+
+    meta = """
+    <span class="nt-meta">
+      <a class="nt-act nt-open" href="#{esc(note_href)}" title="Open note" aria-label="Open note">#{@nt_icon_edit}</a>
+      <a class="nt-act nt-read" href="#{esc(read_href)}" title="Read" aria-label="Read">#{@nt_icon_read}</a>
+      #{if time_iso && time_iso != "", do: ~s(<span class="muted nt-time">#{esc(Tree.rel_time(time_iso))}</span>), else: ""}
+    </span>
+    """
+
+    main_inner = """
+      <span class="nt-top">
+        <span class="ref">#{esc(ref)}</span>
+        #{meta}
+      </span>
+      <div class="muted nt-ex">#{esc(sub)}</div>
+    """
+
+    main =
+      if has_kids do
+        ~s(<div class="nt-main nt-fold" role="button" tabindex="0" aria-expanded="true">#{main_inner}</div>)
+      else
+        ~s(<div class="nt-main nt-open-read" role="link" tabindex="0" data-href="#{esc(read_href)}">#{main_inner}</div>)
+      end
+
+    kids_html =
+      if has_kids do
+        inner = Enum.map_join(kids, "", &render_home_tree_node(&1, depth + 1, base))
+        ~s(<div class="nt-kids">#{inner}</div>)
+      else
+        ""
+      end
+
+    """
+    <div class="nt-node" data-id="#{esc(id)}" data-depth="#{depth}">
+      <div class="#{row_cls}" style="--depth:#{depth}">
+        #{chev}
+        #{main}
+      </div>
+      #{kids_html}
+    </div>
+    """
+  end
+
+  defp excerpt_note(note), do: Tree.excerpt(note)
 
   def render_editor(pack_dir, scope, base) do
     note = Note.read(pack_dir, scope.slug)
@@ -417,19 +475,21 @@ defmodule Keyverse.Html do
 
   defp related_html(pack_dir, scope, base) do
     notes = Note.list(pack_dir)
+    a_int = Tree.scope_interval(scope)
 
     buckets =
       Enum.reduce(notes, %{contains: [], within: [], overlaps: []}, fn n, acc ->
         slug = get_in(n, ["scope", "slug"])
+
         if slug == scope.slug do
           acc
         else
-          case Scope.parse(slug) do
+          case Scope.parse(get_in(n, ["scope", "osis"]) || slug) do
             nil ->
               acc
 
             other ->
-              case Scope.relate(scope, other) do
+              case Tree.relate_intervals(a_int, Tree.scope_interval(other)) do
                 :contains -> update_in(acc.contains, &[{other, n} | &1])
                 :within -> update_in(acc.within, &[{other, n} | &1])
                 :overlaps -> update_in(acc.overlaps, &[{other, n} | &1])
@@ -440,9 +500,9 @@ defmodule Keyverse.Html do
       end)
 
     [
-      related_section("contains", "Within", "Notes on passages inside #{Scope.display(scope)}", buckets.contains, base),
-      related_section("within", "Part of", "Broader passages this note sits in", buckets.within, base),
-      related_section("overlaps", "Overlaps", "Ranges that partially overlap this note", buckets.overlaps, base)
+      related_section("contains", "Within", "Notes on passages inside #{Scope.display(scope)}", Enum.reverse(buckets.contains), base),
+      related_section("within", "Part of", "Broader passages this note sits in", Enum.reverse(buckets.within), base),
+      related_section("overlaps", "Overlaps", "Ranges that partially overlap this note", Enum.reverse(buckets.overlaps), base)
     ]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n")
@@ -474,71 +534,292 @@ defmodule Keyverse.Html do
   end
 
   def render_read(pack_dir, scope, base) do
-    display = Scope.display(scope)
     book = scope.parsed.book
     chapter = scope.parsed.chapter
+    chapter_scope = Scope.parse("#{book}.#{chapter}")
+    display = if chapter_scope, do: Scope.display(chapter_scope), else: Scope.display(scope)
 
-    {text_block, err} =
-      case Keyverse.TextCache.get_chapter(book, chapter) do
-        {:ok, doc} ->
-          verses =
-            Enum.map(doc["verses"] || [], fn v ->
-              vn = v["v"]
-              vt = v["text"] || ""
-              ~s(<p class="verse" data-v="#{esc(to_string(vn))}"><sup>#{esc(to_string(vn))}</sup> #{esc(vt)}</p>)
-            end)
+    case Keyverse.TextCache.get_chapter(book, chapter) do
+      {:error, reason} ->
+        body = """
+        <p>Could not fetch text (#{esc(to_string(reason))}).
+          <a href="#{esc(base)}/note/#{esc(scope.slug)}">Open note editor</a>.</p>
+        """
 
-          {Enum.join(verses, "\n"), nil}
+        page("keyverse", body, base: base)
 
-        {:error, reason} ->
-          {nil, to_string(reason)}
+      {:ok, text} ->
+        hl =
+          if scope.kind == "chapter" do
+            nil
+          else
+            Tree.scope_interval(scope)
+          end
+
+        notes = Note.list(pack_dir)
+        verse_notes = %{}
+        range_notes = %{}
+        range_cover = MapSet.new()
+        chapter_note = nil
+
+        {verse_notes, range_notes, range_cover, chapter_note} =
+          Enum.reduce(notes, {verse_notes, range_notes, range_cover, chapter_note}, fn note, acc ->
+            {vn, rn, rc, cn} = acc
+            other = Scope.parse(get_in(note, ["scope", "osis"]) || get_in(note, ["scope", "slug"]))
+
+            cond do
+              is_nil(other) ->
+                acc
+
+              other.parsed.book != book ->
+                acc
+
+              other.parsed.chapter != chapter ->
+                acc
+
+              other.kind == "chapter" ->
+                {vn, rn, rc, note}
+
+              other.kind == "verse" ->
+                {Map.put(vn, other.parsed.verse, note), rn, rc, cn}
+
+              true ->
+                start_v = other.parsed.verse
+                end_v = other.parsed.verse_end || start_v
+                list = Map.get(rn, end_v, []) ++ [%{note: note, scope: other}]
+                rn = Map.put(rn, end_v, list)
+                rc = Enum.reduce(start_v..end_v, rc, &MapSet.put(&2, &1))
+                {vn, rn, rc, cn}
+            end
+          end)
+
+        seed = %{}
+
+        seed =
+          if chapter_note && not Note.encrypted?(chapter_note) && chapter_note["blocks"] do
+            Map.put(seed, chapter_scope.slug, chapter_note["blocks"])
+          else
+            seed
+          end
+
+        {rows, seed} =
+          Enum.reduce(text["verses"] || [], {"", seed}, fn vrow, {html, seed} ->
+            v = vrow["v"]
+            t = vrow["text"] || ""
+            note = Map.get(verse_notes, v)
+            ranges = Map.get(range_notes, v, [])
+            in_hl = hl && Tree.pos(chapter, v) >= hl.s && Tree.pos(chapter, v) <= hl.e
+            slug = "#{String.downcase(to_string(book))}.#{chapter}.#{v}"
+
+            seed =
+              if note && not Note.encrypted?(note) && note["blocks"] do
+                Map.put(seed, slug, note["blocks"])
+              else
+                seed
+              end
+
+            seed =
+              Enum.reduce(ranges, seed, fn e, s ->
+                if not Note.encrypted?(e.note),
+                  do: Map.put(s, e.scope.slug, e.note["blocks"] || []),
+                  else: s
+              end)
+
+            v_scope = Scope.parse(slug)
+
+            has_verse =
+              note &&
+                (Note.encrypted?(note) ||
+                   Enum.any?(note["blocks"] || [], fn b -> String.trim(to_string(b["text"] || "")) != "" end))
+
+            has_notes = has_verse || ranges != [] || MapSet.member?(range_cover, v)
+
+            range_html =
+              Enum.map_join(ranges, "\n", fn e ->
+                reader_note_html(e.scope, e.note, base, true)
+              end)
+
+            verse_html =
+              if has_verse, do: reader_note_html(v_scope, note, base, true), else: ""
+
+            notes_inner = ""
+
+            notes_inner =
+              if range_html != "" do
+                notes_inner <>
+                  ~s(<div class="note-group passage">) <>
+                  if(verse_html == "", do: "", else: ~s(<div class="note-group-title">Passage</div>)) <>
+                  range_html <> ~s(</div>)
+              else
+                notes_inner
+              end
+
+            notes_inner =
+              if verse_html != "" do
+                notes_inner <>
+                  ~s(<div class="note-group verse-local">) <>
+                  if(ranges != [], do: ~s(<div class="note-group-title">This verse</div>), else: "") <>
+                  verse_html <> ~s(</div>)
+              else
+                notes_inner
+              end
+
+            v_cls =
+              ["verse", if(in_hl, do: "hl", else: nil), if(has_notes, do: "has-notes", else: nil), if(has_verse, do: "has-verse-note", else: nil)]
+              |> Enum.reject(&is_nil/1)
+              |> Enum.join(" ")
+
+            row = """
+            <div class="#{v_cls}" data-slug="#{esc(slug)}" data-v="#{v}" id="v#{v}">
+              <p class="vtext"><sup>#{v}</sup>#{esc(t)}<span class="vstatus"></span></p>
+              <div class="vnotes">#{notes_inner}</div>
+            </div>
+            """
+
+            {html <> row, seed}
+          end)
+
+        chapter_note_html =
+          if chapter_note do
+            ~s(<div class="chapter-note">#{reader_note_html(chapter_scope, chapter_note, base, false)}</div>)
+          else
+            ""
+          end
+
+        meta = %{
+          slug: scope.slug,
+          display: display,
+          book: book,
+          chapter: chapter,
+          kind: scope.kind
+        }
+
+        body = """
+        <header class="ui">
+          <a href="#{esc(base)}/" class="muted">&larr;</a>
+          <h1>#{esc(display)}</h1>
+          <button type="button" class="muted text-btn" id="expand-notes"
+            aria-pressed="false" aria-label="Expand all verse notes">expand notes</button>
+          <a class="muted" href="#{esc(base)}/note/#{esc(chapter_scope.slug)}">chapter note</a>
+        </header>
+        #{chapter_note_html}
+        #{rows}
+        <script type="application/json" id="page-meta">#{Jason.encode!(meta)}</script>
+        <script type="application/json" id="verse-seeds">#{Jason.encode!(seed)}</script>
+        <script src="/outliner.js"></script>
+        <script src="/reader-page.js"></script>
+        """
+
+        page(display, body, base: base)
+    end
+  end
+
+  defp reader_note_html(nil, _note, _base, _label), do: ""
+
+  defp reader_note_html(scope, note, base, label) do
+    display = Scope.display(scope)
+    lo = scope.parsed.verse || ""
+    hi = scope.parsed.verse_end || lo
+
+    range_attrs =
+      if scope.kind == "range" do
+        ~s( data-lo="#{esc(to_string(lo))}" data-hi="#{esc(to_string(hi))}")
+      else
+        ""
       end
 
-    if err do
-      body = """
-      <p>Could not fetch text (#{esc(err)}). <a href="#{esc(base)}/">Back</a></p>
-      """
+    if Note.encrypted?(note) do
+      show_label = label && scope.kind != "verse"
 
-      page("keyverse", body, base: base)
+      """
+      <div class="note encrypted" data-kind="#{esc(scope.kind)}" data-slug="#{esc(scope.slug)}"#{range_attrs} data-encrypted="1">
+        #{if show_label, do: ~s(<div class="note-label">#{esc(display)}</div>), else: ""}
+        <div class="note-body"><p class="muted ui" style="margin:.35rem 0">Encrypted — <a href="#{esc(base)}/note/#{esc(scope.slug)}">open to unlock</a></p></div>
+        <div class="note-edit" hidden></div>
+      </div>
+      """
     else
-      # notes for this chapter
-      notes = Note.list(pack_dir)
+      blocks = note["blocks"] || []
+      has = Enum.any?(blocks, fn b -> String.trim(to_string(b["text"] || "")) != "" end) or blocks != []
+      if not has and scope.kind != "verse" do
+        ""
+      else
+        show_label = label && scope.kind != "verse"
+        body = if blocks == [], do: "", else: render_outline(blocks)
 
-      note_map =
-        notes
-        |> Enum.filter(fn n ->
-          slug = get_in(n, ["scope", "slug"]) || ""
-          String.starts_with?(slug, String.downcase("#{book}."))
-        end)
-        |> Enum.map(fn n -> {get_in(n, ["scope", "slug"]), n} end)
-        |> Map.new()
-
-      meta = %{
-        slug: scope.slug,
-        display: display,
-        book: book,
-        chapter: chapter,
-        kind: scope.kind
-      }
-
-      body = """
-      <header class="ui">
-        <a href="#{esc(base)}/" class="muted">&larr;</a>
-        <h1>#{esc(display)}</h1>
-        <a class="muted" href="#{esc(base)}/note/#{esc(scope.slug)}">note</a>
-      </header>
-      #{crypto_bar(false)}
-      <article class="reader" id="reader">
-        #{text_block}
-      </article>
-      <script type="application/json" id="page-meta">#{Jason.encode!(meta)}</script>
-      <script type="application/json" id="chapter-notes">#{Jason.encode!(note_map)}</script>
-      <script src="/outliner.js"></script>
-      <script src="/reader-page.js"></script>
-      """
-
-      page(display, body, base: base)
+        """
+        <div class="note" data-kind="#{esc(scope.kind)}" data-slug="#{esc(scope.slug)}"#{range_attrs}>
+          #{if show_label, do: ~s(<div class="note-label">#{esc(display)}</div>), else: ""}
+          <div class="note-body">#{body}</div>
+          <div class="note-edit" hidden></div>
+        </div>
+        """
+      end
     end
+  end
+
+  defp render_outline(blocks) do
+    items = List.wrap(blocks)
+    if items == [], do: "", else: do_render_outline(items)
+  end
+
+  defp do_render_outline(items) do
+    hidden = collapse_hidden(items)
+
+    inner =
+      items
+      |> Enum.with_index()
+      |> Enum.map(fn {b, i} ->
+        if MapSet.member?(hidden, i) do
+          ""
+        else
+          depth = max(0, trunc(b["indent"] || 0))
+          empty = String.trim(to_string(b["text"] || "")) == ""
+          has_kids = i + 1 < length(items) and max(0, trunc(Enum.at(items, i + 1)["indent"] || 0)) > depth
+          collapsed = b["collapsed"] && has_kids
+
+          cls =
+            ["oline", if(empty, do: "blank"), if(has_kids, do: "has-kids"), if(collapsed, do: "collapsed")]
+            |> Enum.reject(&is_nil/1)
+            |> Enum.join(" ")
+
+          id = esc(to_string(b["id"] || ""))
+          aria = if collapsed, do: "Expand", else: "Collapse"
+          text = if empty, do: "", else: esc(to_string(b["text"] || ""))
+
+          """
+          <div class="#{cls}" style="--depth:#{depth}" data-id="#{id}" title="#{id}">
+            <span class="ochev" role="button" tabindex="-1" aria-label="#{aria}"></span>
+            <span class="odot" aria-hidden="true"></span>
+            <span class="otxt">#{text}</span>
+          </div>
+          """
+        end
+      end)
+      |> Enum.join("")
+
+    ~s(<div class="outline">#{inner}</div>)
+  end
+
+  defp collapse_hidden(items) do
+    items
+    |> Enum.with_index()
+    |> Enum.reduce(MapSet.new(), fn {b, i}, hid ->
+      if b["collapsed"] do
+        base = max(0, trunc(b["indent"] || 0))
+
+        Enum.reduce_while((i + 1)..max(i, length(items) - 1)//1, hid, fn j, h ->
+          if j >= length(items) do
+            {:halt, h}
+          else
+            d = max(0, trunc(Enum.at(items, j)["indent"] || 0))
+            if d <= base, do: {:halt, h}, else: {:cont, MapSet.put(h, j)}
+          end
+        end)
+      else
+        hid
+      end
+    end)
   end
 
   def web_manifest(start_url) do
