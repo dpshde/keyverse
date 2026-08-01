@@ -21,7 +21,7 @@ defmodule Keyverse.Metrics do
     :http_other,
     :pack_write,
     :bsb_get,
-    :bsb_fetch,
+    :bsb_pack_load,
     :bsb_ets_hit,
     :bsb_disk_hit
   ]
@@ -139,7 +139,8 @@ defmodule Keyverse.Metrics do
       get_count: get[:count] || 0,
       bsb_get_p95_ms: get_in(bsb, [:latency_ms, :p95]),
       bsb_get_count: bsb[:count] || 0,
-      bsb_ets: bsb_stats.ets_entries
+      bsb_ets: bsb_stats.ets_entries,
+      bsb_pack: bsb_stats.pack_loaded
     }
   end
 

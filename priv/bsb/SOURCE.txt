@@ -1,0 +1,7 @@
+url=https://bereanbible.com/bsb.txt
+source_bytes=4331393
+source_sha256=2ac3af1de52d4e68261cba91d85c320b7eadc6560e830d99e591767b8ff5ca96
+verses=31102
+chapters=1189
+pack_sha256=66783d67445f600676ed764e3a18590750a0e7f323e09fc0db0a78b4d897e650
+pack_gz=chapters.json.gz

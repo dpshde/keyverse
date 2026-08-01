@@ -1,22 +1,24 @@
 defmodule Keyverse.TextCache do
   @moduledoc """
-  Disposable BSB chapter cache.
+  BSB chapter text served **entirely from the app pack** (no upstream).
 
-  Layers (fast → slow):
-  1. ETS decoded docs (process memory)
-  2. Disk under `packs/_cache/text/bsb/<book>.<chapter>.json`
-  3. Upstream bolls.life (single-flight per chapter; concurrent waiters share one fetch)
+  Source: public-domain Berean Standard Bible (`priv/bsb/chapters.json.gz`),
+  built from https://bereanbible.com/bsb.txt (see `priv/bsb/NOTICE`).
 
-  Prefetch of adjacent chapters is fire-and-forget after a successful get.
+  Layers:
+  1. ETS decoded chapter docs (loaded at boot from the pack)
+  2. Optional legacy disk files under `packs/_cache/text/bsb/` (read-only fallback
+     for older deploys; never required when the pack is present)
+
+  There is **no** network fetch (bolls.life and friends are not used).
   """
 
   use GenServer
 
-  alias Keyverse.{Metrics, Note, Pack, Scope}
+  alias Keyverse.{Metrics, Pack}
 
   @ets :keyverse_bsb_text
-  @http_profile :keyverse_bsb
-  @call_timeout 45_000
+  @call_timeout 15_000
 
   # --- public API ----------------------------------------------------------
 
@@ -27,7 +29,7 @@ defmodule Keyverse.TextCache do
   @doc """
   Return `{:ok, doc}` or `{:error, reason}` for a chapter.
 
-  `doc` shape: `%{\"translation\", \"book\", \"chapter\", \"verses\" => [%{\"v\", \"text\"}], \"fetched_at\"}`
+  `doc` shape: `%{"translation", "book", "chapter", "verses" => [%{"v", "text"}], ...}`
   """
   def get_chapter(book_osis, chapter) when is_binary(book_osis) and is_integer(chapter) do
     key = normalize_key(book_osis, chapter)
@@ -39,6 +41,7 @@ defmodule Keyverse.TextCache do
         {:ok, doc}
 
       :miss ->
+        # Pack should already be loaded; rare miss → try disk fallback / ensure boot.
         Metrics.time(:bsb_get, fn ->
           GenServer.call(__MODULE__, {:get, key}, @call_timeout)
         end)
@@ -49,33 +52,31 @@ defmodule Keyverse.TextCache do
     end
   end
 
-  def get_chapter(book_osis, chapter) when is_binary(chapter) do
+  def get_chapter(book_osis, chapter) when is_binary(chapter) or is_integer(chapter) do
     case Integer.parse(to_string(chapter)) do
-      {n, _} -> get_chapter(book_osis, n)
+      {n, _} -> get_chapter(to_string(book_osis), n)
       :error -> {:error, "invalid chapter"}
     end
   end
 
-  @doc "Warm a chapter into ETS/disk without blocking the caller."
+  @doc "No-op warm kept for API compatibility (neighbors already in pack/ETS)."
   def warm(book_osis, chapter) do
-    key = normalize_key(book_osis, chapter)
-
-    case ets_get(key) do
-      {:ok, _} -> :ok
-      :miss -> GenServer.cast(__MODULE__, {:warm, key})
-    end
+    _ = {book_osis, chapter}
+    :ok
   end
 
-  @doc "ETS + pending stats for metrics/health."
+  @doc "ETS + pack stats for metrics/health."
   def stats do
     ensure_ets()
 
     %{
       ets_entries: safe_ets_info(@ets, :size) || 0,
-      pending: GenServer.call(__MODULE__, :pending_count, 5_000)
+      pack_loaded: pack_loaded?(),
+      pack_path: pack_path() && to_string(pack_path()),
+      pending: 0
     }
   catch
-    _, _ -> %{ets_entries: 0, pending: 0}
+    _, _ -> %{ets_entries: 0, pack_loaded: false, pack_path: nil, pending: 0}
   end
 
   # --- GenServer -----------------------------------------------------------
@@ -83,91 +84,136 @@ defmodule Keyverse.TextCache do
   @impl true
   def init(_opts) do
     ensure_ets()
-    ensure_http_profile()
-    {:ok, %{pending: %{}}}
+    case load_pack_into_ets() do
+      {:ok, n} ->
+        IO.puts("keyverse BSB pack: loaded #{n} chapters from #{pack_path()}")
+        {:ok, %{loaded: true, chapters: n}}
+
+      {:error, reason} ->
+        IO.puts("keyverse BSB pack: FAILED to load (#{inspect(reason)}) — reader text unavailable")
+        {:ok, %{loaded: false, chapters: 0, error: reason}}
+    end
   end
 
   @impl true
-  def handle_call({:get, key}, from, state) do
-    case ets_get(key) do
-      {:ok, doc} ->
-        {:reply, {:ok, doc}, state}
+  def handle_call({:get, key}, _from, state) do
+    reply =
+      case ets_get(key) do
+        {:ok, doc} ->
+          {:ok, doc}
 
-      :miss ->
-        case disk_get(key) do
-          {:ok, doc} ->
-            ets_put(key, doc)
-            Metrics.record(:bsb_disk_hit, 0)
-            {:reply, {:ok, doc}, state}
+        :miss ->
+          case disk_get(key) do
+            {:ok, doc} ->
+              ets_put(key, doc)
+              Metrics.record(:bsb_disk_hit, 0)
+              {:ok, doc}
 
-          :miss ->
-            case Map.get(state.pending, key) do
-              nil ->
-                me = self()
+            :miss ->
+              {:error, "chapter not in BSB pack"}
+          end
+      end
 
-                Task.start(fn ->
-                  result = fetch_upstream(key)
-                  GenServer.cast(me, {:fetch_done, key, result})
-                end)
-
-                {:noreply, %{state | pending: Map.put(state.pending, key, [from])}}
-
-              waiters ->
-                {:noreply, %{state | pending: Map.put(state.pending, key, [from | waiters])}}
-            end
-        end
-    end
+    {:reply, reply, state}
   end
 
-  def handle_call(:pending_count, _from, state) do
-    {:reply, map_size(state.pending), state}
-  end
+  def handle_call(:pending_count, _from, state), do: {:reply, 0, state}
 
   @impl true
-  def handle_cast({:warm, key}, state) do
-    case ets_get(key) do
-      {:ok, _} ->
-        {:noreply, state}
+  def handle_cast({:warm, _key}, state), do: {:noreply, state}
 
-      :miss ->
-        case disk_get(key) do
-          {:ok, doc} ->
-            ets_put(key, doc)
-            {:noreply, state}
+  # --- pack load -----------------------------------------------------------
 
-          :miss ->
-            if Map.has_key?(state.pending, key) do
-              {:noreply, state}
-            else
-              me = self()
+  defp pack_path do
+    candidates = [
+      Path.join([File.cwd!(), "priv", "bsb", "chapters.json.gz"]),
+      Application.app_dir(:keyverse, "priv/bsb/chapters.json.gz")
+    ]
 
-              Task.start(fn ->
-                result = fetch_upstream(key)
-                GenServer.cast(me, {:fetch_done, key, result})
-              end)
+    Enum.find(candidates, &File.regular?/1)
+  end
 
-              # no waiters — warm only
-              {:noreply, %{state | pending: Map.put(state.pending, key, [])}}
+  defp pack_loaded? do
+    ensure_ets()
+    (safe_ets_info(@ets, :size) || 0) > 0
+  end
+
+  defp load_pack_into_ets do
+    path = pack_path()
+
+    if is_nil(path) do
+      {:error, :pack_missing}
+    else
+      t0 = System.monotonic_time(:millisecond)
+
+      with {:ok, gz} <- File.read(path),
+           {:ok, json} <- gunzip(gz),
+           {:ok, map} when is_map(map) <- Jason.decode(json) do
+        count =
+          Enum.reduce(map, 0, fn {slug, doc}, acc ->
+            case parse_slug(slug) do
+              {book, ch} when is_map(doc) ->
+                ets_put({book, ch}, normalize_doc(doc, book, ch))
+                acc + 1
+
+              _ ->
+                acc
             end
-        end
+          end)
+
+        dt = System.monotonic_time(:millisecond) - t0
+        Metrics.record(:bsb_pack_load, dt, %{error: count == 0})
+        if count == 0, do: {:error, :empty_pack}, else: {:ok, count}
+      else
+        {:error, _} = err -> err
+        other -> {:error, {:bad_pack, other}}
+      end
     end
   end
 
-  def handle_cast({:fetch_done, key, result}, state) do
-    waiters = Map.get(state.pending, key, [])
-
-    case result do
-      {:ok, doc} ->
-        ets_put(key, doc)
-        path = disk_path(key)
-        write_disk(path, doc)
-        Enum.each(waiters, &GenServer.reply(&1, {:ok, doc}))
-
-      {:error, _} = err ->
-        Enum.each(waiters, &GenServer.reply(&1, err))
+  defp gunzip(bin) when is_binary(bin) do
+    try do
+      # :zlib.gunzip handles gzip wrapper
+      {:ok, :zlib.gunzip(bin)}
+    rescue
+      e -> {:error, {:gunzip, Exception.message(e)}}
     end
+  end
 
-    {:noreply, %{state | pending: Map.delete(state.pending, key)}}
+  defp parse_slug(slug) when is_binary(slug) do
+    case String.split(slug, ".", parts: 2) do
+      [book, ch_s] ->
+        case Integer.parse(ch_s) do
+          {ch, ""} -> {String.upcase(book), ch}
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_slug(_), do: nil
+
+  defp normalize_doc(doc, book, ch) do
+    verses =
+      doc
+      |> Map.get("verses", [])
+      |> Enum.map(fn
+        %{"v" => v, "text" => t} -> %{"v" => v, "text" => to_string(t)}
+        %{v: v, text: t} -> %{"v" => v, "text" => to_string(t)}
+        other when is_map(other) ->
+          %{"v" => other["v"] || other[:v], "text" => to_string(other["text"] || other[:text] || "")}
+      end)
+
+    %{
+      "translation" => doc["translation"] || "BSB",
+      "book" => doc["book"] || book,
+      "chapter" => doc["chapter"] || ch,
+      "verses" => verses,
+      "source" => doc["source"] || "priv/bsb",
+      "license" => doc["license"] || "public-domain"
+    }
   end
 
   # --- internals -----------------------------------------------------------
@@ -231,139 +277,11 @@ defmodule Keyverse.TextCache do
     end
   end
 
-  defp write_disk(path, doc) do
-    File.mkdir_p!(Path.dirname(path))
-    # compact JSON — smaller + faster decode than pretty
-    File.write!(path, Jason.encode!(doc) <> "\n")
-  rescue
-    _ -> :ok
-  end
-
-  defp fetch_upstream({book, chapter} = key) do
-    t0 = System.monotonic_time(:microsecond)
-    order = Scope.book_order(book)
-
-    result =
-      if is_nil(order) do
-        {:error, "unknown book"}
-      else
-        url = "https://bolls.life/get-text/BSB/#{order}/#{chapter}/"
-
-        case http_get(url) do
-          {:ok, raw} when is_list(raw) ->
-            doc = %{
-              "translation" => "BSB",
-              "book" => book,
-              "chapter" => chapter,
-              "verses" =>
-                Enum.map(raw, fn v ->
-                  text =
-                    v
-                    |> Map.get("text", "")
-                    |> to_string()
-                    |> String.replace(~r/<[^>]+>/, "")
-                    |> String.trim()
-
-                  %{"v" => v["verse"], "text" => text}
-                end),
-              "fetched_at" => Note.iso_now()
-            }
-
-            {:ok, doc}
-
-          {:ok, _} ->
-            {:error, "unexpected BSB payload"}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-      end
-
-    dt = (System.monotonic_time(:microsecond) - t0) / 1000
-    err? = match?({:error, _}, result)
-    Metrics.record(:bsb_fetch, dt, %{error: err?, key: inspect(key)})
-    result
-  end
-
-  defp ensure_http_profile do
-    :inets.start()
-    :ssl.start()
-
-    case :inets.start(:httpc, profile: @http_profile) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-      {:error, :already_started} -> :ok
-      _ -> :ok
-    end
-
-    # Keep-alive pool toward bolls.life — avoids full TCP/TLS setup per miss.
-    _ =
-      :httpc.set_options(
-        [
-          max_sessions: 8,
-          max_keep_alive_length: 16,
-          keep_alive_timeout: 120_000,
-          max_pipeline_length: 0
-        ],
-        @http_profile
-      )
-
-    :ok
-  rescue
-    _ -> :ok
-  end
-
-  defp http_get(url) do
-    ensure_http_profile()
-
-    headers = [
-      {~c"user-agent", ~c"keyverse/0.2"},
-      {~c"accept", ~c"application/json"}
-    ]
-
-    request = {String.to_charlist(url), headers}
-
-    http_opts = [
-      timeout: 20_000,
-      connect_timeout: 8_000,
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        depth: 3,
-        customize_hostname_check: [
-          match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
-        ]
-      ]
-    ]
-
-    opts = [body_format: :binary, full_result: true]
-
-    case :httpc.request(:get, request, http_opts, opts, @http_profile) do
-      {:ok, {{_, 200, _}, _, body}} ->
-        Jason.decode(body)
-
-      {:ok, {{_, code, _}, _, _}} ->
-        {:error, "BSB fetch failed: #{code}"}
-
-      {:error, reason} ->
-        {:error, inspect(reason)}
-    end
-  end
-
-  defp maybe_prefetch_neighbors({book, chapter}) do
-    # fire-and-forget next (and prev if > 1) — hides latency on swipe/advance
-    warm(book, chapter + 1)
-    if chapter > 1, do: warm(book, chapter - 1)
-    :ok
-  catch
-    _, _ -> :ok
-  end
+  defp maybe_prefetch_neighbors(_key), do: :ok
 
   defp safe_ets_info(table, key) do
     :ets.info(table, key)
   rescue
     _ -> nil
   end
-
-  # Elixir 1.12+ has tap/2; provide local if needed — 1.15 has it.
 end

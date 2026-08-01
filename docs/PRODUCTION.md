@@ -211,7 +211,7 @@ Keep `PACK_DIR` outside the git checkout so deploys never wipe notes.
 - [ ] Durable `PACK_DIR`; backup + restore drill includes `door`, `notes/`, `attachments/`
 - [ ] Process user can write pack; others cannot
 - [ ] Upload size limited (`client_max_body_size` / `MAX_ATTACH_BYTES`)
-- [ ] Outbound allowlist: `bolls.life` only if BSB first-fetch is needed
+- [ ] BSB pack present in release (`priv/bsb/chapters.json.gz`); no outbound needed for reader text
 - [ ] One writer process per pack
 - [ ] Users always get `https://host/{door}/…` links — never bare `/`
 

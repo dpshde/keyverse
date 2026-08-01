@@ -902,33 +902,49 @@ function renderHomeNoteTree(notes) {
   </script>`;
 }
 
-// ---------- scripture text (BSB, cache-first) ----------
-// Chapter text is derived data: fetched once from bolls.life (public-domain
-// BSB), then cached in the pack at pack/text/bsb/<book>.<chapter>.json so the
-// pack reads offline. Never treated as user data.
+// ---------- scripture text (BSB, self-hosted pack) ----------
+// Public-domain BSB shipped at priv/bsb/chapters.json.gz (see priv/bsb/NOTICE).
+// No runtime network fetch. Never treated as user data.
+
+const BSB_PACK_CANDIDATES = [
+  path.join(process.cwd(), "priv", "bsb", "chapters.json.gz"),
+  path.join(__dirname, "priv", "bsb", "chapters.json.gz"),
+];
+
+let bsbPackPromise = null;
 
 function textPath(book, chapter) {
   return path.join(TEXT_DIR, `${book.toLowerCase()}.${chapter}.json`);
+}
+
+async function loadBsbPack() {
+  if (bsbPackPromise) return bsbPackPromise;
+  bsbPackPromise = (async () => {
+    const { gunzipSync } = await import("node:zlib");
+    for (const p of BSB_PACK_CANDIDATES) {
+      try {
+        const gz = await readFile(p);
+        const json = gunzipSync(gz).toString("utf8");
+        return JSON.parse(json);
+      } catch {
+        /* try next */
+      }
+    }
+    throw new Error("BSB pack missing (priv/bsb/chapters.json.gz)");
+  })();
+  return bsbPackPromise;
 }
 
 async function getChapterText(book, chapter) {
   try {
     return JSON.parse(await readFile(textPath(book, chapter), "utf8"));
   } catch {
-    // not cached yet
+    // fall through to pack
   }
-  const bollsId = getBookOrder(book) + 1; // grab-bcv is 0-based; bolls is 1-based
-  const res = await fetch(`https://bolls.life/get-text/BSB/${bollsId}/${chapter}/`);
-  if (!res.ok) throw new Error(`BSB fetch failed: ${res.status}`);
-  const raw = await res.json();
-  const doc = {
-    translation: "BSB",
-    book,
-    chapter,
-    verses: raw.map((v) => ({ v: v.verse, text: String(v.text).replace(/<[^>]+>/g, "").trim() })),
-    fetched_at: new Date().toISOString(),
-  };
-  await writeFile(textPath(book, chapter), JSON.stringify(doc, null, 2) + "\n");
+  const pack = await loadBsbPack();
+  const key = `${String(book).toLowerCase()}.${chapter}`;
+  const doc = pack[key];
+  if (!doc) throw new Error(`chapter not in BSB pack: ${key}`);
   return doc;
 }
 

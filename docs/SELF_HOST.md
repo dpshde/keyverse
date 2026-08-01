@@ -9,7 +9,7 @@ product**; the process is only HTTP access to it.
 |------|--------|
 | **Elixir / OTP** | Elixir 1.15+ / OTP 26+ (`brew install elixir` on macOS). |
 | **Disk** | Writable multipack root (`PACK_DIR`, default `./packs`). |
-| **Network** | Outbound HTTPS only for first-time BSB fetch (`bolls.life`). After cache warm-up, offline is fine. |
+| **Network** | Not required for BSB (shipped in-app). Outbound only if you add other features. |
 | **Node (optional)** | Only for `pnpm legacy:node` or re-running `scripts/extract_client_js.mjs`. |
 
 ## Install
@@ -189,10 +189,10 @@ and a client that implements PROTOCOL §3.1 to recover text.
 
 ## Reading view / BSB
 
-- First open of a chapter may call `https://bolls.life/...` and write
-  `pack/text/bsb/<book>.<chapter>.json`.
-- `text/` is disposable (gitignored). Delete anytime; re-fetch when online.
-- Offline read: warm each chapter once, or pre-seed `text/bsb/`.
+- BSB ships **in the app** as `priv/bsb/chapters.json.gz` (public domain;
+  https://bereanbible.com/bsb.txt). Loaded into ETS at boot — **no outbound fetch**.
+- Rebuild with `scripts/build-bsb-pack.py` if the official text updates.
+- Host disk under `packs/_cache/text/bsb/` is optional legacy only; never user data.
 
 ## Security defaults
 
