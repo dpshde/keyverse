@@ -91,6 +91,14 @@ curl -X PUT "$BASE/api/note/jhn.3.16" \
 - API CORS defaults to `*`. `CORS_ORIGIN=off` disables.
 - Browser SPAs on another origin need door URL + CORS (default on).
 
+## PWA
+
+- Manifest: `GET /manifest.webmanifest` or `/{door}/manifest.webmanifest` (start_url = pack home).
+- Service worker: `GET /sw.js` (root scope `/`) — register from any page.
+- Icons: `/icons/icon-192.png`, `icon-512.png`, maskable variants, `apple-touch-icon.png`.
+- Offline: shell + cached GET navigations/API; writes need network.
+- Install needs HTTPS or localhost.
+
 ## Must not
 
 - Multi-writer merge (undefined).

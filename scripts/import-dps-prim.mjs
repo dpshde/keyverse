@@ -72,6 +72,26 @@ function stripFrontmatter(raw) {
   return { fm, body };
 }
 
+/**
+ * Normalize ESV/Crossway-style scripture quote markers into flat keyverse markdown.
+ * Source often looks like: ***11** text **12** text*  or  ***[[Phil 4|…]]***
+ * Our renderer is flat (no nested emphasis), so strip verse-number bold and
+ * mismatched star wraps; keep a single outer italic when the quote was italic.
+ */
+function cleanEsVQuoteMarkers(s) {
+  let t = String(s ?? "");
+  // ***[[wiki]]*** / **[[wiki]]** / *[[wiki]]* → [[wiki]]
+  t = t.replace(/^\*{1,3}\s*(\[\[)/, "$1").replace(/(\]\])\s*\*{1,3}$/, "$1");
+  // Leading ***N** (bold-italic open + bold verse num) → drop the verse-num chrome
+  t = t.replace(/^\*{1,3}(\d+)\*\*\s*/, "");
+  // Mid-quote bold verse numbers: **12** / **13** → drop (reading view has numbers)
+  t = t.replace(/\s*\*\*(\d+)\*\*\s*/g, " ");
+  // Trailing orphan italic/bold closers left by the above
+  t = t.replace(/^\*+/, "").replace(/\*+$/, "");
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
 /** Clean inline text for outline storage. */
 function cleanInline(s) {
   let t = String(s ?? "");
@@ -115,6 +135,8 @@ function cleanInline(s) {
     }
     return label ? `[[${cleaned}|${label.trim()}]]` : `[[${cleaned}]]`;
   });
+  // ESV-style ***11**…**12**…* and ***[[wiki]]*** before other star munging
+  t = cleanEsVQuoteMarkers(t);
   // collapse odd bold-per-word artifacts: **What** **does** → **What does**
   t = t.replace(/(?:\*\*[^*]+\*\*\s*){2,}/g, (chunk) => {
     const words = [...chunk.matchAll(/\*\*([^*]+)\*\*/g)].map((m) => m[1].trim());
@@ -179,13 +201,24 @@ function freeformToBlocks(body) {
       if (text) blocks.push({ indent: 0, text });
       continue;
     }
-    // blockquote lines
+    // blockquote lines (often ESV quotes with ***11**…**12**…* chrome)
     if (/^\s*>/.test(raw)) {
       flushPara();
       let t = raw.replace(/^\s*>\s?/, "");
-      // strip trailing citation-only bold refs on their own — keep them
-      t = cleanInline(t.replace(/^\*+\s*/, "").replace(/\s*\*+$/, ""));
-      if (t) blocks.push({ indent: Math.min(1, blocks.length ? 1 : 0), text: t.startsWith("*") || t.startsWith("_") ? t : `_${t}_` });
+      const wasEmph =
+        /^\*{1,3}/.test(t.trim()) || /^_/.test(t.trim()) || /\*{1,3}$/.test(t.trim());
+      // strip wrapping stars even when no space after them (***11**… not *** 11)
+      t = t.replace(/^\*+/, "").replace(/\*+$/, "");
+      t = cleanInline(t);
+      if (t) {
+        // Re-wrap as italic only when the source was an emphasized quote and
+        // cleanInline didn't already leave emphasis markers.
+        const text =
+          wasEmph && !t.startsWith("*") && !t.startsWith("_") && !t.startsWith("[[")
+            ? `_${t}_`
+            : t;
+        blocks.push({ indent: Math.min(1, blocks.length ? 1 : 0), text });
+      }
       continue;
     }
     const depth = listDepth(raw);

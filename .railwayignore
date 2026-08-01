@@ -1,5 +1,12 @@
 node_modules
 .git
+.grok
+.github
+docs
+scripts
 pack/text
 pack/attachments
 pack/door
+pack/notes
+*.md
+!package.json

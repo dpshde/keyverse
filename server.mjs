@@ -21,6 +21,7 @@ const PACK_DIR = process.env.PACK_DIR
 const NOTES_DIR = path.join(PACK_DIR, "notes");
 const TEXT_DIR = path.join(PACK_DIR, "text", "bsb");
 const ATTACH_DIR = path.join(PACK_DIR, "attachments");
+const PUBLIC_DIR = path.join(ROOT, "public");
 const PORT = Number(process.env.PORT || 4180);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_ATTACH_BYTES = Number(process.env.MAX_ATTACH_BYTES || 50 * 1024 * 1024);
@@ -35,6 +36,14 @@ const PROTOCOL_VERSION = "0.1-demo";
 // CORS for /api/* : default * (door is the secret). CORS_ORIGIN=off disables.
 // Comma-separated origins for credentialed multi-origin setups.
 const CORS_ORIGIN_RAW = process.env.CORS_ORIGIN;
+// Fathom analytics (privacy-friendly). Default site for the public deploy;
+// set FATHOM_SITE=off to disable on private self-hosts, or another site id.
+const FATHOM_SITE = (() => {
+  const raw = process.env.FATHOM_SITE;
+  if (raw === "off" || raw === "0" || raw === "false" || raw === "no") return "";
+  if (raw == null || raw === "") return "EMYGRIAR";
+  return String(raw).trim();
+})();
 
 // ---------- multiword door (frictionless access) ----------
 
@@ -1013,8 +1022,48 @@ const CSS = `
     padding: 1.5rem 1.1rem calc(5rem + env(safe-area-inset-bottom, 0px));
     padding-left: max(1.1rem, env(safe-area-inset-left, 0px));
     padding-right: max(1.1rem, env(safe-area-inset-right, 0px));
+    padding-top: max(1.5rem, env(safe-area-inset-top, 0px));
     line-height: 1.55; font-size: 1.05rem;
   }
+  /* installed PWA (home-screen) */
+  @media (display-mode: standalone), (display-mode: minimal-ui) {
+    body {
+      padding-top: max(1.25rem, env(safe-area-inset-top, 0px));
+    }
+  }
+  .pwa-install {
+    display: none;
+    margin: 0; padding: .35rem .7rem;
+    border-radius: 999px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    background: transparent; font: inherit; font-size: .82rem; font-family: -apple-system, system-ui, sans-serif;
+    color: color-mix(in srgb, currentColor 55%, transparent); cursor: pointer;
+  }
+  .pwa-install:hover { color: inherit; border-color: color-mix(in srgb, currentColor 36%, transparent); }
+  .pwa-install.show { display: inline-flex; align-items: center; gap: .35rem; }
+  .offline-page { text-align: center; padding: 2rem 0; }
+  .offline-page h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .5rem; }
+  .offline-page p { color: color-mix(in srgb, currentColor 55%, transparent); }
+  .site-foot {
+    margin: 2.5rem 0 0; padding-top: 1rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .78rem; line-height: 1.4;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    display: flex; flex-wrap: wrap; gap: .35rem .85rem; align-items: center;
+  }
+  .site-foot a { color: inherit; text-decoration: underline; text-underline-offset: 2px;
+    text-decoration-color: color-mix(in srgb, currentColor 28%, transparent); }
+  .site-foot a:hover { color: inherit; opacity: 1;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+  .login .site-foot { justify-content: center; border-top: 0; margin-top: 2rem; padding-top: 0; }
+  .ios-install-hint {
+    display: none; margin: 1rem 0 0; padding: .75rem .85rem; border-radius: .5rem;
+    font-family: -apple-system, system-ui, sans-serif; font-size: .86rem; line-height: 1.4;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    color: color-mix(in srgb, currentColor 62%, transparent);
+  }
+  .ios-install-hint.show { display: block; }
+  .ios-install-hint strong { font-weight: 600; color: inherit; }
   a { color: inherit; text-decoration: none; }
   a:hover { opacity: .72; }
   /* body-copy / explicit text links only */
@@ -1535,10 +1584,25 @@ const CSS = `
     background: var(--sel-fill);
     padding: var(--sel-y) var(--sel-x);
     margin-left: 0;
+    /* stack later verses over earlier so 1px overlaps hide hairline seams */
+    position: relative;
   }
   .verse.sel.sel-lo { border-radius: var(--sel-radius) var(--sel-radius) 0 0; }
   .verse.sel.sel-hi { border-radius: 0 0 var(--sel-radius) var(--sel-radius); }
   .verse.sel.sel-lo.sel-hi { border-radius: var(--sel-radius); }
+  /*
+   * Multi-verse stitch: pull each following .sel up by 1px and re-pad so the
+   * continuous surface has no dark/light hairline between boxes (common on
+   * retina with semi-transparent fills).
+   */
+  .verse.sel + .verse.sel {
+    margin-top: -1px;
+    padding-top: calc(var(--sel-y) + 1px);
+  }
+  /* bleed fill 1px past the bottom of non-terminal selected verses */
+  .verse.sel:not(.sel-hi) {
+    box-shadow: 0 1px 0 var(--sel-fill);
+  }
   /*
    * Note open on end verse: keep the *outer* bottom curve on .sel-hi and clip
    * children to it — never zero the radius under a rounded tray (square shows through).
@@ -1849,7 +1913,8 @@ const CSS = `
   }
   .oline.has-kids .ochev { pointer-events: auto; cursor: pointer; }
   .oline.has-kids:hover .ochev,
-  .oline.collapsed .ochev { opacity: 1; }
+  .oline.collapsed .ochev,
+  .oline.has-kids .ochev:focus-visible { opacity: 1; }
   .oline .ochev::before { content: "\\25B8"; transition: transform .12s ease; }
   .oline.collapsed .ochev::before { content: "\\25B8"; }
   .oline:not(.collapsed).has-kids .ochev::before { content: "\\25BE"; }
@@ -2085,6 +2150,7 @@ const CSS = `
     .otool-btn { min-height: 2.5rem; padding: .4rem .35rem; }
     .note-row, .inbox-item { padding-top: .65rem; padding-bottom: .65rem; }
     .oblock.has-kids .ochev { opacity: .65; }
+    .oline.has-kids .ochev { opacity: .55; }
   }
 `;
 
@@ -3585,15 +3651,193 @@ const VP_CRYPTO = (() => {
 })();
 `;
 
-function page(title, body) {
+/** Web app manifest (PWA). startUrl is path under this origin, e.g. / or /door/. */
+function webManifest(startUrl) {
+  let start = String(startUrl || "/");
+  if (!start.startsWith("/")) start = `/${start}`;
+  if (!start.endsWith("/")) start += "/";
+  return {
+    id: start,
+    name: "keyverse",
+    short_name: "keyverse",
+    description: "Scripture notes — open a passage, type, autosaved. No account.",
+    start_url: start,
+    scope: start,
+    display: "standalone",
+    display_override: ["standalone", "minimal-ui", "browser"],
+    orientation: "any",
+    background_color: "#0f1317",
+    theme_color: "#0f1317",
+    lang: "en",
+    dir: "ltr",
+    categories: ["productivity", "education", "books"],
+    icons: [
+      { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icons/icon-maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+      { src: "/icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+      { src: "/icons/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+    ],
+  };
+}
+
+/** Preferred install start: door home when known, else site root. */
+function defaultStartUrl() {
+  if (!DOOR_OPEN && DOOR) return `/${DOOR}/`;
+  return "/";
+}
+
+const PWA_HEAD = `
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f7f5f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1317" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="keyverse">
+<meta name="application-name" content="keyverse">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+`.trim();
+
+const PWA_BOOT_JS = `
+(function () {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(function (reg) {
+      if (!reg) return;
+      reg.addEventListener("updatefound", function () {
+        var w = reg.installing;
+        if (!w) return;
+        w.addEventListener("statechange", function () {
+          if (w.state === "installed" && navigator.serviceWorker.controller) {
+            /* new SW ready — optional quiet update on next navigation */
+          }
+        });
+      });
+    }).catch(function () {});
+  });
+  // Capture install prompt for optional UI button
+  window.__kvDeferredInstall = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    window.__kvDeferredInstall = e;
+    document.querySelectorAll(".pwa-install").forEach(function (btn) {
+      btn.classList.add("show");
+    });
+  });
+  window.addEventListener("appinstalled", function () {
+    window.__kvDeferredInstall = null;
+    document.querySelectorAll(".pwa-install").forEach(function (btn) {
+      btn.classList.remove("show");
+    });
+  });
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.closest && ev.target.closest(".pwa-install");
+    if (!btn) return;
+    ev.preventDefault();
+    var d = window.__kvDeferredInstall;
+    if (!d) return;
+    d.prompt();
+    d.userChoice.finally(function () { window.__kvDeferredInstall = null; btn.classList.remove("show"); });
+  });
+})();
+`.trim();
+
+function fathomScriptTag() {
+  if (!FATHOM_SITE) return "";
+  // Fathom — beautiful, simple website analytics (site id never changes page content)
+  return `<!-- Fathom - beautiful, simple website analytics -->
+<script src="https://cdn.usefathom.com/script.js" data-site="${esc(FATHOM_SITE)}" defer></script>
+<!-- / Fathom -->`;
+}
+
+function siteFooterHtml({ install = false } = {}) {
+  const bits = [
+    `<span>keyverse</span>`,
+    install
+      ? `<button type="button" class="pwa-install ui" title="Install as an app">Install app</button>`
+      : "",
+    `<span class="muted">no account · notes on disk</span>`,
+  ].filter(Boolean);
+  return `<footer class="site-foot ui">${bits.join("")}</footer>`;
+}
+
+function page(title, body, opts = {}) {
   const base = basePath();
-  return `<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)}</title><style>${CSS}</style>
+  const scope = opts.manifestScope !== undefined ? opts.manifestScope : base;
+  const manPath = scope ? `${scope}/manifest.webmanifest` : "/manifest.webmanifest";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${esc(title)}</title>
+${PWA_HEAD}
+<link rel="manifest" href="${esc(manPath)}">
+<style>${CSS}</style>
 <script>window.BASE=${JSON.stringify(base)};var BASE=window.BASE;</script>
 <script>${CRYPTO_JS}</script>
 <script>VP_CRYPTO.ingestHash();</script>
-</head><body>${body}</body></html>`;
+${fathomScriptTag()}
+</head><body>${body}
+<script>${PWA_BOOT_JS}</script>
+</body></html>`;
+}
+
+function renderOffline() {
+  return page(
+    "Offline · keyverse",
+    `<div class="login offline-page">
+      <h1>You’re offline</h1>
+      <p class="lead">keyverse can’t reach the pack right now.</p>
+      <p class="muted">Recently opened pages and notes may still be available from the cache. Reconnect and try again.</p>
+      <p style="margin-top:1.25rem"><button type="button" class="login-btn" onclick="location.reload()">Try again</button></p>
+      <p class="muted" style="margin-top:1rem"><a class="underline" href="/">Home</a></p>
+    </div>`,
+    { manifestScope: "" },
+  );
+}
+
+const PUBLIC_MIME = {
+  ".js": "application/javascript; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".html": "text/html; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+/** Serve a file under public/. Returns true if handled. */
+async function servePublicFile(res, relPath, { cache = "public, max-age=86400" } = {}) {
+  const clean = String(relPath || "").replace(/^\/+/, "").replace(/\0/g, "");
+  if (!clean || clean.includes("..")) return false;
+  const full = path.resolve(PUBLIC_DIR, clean);
+  if (!full.startsWith(PUBLIC_DIR + path.sep) && full !== PUBLIC_DIR) return false;
+  let buf;
+  try {
+    buf = await readFile(full);
+  } catch {
+    return false;
+  }
+  const ext = path.extname(full).toLowerCase();
+  const type = PUBLIC_MIME[ext] || "application/octet-stream";
+  res.writeHead(200, {
+    "content-type": type,
+    "content-length": buf.length,
+    "cache-control": cache,
+  });
+  res.end(buf);
+  return true;
+}
+
+function sendManifest(res, startUrl) {
+  const body = JSON.stringify(webManifest(startUrl), null, 2) + "\n";
+  res.writeHead(200, {
+    "content-type": "application/manifest+json; charset=utf-8",
+    "cache-control": "no-cache",
+  });
+  res.end(body);
 }
 
 function cryptoBarHtml({ locked = false } = {}) {
@@ -3687,10 +3931,15 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       <p class="lead">Open your notes with your key.</p>
       ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
       ${keyForm({ required: true, autofocus: true, btn: "Open notes" })}
+      <div class="ios-install-hint" id="ios-install-hint">
+        <strong>Install on this device:</strong> Share → <strong>Add to Home Screen</strong>.
+        Opens like an app; your key stays in the URL.
+      </div>
       <details class="login-more">
         <summary>Don’t have a key?</summary>
-        <p>Use the link from when you set this up, or ask whoever runs the server for their notes link. After you open once, bookmark the page.</p>
-      </details>`;
+        <p>Use the link from when you set this up, or ask whoever runs the server for their notes link. After you open once, bookmark the page — or install the app from your browser menu.</p>
+      </details>
+      ${siteFooterHtml({ install: true })}`;
   }
 
   return page(
@@ -3701,17 +3950,26 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       var KEY = "vp_door_key";
       var input = document.getElementById("door");
       var form = document.getElementById("login-form");
-      if (!input || !form) return;
-      try {
-        var saved = localStorage.getItem(KEY);
-        if (saved && !input.value) input.value = saved;
-      } catch (e) {}
-      form.addEventListener("submit", function () {
-        var v = (input.value || "").trim().toLowerCase().replace(/\\s+/g, "-");
-        if (v) try { localStorage.setItem(KEY, v); } catch (e) {}
-      });
+      if (input && form) {
+        try {
+          var saved = localStorage.getItem(KEY);
+          if (saved && !input.value) input.value = saved;
+        } catch (e) {}
+        form.addEventListener("submit", function () {
+          var v = (input.value || "").trim().toLowerCase().replace(/\\s+/g, "-");
+          if (v) try { localStorage.setItem(KEY, v); } catch (e) {}
+        });
+      }
+      // iOS Safari: no beforeinstallprompt — show Add to Home Screen hint
+      var ua = navigator.userAgent || "";
+      var isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      var isStandalone = window.matchMedia("(display-mode: standalone)").matches
+        || window.navigator.standalone === true;
+      var hint = document.getElementById("ios-install-hint");
+      if (hint && isIOS && !isStandalone) hint.classList.add("show");
     })();
     </script>`,
+    { manifestScope: showLocal ? basePath() : "" },
   );
 }
 
@@ -3768,8 +4026,9 @@ function renderOutline(blocks, attachments = []) {
       hasKids ? "has-kids" : "",
       collapsed ? "collapsed" : "",
     ].filter(Boolean).join(" ");
-    return `<div class="${cls}" style="--depth:${depth}" title="${esc(b.id)}">
-      <span class="ochev" aria-hidden="true"></span>
+    const id = esc(b.id || "");
+    return `<div class="${cls}" style="--depth:${depth}" data-id="${id}" title="${id}">
+      <span class="ochev" role="button" tabindex="-1" aria-label="${collapsed ? "Expand" : "Collapse"}"></span>
       <span class="odot" aria-hidden="true"></span>
       <span class="otxt">${empty ? "" : formatBlockText(b.text, attachments)}</span>
     </div>`;
@@ -4313,11 +4572,13 @@ async function renderIndex() {
     "keyverse",
     `<header><h1>keyverse</h1>
       ${doorShareChipHtml()}
+      <button type="button" class="pwa-install ui" title="Install as an app">Install</button>
     </header>
     ${cryptoBarHtml()}
     ${refSearchHtml()}
     <p class="muted ui" style="margin-top:.75rem">${notes.length} note${notes.length === 1 ? "" : "s"}</p>
-    ${treeHtml || `<p class="muted">Type a passage above.</p>`}`,
+    ${treeHtml || `<p class="muted">Type a passage above.</p>`}
+    ${siteFooterHtml()}`,
   );
 }
 
@@ -4823,13 +5084,73 @@ async function renderRead(scope) {
       function outlineHtml(blocks) {
         const items = blocks || [];
         if (!items.length) return "";
-        return '<div class="outline">' + items.map(b => {
+        const hidden = new Set();
+        for (let i = 0; i < items.length; i++) {
+          if (!items[i].collapsed) continue;
+          const base = Math.max(0, items[i].indent|0);
+          for (let j = i + 1; j < items.length; j++) {
+            const d = Math.max(0, items[j].indent|0);
+            if (d <= base) break;
+            hidden.add(j);
+          }
+        }
+        return '<div class="outline">' + items.map((b, i) => {
+          if (hidden.has(i)) return "";
           const depth = Math.max(0, b.indent|0);
           const empty = !(b.text && b.text.trim());
-          return '<div class="oline' + (empty ? ' blank' : '') + '" style="--depth:' + depth + '">' +
+          const hasKids = i + 1 < items.length && (Math.max(0, items[i + 1].indent|0) > depth);
+          const collapsed = !!(b.collapsed && hasKids);
+          let cls = "oline";
+          if (empty) cls += " blank";
+          if (hasKids) cls += " has-kids";
+          if (collapsed) cls += " collapsed";
+          const id = String(b.id || "").replace(/"/g, "");
+          const aria = collapsed ? "Expand" : "Collapse";
+          return '<div class="' + cls + '" style="--depth:' + depth + '" data-id="' + id + '" title="' + id + '">' +
+            '<span class="ochev" role="button" tabindex="-1" aria-label="' + aria + '"></span>' +
             '<span class="odot" aria-hidden="true"></span>' +
             '<span class="otxt">' + (empty ? "" : formatBlockHtml(b.text)) + '</span></div>';
         }).join("") + '</div>';
+      }
+
+      /** Fold/unfold a read-only outline row. Does not open editor or close the verse tray. */
+      function toggleReaderOutlineFold(ochev) {
+        const line = ochev.closest(".oline");
+        const noteEl = ochev.closest(".note");
+        if (!line || !noteEl || noteEl.classList.contains("editing")) return false;
+        if (noteEl.dataset.encrypted === "1") return false;
+        if (!line.classList.contains("has-kids")) return false;
+        const slug = noteEl.dataset.slug;
+        if (!slug || !seeds[slug]) return false;
+        const blocks = seeds[slug].map((b) => ({
+          id: b.id,
+          indent: b.indent|0,
+          text: b.text || "",
+          collapsed: !!b.collapsed,
+        }));
+        const id = line.dataset.id || line.getAttribute("title") || "";
+        const i = blocks.findIndex((b) => b.id === id);
+        if (i < 0) return false;
+        const base = blocks[i].indent|0;
+        if (!(i + 1 < blocks.length && (blocks[i + 1].indent|0) > base)) return false;
+        blocks[i].collapsed = !blocks[i].collapsed;
+        seeds[slug] = blocks;
+        const body = noteEl.querySelector(".note-body");
+        if (body) body.innerHTML = outlineHtml(blocks);
+        // Persist collapse; omit attachments so the server keeps existing ones.
+        const payload = {
+          blocks: blocks.map((b) => {
+            const row = { id: b.id, indent: b.indent|0, text: b.text || "" };
+            if (b.collapsed) row.collapsed = true;
+            return row;
+          }),
+        };
+        fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch(() => {});
+        return true;
       }
 
       function statusElFor(noteEl) {
@@ -5331,7 +5652,7 @@ async function renderRead(scope) {
         if (!el || !el.closest) return false;
         const verse = el.closest(".verse");
         if (!verse) return false;
-        if (el.closest(".vnotes, .note, .note-edit, .outliner, .otext, .obullet, .note-body, .note-label")) {
+        if (el.closest(".vnotes, .note, .note-edit, .outliner, .otext, .obullet, .note-body, .note-label, .ochev, .outline, .odot")) {
           return false;
         }
         // .vtext, its children (sup, status), or the .verse shell itself after capture
@@ -5340,7 +5661,8 @@ async function renderRead(scope) {
 
       document.addEventListener("pointerdown", (e) => {
         if (e.button != null && e.button !== 0) return;
-        if (e.target.closest("a, .otext, .obullet, .outliner, .note-edit, .note-body, .note-label")) return;
+        // Outline chevrons / note chrome must never start a verse drag/toggle.
+        if (e.target.closest("a, .otext, .obullet, .outliner, .note-edit, .note-body, .note-label, .ochev, .outline, .odot")) return;
         const verse = e.target.closest(".verse");
         if (!verse || !isVerseTextTarget(e.target)) return;
         const v = verseNum(verse);
@@ -5398,6 +5720,15 @@ async function renderRead(scope) {
       document.addEventListener("click", (e) => {
         if (e.target.closest("a")) return;
         if (e.target.closest(".otext, .obullet, .outliner, .note-edit")) return;
+
+        // Read-only outline chevron: fold subnests only (never open editor / close tray).
+        const foldChev = e.target.closest(".outline .ochev, .oline.has-kids .ochev");
+        if (foldChev) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleReaderOutlineFold(foldChev);
+          return;
+        }
 
         // click any note outline (verse / range / chapter) → edit that note inline
         const body = e.target.closest(".note .note-body");
@@ -5577,6 +5908,7 @@ function protocolInfo() {
       suggest: true,
       resolve: true,
       share_qr: !DOOR_OPEN && !!DOOR,
+      pwa: true,
     },
     endpoints: [
       "GET /api/protocol",
@@ -5590,6 +5922,10 @@ function protocolInfo() {
       "DELETE /api/note/<slug>/attachments/<att_id>",
       "GET /api/attachments/<sha256>",
       "GET /api/share-qr?origin=",
+      "GET /manifest.webmanifest",
+      "GET /sw.js",
+      "GET /offline",
+      "GET /health",
     ],
     schemas: "schemas/",
     docs: {
@@ -5636,6 +5972,48 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     let p = url.pathname;
+
+    // ----- PWA static surface + health (always outside the door path) -----
+    if (req.method === "GET" || req.method === "HEAD") {
+      // Railway / load-balancer healthcheck (no door secret required)
+      if (p === "/health" || p === "/healthz") {
+        const body = JSON.stringify({
+          ok: true,
+          protocol: PROTOCOL_NAME,
+          version: PROTOCOL_VERSION,
+          door: !DOOR_OPEN && !!DOOR,
+        }) + "\n";
+        res.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "content-length": Buffer.byteLength(body),
+        });
+        if (req.method === "HEAD") return res.end();
+        return res.end(body);
+      }
+      if (p === "/sw.js") {
+        if (await servePublicFile(res, "sw.js", { cache: "no-cache" })) return;
+      }
+      if (p === "/manifest.webmanifest" || p === "/manifest.json") {
+        return sendManifest(res, defaultStartUrl());
+      }
+      if (p === "/offline" || p === "/offline/") {
+        return html(res, 200, renderOffline());
+      }
+      if (p === "/favicon.ico") {
+        if (await servePublicFile(res, "icons/favicon-32.png", {
+          cache: "public, max-age=604800, immutable",
+        })) return;
+      }
+      if (p.startsWith("/icons/")) {
+        const rel = p.slice(1); // icons/...
+        if (await servePublicFile(res, rel, {
+          cache: "public, max-age=604800, immutable",
+        })) return;
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        return res.end("icon not found");
+      }
+    }
 
     // ----- sign-in (multiword key in the URL path) -----
     // GET /enter?door=… or /login?door=…  →  /{key}/
@@ -5689,6 +6067,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && p === "/") return html(res, 200, await renderIndex());
+
+    // Door-scoped web app manifest (install opens this pack home)
+    if (req.method === "GET" && (p === "/manifest.webmanifest" || p === "/manifest.json")) {
+      return sendManifest(res, basePath() ? `${basePath()}/` : "/");
+    }
 
     // GET /api/protocol — version + feature discovery (interop)
     if (req.method === "GET" && p === "/api/protocol") {

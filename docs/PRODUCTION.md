@@ -38,7 +38,7 @@ ciphertext JSON; attachment **blobs** remain content-addressed bytes.
 ## Process model
 
 ```
-[ browser / curl ]
+[ browser / curl / installed PWA ]
         │
         ▼
 [ reverse proxy ]     TLS + optional auth
@@ -49,6 +49,14 @@ ciphertext JSON; attachment **blobs** remain content-addressed bytes.
         ▼
 [ PACK_DIR on durable disk ]
 ```
+
+### PWA / service worker notes
+
+- Install and offline shell require **HTTPS** (or localhost).
+- Do not block `GET /sw.js`, `GET /icons/*`, or `GET /manifest.webmanifest`.
+- Prefer not to add a long `Cache-Control` on HTML at the proxy; the app and SW
+  manage caching for the shell and API GETs.
+- Service worker scope is `/` (whole origin for this door host).
 
 ## Environment
 
@@ -221,6 +229,63 @@ Keep `PACK_DIR` outside the git checkout so deploys never wipe notes.
   optional **client-side** note passphrase is in scope (ADR 0012)
 - Per-user identities inside the pack
 - Rate limiting / CSP (add at proxy if required)
+
+## Railway production (reference deploy)
+
+The public demo runs on Railway:
+
+| | |
+|--|--|
+| Project | `keyverse` |
+| Environment | `production` |
+| Service | `keyverse` |
+| Default URL | `https://keyverse-production.up.railway.app` |
+| Pack volume | mounted at `/data` (`PACK_DIR=/data`) |
+
+### Required service variables
+
+| Variable | Value |
+|----------|--------|
+| `PACK_DIR` | `/data` |
+| `HOST` | `0.0.0.0` |
+| `DOOR` | fixed multiword phrase (secret) |
+| `FATHOM_SITE` | site id or `off` |
+| `RAILPACK_NODE_VERSION` | `22` |
+
+Do **not** set `DOOR_OPEN` in production.
+
+`railway.json` sets `startCommand: node server.mjs` and healthcheck `GET /health`.
+
+### GitHub Actions CI/CD
+
+| Workflow | When | What |
+|----------|------|------|
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | PR + push to `main` | `pnpm check` + smoke `/health` + PWA assets |
+| [`.github/workflows/deploy-railway.yml`](../.github/workflows/deploy-railway.yml) | push to `main` (and manual) | deploy to Railway **production** |
+
+**Secret (required for deploy):** create a Railway **project token**
+(Project → Settings → Tokens), then:
+
+```sh
+gh secret set RAILWAY_TOKEN -R dpshde/versepack
+# paste token
+```
+
+Optional: GitHub Environment `production` (workflow already references it) for
+approval gates.
+
+Manual deploy from a linked laptop:
+
+```sh
+railway up --ci --service keyverse --environment production -m "manual ship"
+```
+
+### Health
+
+```sh
+curl -sf https://keyverse-production.up.railway.app/health
+# {"ok":true,"protocol":"keyverse","version":"0.1-demo","door":true}
+```
 
 ## Related
 

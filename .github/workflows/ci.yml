@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Syntax check
+        run: pnpm check
+
+      - name: Smoke boot
+        run: |
+          DOOR_OPEN=1 PORT=4180 HOST=127.0.0.1 node server.mjs &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:4180/health" >/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          curl -sf "http://127.0.0.1:4180/health" | tee /tmp/health.json
+          grep -q '"ok": true' /tmp/health.json
+          curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/manifest.webmanifest" | grep -q 200
+          curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/sw.js" | grep -q 200
+          curl -sf -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4180/icons/icon-192.png" | grep -q 200

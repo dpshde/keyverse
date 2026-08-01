@@ -51,6 +51,10 @@ Prefix every route with `/{door}/` when the door is enabled (`pack/door` or `DOO
 | GET | /api/attachments/`<sha256>` | Blob bytes |
 | GET | /api/share-qr?origin= | Door URL as SVG QR |
 | OPTIONS | /api/* | CORS preflight → 204 |
+| GET | /sw.js | Service worker (root; PWA) |
+| GET | /manifest.webmanifest | Web app manifest |
+| GET | /icons/* | App icons |
+| GET | /offline | Offline fallback HTML |
 
 ### PUT bodies
 

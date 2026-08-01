@@ -159,6 +159,22 @@ Raw bytes. `?name=` optional download name.
 | `400` | invalid hash |
 | `404` | blob missing |
 
+## Progressive web app (shell)
+
+These are **outside** the door path (except door-scoped manifest) so the browser
+can install and cache the app shell.
+
+| Path | Role |
+|------|------|
+| `GET /sw.js` | Service worker (`scope: /`) |
+| `GET /manifest.webmanifest` | Manifest; `start_url` = door home when door enabled |
+| `GET /{door}/manifest.webmanifest` | Same, scoped to pack home |
+| `GET /icons/*` | 192/512 (any + maskable), apple-touch, favicon, SVG |
+| `GET /offline` | Offline fallback HTML |
+
+Writes still require network (no offline op queue in v0.1). GET navigations and
+API GETs are network-first with cache fallback via the service worker.
+
 ## UX helper
 
 ### `GET /api/share-qr?origin=<url-origin>`

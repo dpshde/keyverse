@@ -4,6 +4,25 @@ Day-to-day product surface of the reference door. Paths below assume you already
 opened your **multiword door** (`/{door}/…`). See [SELF_HOST.md](./SELF_HOST.md)
 and [ADR 0011](./adr/0011-multiword-door-access.md).
 
+## Install as an app (PWA)
+
+keyverse is a progressive web app. On a supporting browser (Chrome/Edge/Android,
+Safari/iOS after “Add to Home Screen”):
+
+| Platform | How |
+|----------|-----|
+| **Desktop Chrome / Edge** | Install icon in the address bar, or **Install** on the home header when offered |
+| **Android Chrome** | Menu → **Install app** / **Add to Home screen** |
+| **iPhone / iPad Safari** | Share → **Add to Home Screen** |
+
+Installed mode opens in a standalone window (no browser chrome). The multiword
+door URL is still your key — install from a page under your door so the app
+starts there.
+
+**Offline:** the shell and recently loaded pages/notes can open from cache.
+Writing notes and new attachments need a network connection to the door
+(no offline write queue in v0.1).
+
 ## Open your notes (sign in)
 
 There is no account. Your **key** is four words (also the path in your notes URL).

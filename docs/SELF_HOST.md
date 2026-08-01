@@ -90,6 +90,7 @@ pack on disk:   /path/to/keyverse/pack
 | `DOOR_OPEN` | off | `1` / `true` = no door prefix (open access) |
 | `MAX_ATTACH_BYTES` | `52428800` | Max attachment upload size |
 | `CORS_ORIGIN` | `*` (enabled) | CORS for `/api/*`; `off` / `false` disables; comma-list of origins |
+| `FATHOM_SITE` | `EMYGRIAR` | [Fathom](https://usefathom.com) site id on every HTML page; set `off` for private hosts |
 
 Examples:
 
@@ -126,7 +127,24 @@ curl -s "$BASE/api/protocol" | head
 curl -s "$BASE/api/resolve?q=John+3:16"
 curl -s "$BASE/api/notes" | head
 curl -s "$BASE/api/note/jhn.3.16?raw"
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/manifest.webmanifest"   # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4180/sw.js      # 200 (root)
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4180/icons/icon-192.png
 ```
+
+### Progressive web app
+
+Installable on phone/desktop when served over **HTTPS** (or `localhost`). Assets:
+
+| Path | Role |
+|------|------|
+| `/sw.js` | Service worker (scope `/`) |
+| `/manifest.webmanifest` | Root/default start URL |
+| `/{door}/manifest.webmanifest` | Start URL = pack home |
+| `/icons/*` | App icons (192/512, maskable, apple-touch) |
+| `/offline` | Offline fallback page |
+
+Reverse proxies must forward these paths (do not strip `/sw.js` or `/icons`).
 
 Interop docs: [API.md](./API.md), [../llms.txt](../llms.txt), [../schemas/](../schemas/).
 

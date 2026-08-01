@@ -19,6 +19,7 @@ A **cowyo-class** capture door over an on-disk scripture note pack.
 | **Reading view** | `/read/jhn.3` — BSB chapter text (cached), notes under verses; multi-select a passage (shift+click / drag / long-press) to note a range |
 | **Access** | Multiword URL is the key — cowyo-style ([ADR 0011](docs/adr/0011-multiword-door-access.md)) |
 | **Encryption** | Optional pack passphrase; notes save as AES-GCM ciphertext in the browser ([ADR 0012](docs/adr/0012-client-side-note-encryption.md)) |
+| **PWA** | Installable app (manifest + service worker); offline shell / cached reads ([docs/USAGE.md](docs/USAGE.md#install-as-an-app-pwa)) |
 
 ## Sign in = your key (four words)
 
@@ -74,6 +75,7 @@ pnpm dev
 | `DOOR_OPEN` | off | `1` = disable door (open demo only) |
 | `MAX_ATTACH_BYTES` | `52428800` (50 MiB) | Max file upload size |
 | `CORS_ORIGIN` | `*` (on) | API CORS; `off` disables; or comma-list of origins |
+| `FATHOM_SITE` | `EMYGRIAR` | Fathom analytics site id; `off` disables |
 
 ```sh
 HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse DOOR=my-study-garden-notes pnpm start
@@ -88,9 +90,19 @@ HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse DOOR=my-study-garden-notes pnpm
 | [schemas/](schemas/) | JSON Schema for note, attachment, cipher, protocol |
 | [PROTOCOL.md](PROTOCOL.md) | Pack format + HTTP door (normative interop) |
 | [docs/SELF_HOST.md](docs/SELF_HOST.md) | Install, env, backup, offline BSB, troubleshooting |
-| [docs/PRODUCTION.md](docs/PRODUCTION.md) | systemd, reverse proxy, Docker sketch, hardening |
+| [docs/PRODUCTION.md](docs/PRODUCTION.md) | systemd, reverse proxy, **Railway + GitHub Actions**, hardening |
 | [docs/USAGE.md](docs/USAGE.md) | Day-to-day UI: editor, reader, wiki links, attachments, encryption |
 | [docs/adr/](docs/adr/) | Architecture Decision Records (Nygard format) |
+
+## CI / deploy
+
+| Workflow | Trigger | Action |
+|----------|---------|--------|
+| `CI` | PR + `main` | install, `pnpm check`, smoke `/health` + PWA assets |
+| `Deploy Railway production` | push to `main` | `railway up` → production service |
+
+Set GitHub secret `RAILWAY_TOKEN` (Railway project token) for deploys. Details:
+[docs/PRODUCTION.md](docs/PRODUCTION.md#railway-production-reference-deploy).
 
 ## curl (under the door)
 

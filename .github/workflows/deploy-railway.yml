@@ -1,0 +1,53 @@
+name: Deploy Railway production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-railway-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Syntax check
+        run: pnpm check
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: Deploy to Railway production
+        env:
+          # Project token from Railway → Project Settings → Tokens
+          # Scoped to project keyverse / environment production
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::Missing secret RAILWAY_TOKEN. Create a Railway project token and add it as a GitHub Actions secret."
+            exit 1
+          fi
+          railway up --ci \
+            --service keyverse \
+            --environment production \
+            -m "gha ${GITHUB_SHA::7} ${GITHUB_REF_NAME}"
