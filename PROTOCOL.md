@@ -30,13 +30,29 @@ v0.1 — reserved for the op-log extension).
 
 ## 2. Pack layout
 
+A **pack** is one library of notes. On a multipack host, each multiword key is
+its own pack directory:
+
+```
+packs/                         multipack root (PACK_DIR)
+  quiet-river-lantern/         one pack = one multiword key
+    protocol.json              {"protocol":"keyverse","version":"0.1-demo","schemas":"schemas/"}
+    door                       same phrase (optional; for portability)
+    notes/<slug>.json          one record per addressed note
+    attachments/<sha256>       content-addressed file bytes
+  stone-path-ember-wind/       another user's (or project's) pack
+    …
+  _cache/text/bsb/             shared disposable scripture cache (not user data)
+```
+
+A single pack directory (offline / import) still looks like:
+
 ```
 pack/
-  protocol.json              {"protocol":"keyverse","version":"0.1-demo","schemas":"schemas/"}
-  door                       optional multiword access phrase for HTTP doors (secret)
-  notes/<slug>.json          one record per addressed note (see schemas/note.schema.json)
-  attachments/<sha256>       raw file bytes (content-addressed); absent for URL-only refs
-  text/                      derived scripture-text cache; disposable, never user data
+  protocol.json
+  door
+  notes/<slug>.json
+  attachments/<sha256>
 ```
 
 Repo-root `schemas/` holds JSON Schema for protocol manifest, notes, attachments,
@@ -48,9 +64,10 @@ and cipher envelopes. Clients MUST ignore unknown properties.
 - Deleting a note = deleting its file. An empty body write MUST delete the note
   record when there is also no attachment content; clients SHOULD
   garbage-collect unreferenced `attachments/*` when safe.
-- `text/` MAY be deleted at any time; clients re-fetch on demand.
-- `door` is only for serving clients that use multiword URL access; it is not
-  required to interpret note JSON offline.
+- Scripture text cache MAY live inside the pack or be shared host-wide under
+  `_cache/`; it is disposable and never user data.
+- `door` records the multiword key for HTTP access; the key is also the pack
+  directory name on multipack hosts.
 
 ## 3. Note record
 
@@ -266,13 +283,13 @@ this: every note keeps its own address, file, and block ids.
 
 ## 7. HTTP door (optional)
 
-### 7.0 Multiword access (recommended for network exposure)
+### 7.0 Multiword access (pack identity)
 
-Serving clients SHOULD guard a pack with a **multiword door** path segment
-(cowyo-style): `/{door}/note/jhn.3.16`, not a password form. Knowing the door
-URL is access. The reference client stores the phrase in `pack/door` or env
-`DOOR`. Clients MUST prefix API and page routes with the same door base when
-the door is enabled.
+Serving clients SHOULD map a **multiword door** path segment to a pack
+(cowyo-style): `/{door}/note/jhn.3.16`. The phrase **is** the pack key — each
+distinct phrase is a distinct pack. Knowing the door URL is access to that pack
+only. Creating a new key creates a new empty pack. Clients MUST prefix API and
+page routes with the door base for that pack.
 
 A serving client SHOULD expose (under `/{door}/` when enabled). Full status/body
 matrix: [docs/API.md](docs/API.md).

@@ -4,24 +4,29 @@ Reference door contract for `server.mjs` (**protocol `0.1-demo`**).
 Pack-on-disk remains the durable interop surface ([PROTOCOL.md](../PROTOCOL.md)).  
 This document is the **HTTP status / body matrix** for second clients.
 
-All routes below are under the multiword door base when the door is enabled:
+All pack routes below are under the multiword door base. The door phrase **selects
+the pack** (`PACK_DIR/{door}/` on the reference host):
 
 ```text
 BASE = http://host:port/{door}
-# DOOR_OPEN=1 → BASE = http://host:port
+# DOOR_OPEN=1 → BASE = http://host:port  (one shared pack)
+# Create pack: POST /setup  (form field door=…)
+# Open pack:   GET  /enter?door=…
 ```
 
 ## Discovery
 
 ### `GET /api/protocol`
 
-No auth beyond the door path. Safe to call first.
+No auth beyond the door path. Safe to call first for that pack.
 
 ```json
 {
   "protocol": "keyverse",
   "version": "0.1-demo",
+  "multipack": true,
   "door": true,
+  "door_phrase": "quiet-river-lantern",
   "door_open": false,
   "cors": true,
   "max_attach_bytes": 52428800,
@@ -31,7 +36,8 @@ No auth beyond the door path. Safe to call first.
     "encryption": true,
     "suggest": true,
     "resolve": true,
-    "share_qr": true
+    "share_qr": true,
+    "multipack": true
   },
   "endpoints": [ "…" ],
   "schemas": "schemas/",
@@ -41,7 +47,8 @@ No auth beyond the door path. Safe to call first.
 
 | Status | When |
 |--------|------|
-| `200` | Always (when door path is valid) |
+| `200` | Door path maps to an existing pack (or open demo) |
+| `404` | Unknown multiword key (generic; does not confirm existence in HTML UI) |
 
 ### `GET /api/resolve?q=<passage>`
 

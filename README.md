@@ -23,24 +23,26 @@ A **cowyo-class** capture door over an on-disk scripture note pack.
 
 ## Sign in = your key (four words)
 
-There is **no account**. On first start the server creates a four-word key and
-prints a link. Same key is the path in every notes URL.
+There is **no account**. Your **key is your pack**: four words open *your*
+notes; a different key is a different pack. Create one at `/setup`, then
+bookmark the link.
 
 ```text
-keyverse: http://localhost:4180/quiet-river-lantern/
-your key: quiet-river-lantern
+keyverse multipack: http://localhost:4180/
+create:  http://localhost:4180/setup
+open:    …/quiet-river-lantern/
 ```
 
 | | |
 |--|--|
-| **This computer** | Open `http://localhost:4180/` → **Open my notes** |
-| **Any device** | Open the printed link, or type your key on `/` |
+| **New notes** | `/setup` → create a key → pack created at `packs/{key}/` |
+| **This computer** | Open `/` → **Open my notes** (last key in the browser) |
+| **Any device** | Open your full link, or type your key on `/` |
 | **Share** | Share the full URL (or the four words) only with co-editors |
-| **Forgot** | `cat pack/door` on the host |
-| **Choose your own** | `DOOR=my-study-garden-notes pnpm start` |
-| **Open demo (no key)** | `DOOR_OPEN=1 pnpm start` — not for production |
+| **Forgot** | `ls packs/` on the host (directory name = key) |
+| **Open demo (no key)** | `DOOR_OPEN=1 pnpm start` — single shared pack; not for production |
 
-All notes and APIs live under `/{key}/…`.
+All notes and APIs for a pack live under `/{key}/…`.
 
 ### Optional encryption (separate from the door)
 
@@ -49,10 +51,10 @@ Like cowyo’s page password: **Set passphrase** in the UI (or open with
 `{ "encrypted": true, "cipher": {…} }` only. Unlock with the same phrase;
 **Lock** clears it from this browser session.
 
-| | Door (URL) | Pack passphrase |
+| | Door (URL key) | Pack passphrase |
 |--|------------|-----------------|
 | Protects against | Strangers without the URL | Anyone who can read the pack / door URL |
-| Stored where | `pack/door` / env | Only in your head (+ optional browser session) |
+| Stored where | Pack dir name under `packs/` | Only in your head (+ optional browser session) |
 | Server sees | Routes under `/{door}/` | Ciphertext only |
 
 File attachment **bytes** remain content-addressed on disk; only note text and
@@ -70,15 +72,15 @@ pnpm dev
 |-----|---------|---------|
 | `PORT` | `4180` | Listen port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `PACK_DIR` | `./pack` | Pack directory (absolute or relative) |
-| `DOOR` / `PACK_DOOR` | auto → `pack/door` | Multiword access phrase |
-| `DOOR_OPEN` | off | `1` = disable door (open demo only) |
+| `PACK_DIR` | `./packs` | Multipack root (one subdir per key) |
+| `DOOR` / `PACK_DOOR` | unset | Optional: create this pack on boot |
+| `DOOR_OPEN` | off | `1` = single open pack, no key (demo only) |
 | `MAX_ATTACH_BYTES` | `52428800` (50 MiB) | Max file upload size |
 | `CORS_ORIGIN` | `*` (on) | API CORS; `off` disables; or comma-list of origins |
 | `FATHOM_SITE` | `EMYGRIAR` | Fathom analytics site id; `off` disables |
 
 ```sh
-HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse DOOR=my-study-garden-notes pnpm start
+HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse/packs pnpm start
 ```
 
 ## Documentation
@@ -113,7 +115,7 @@ Details:
 ## curl (under the door)
 
 ```sh
-DOOR=$(tr -d '\n' < pack/door)
+DOOR=your-four-word-key
 BASE="http://localhost:4180/$DOOR"
 
 # discover

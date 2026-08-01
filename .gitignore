@@ -1,4 +1,6 @@
 node_modules/
+packs/
+# sample single-pack tree (repo demo notes; multipack host uses packs/)
 pack/text/
 pack/attachments/
 pack/door

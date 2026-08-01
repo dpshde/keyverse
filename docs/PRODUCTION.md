@@ -1,25 +1,25 @@
 # Production deployment
 
 Guidance for running the **reference door** as a long-lived process. This is
-still the v0.1 **demo** server: single writer, multiword door access (not full
-multi-tenant SaaS). Optional client-side note encryption exists (ADR 0012);
-server-side encryption at rest / blob encryption does not.
+still the v0.1 **demo** server: multipack by multiword key, single writer per
+pack. Optional client-side note encryption exists (ADR 0012); server-side
+encryption at rest / blob encryption does not.
 
 ## When this is appropriate
 
 | OK for | Not OK for |
 |--------|------------|
-| Personal always-on host | Compliance / regulated multi-tenant |
-| Household over Tailscale / VPN | Active-active multi-instance writers on one pack |
-| Private reverse proxy + multiword door | Relying on obscurity alone on the open internet without TLS |
+| Public multipack host (key = pack) | Compliance / regulated multi-tenant ACLs |
+| Personal / household always-on host | Active-active multi-instance writers on one pack |
+| Private reverse proxy + multiword doors | Relying on obscurity alone on the open internet without TLS |
 
 ## Access model
 
 Same as self-host ([ADR 0011](./adr/0011-multiword-door-access.md)):
 
 - Routes are under `https://notes.example.com/{door}/…`
-- The multiword path is the pack key (cowyo-style)
-- Set a stable `DOOR=` in the unit file (or persist `$PACK_DIR/door`)
+- The multiword path **is** the pack (one directory per key under `PACK_DIR`)
+- `/setup` creates a new pack; unknown keys 404
 - Never set `DOOR_OPEN=1` in production
 - Optional: extra Basic Auth / SSO at the reverse proxy
 
@@ -44,10 +44,10 @@ ciphertext JSON; attachment **blobs** remain content-addressed bytes.
 [ reverse proxy ]     TLS + optional auth
         │
         ▼
-[ node server.mjs ]   one process, one pack, one door
+[ node server.mjs ]   one process, many packs (one dir per multiword key)
         │
         ▼
-[ PACK_DIR on durable disk ]
+[ PACK_DIR/{key}/ on durable disk ]
 ```
 
 ### PWA / service worker notes
@@ -63,18 +63,17 @@ ciphertext JSON; attachment **blobs** remain content-addressed bytes.
 ```sh
 export HOST=127.0.0.1
 export PORT=4180
-export PACK_DIR=/var/lib/keyverse/pack
-export DOOR=your-fixed-multiword-phrase
+export PACK_DIR=/var/lib/keyverse/packs
 # DOOR_OPEN must remain unset
-# optional: MAX_ATTACH_BYTES=52428800
+# optional: DOOR=seed-key-on-boot  MAX_ATTACH_BYTES=52428800
 ```
 
 | Variable | Production recommendation |
 |----------|---------------------------|
 | `HOST` | `127.0.0.1` when proxy is local |
 | `PORT` | Internal only |
-| `PACK_DIR` | Absolute path on persistent storage |
-| `DOOR` | Fixed phrase in env **or** file `$PACK_DIR/door` |
+| `PACK_DIR` | Absolute multipack root on persistent storage |
+| `DOOR` | Optional: ensure one pack exists on boot |
 | `DOOR_OPEN` | Unset / `0` |
 | `MAX_ATTACH_BYTES` | Cap uploads if untrusted co-editors |
 
@@ -93,15 +92,14 @@ Group=keyverse
 WorkingDirectory=/opt/keyverse
 Environment=HOST=127.0.0.1
 Environment=PORT=4180
-Environment=PACK_DIR=/var/lib/keyverse/pack
-Environment=DOOR=your-fixed-multiword-phrase
+Environment=PACK_DIR=/var/lib/keyverse/packs
 ExecStart=/usr/bin/node /opt/keyverse/server.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/keyverse/pack
+ReadWritePaths=/var/lib/keyverse/packs
 
 [Install]
 WantedBy=multi-user.target
@@ -113,7 +111,7 @@ sudo systemctl enable --now keyverse
 sudo journalctl -u keyverse -f
 ```
 
-Users open: `https://notes.example.com/your-fixed-multiword-phrase/`
+Users open: `https://notes.example.com/` (enter key) or `https://notes.example.com/{their-key}/`
 
 ## Reverse proxy
 

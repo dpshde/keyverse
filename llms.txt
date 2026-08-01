@@ -15,14 +15,19 @@
 
 ## Preferred integration: pack filesystem
 
+Multipack host root (`PACK_DIR`, default `./packs`):
+
 ```
-pack/
-  protocol.json
-  door                    # optional multiword HTTP key (secret)
-  notes/<slug>.json       # one note per OSIS address
-  attachments/<sha256>    # content-addressed file bytes
-  text/                   # disposable scripture cache — not user data
+packs/
+  {multiword-key}/        # one pack per key
+    protocol.json
+    door                  # same key (optional)
+    notes/<slug>.json
+    attachments/<sha256>
+  _cache/text/bsb/        # shared disposable scripture cache
 ```
+
+Single pack (offline / import) is just that inner directory.
 
 - Address = canonical OSIS lowercased (slug). Example: John 3:16 → `JHN.3.16` → `jhn.3.16`.
 - Scope kinds: `verse` | `range` (same-chapter in v0.1) | `chapter`.
@@ -35,8 +40,8 @@ pack/
 
 ## HTTP door (optional)
 
-Prefix every route with `/{door}/` when the door is enabled (`pack/door` or `DOOR=`).  
-`DOOR_OPEN=1` disables the prefix (demo only).
+`/{door}/…` selects the pack for that multiword key (create at `/setup`).  
+`DOOR_OPEN=1` uses one shared pack with no prefix (demo only).
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -96,7 +101,7 @@ Default `Access-Control-Allow-Origin: *` on `/api/*`. Set `CORS_ORIGIN=off` to d
 ## Example curl
 
 ```sh
-DOOR=$(tr -d '\n' < pack/door)
+DOOR=your-four-word-key
 BASE="http://localhost:4180/$DOOR"
 curl -s "$BASE/api/protocol"
 curl -s "$BASE/api/resolve?q=John+3:16"

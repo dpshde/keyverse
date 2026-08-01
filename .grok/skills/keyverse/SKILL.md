@@ -25,13 +25,15 @@ Do not re-derive protocol from `server.mjs` unless debugging a mismatch.
 
 ## Choose integration path
 
-1. **Same machine / backup / import** → read/write `pack/` on disk.
-2. **Remote or second app** → HTTP under `/{door}/api/…`.
+1. **Same machine / backup / import** → read/write one pack dir (`packs/{key}/` or a lone pack folder).
+2. **Remote or second app** → HTTP under `/{door}/api/…` (door = pack key).
 3. Discover with `GET {BASE}/api/protocol` before other calls.
+4. **New pack on a multipack host** → `POST /setup` (form) or create `packs/{key}/` on disk.
 
 ```sh
-DOOR=$(tr -d '\n' < pack/door)   # or from user / env
+DOOR=quiet-river-lantern   # multiword pack key
 BASE="http://localhost:4180/$DOOR"
+# disk: $PACK_DIR/$DOOR/  (default PACK_DIR=./packs)
 ```
 
 ## Addressing
@@ -79,15 +81,15 @@ curl -X PUT "$BASE/api/note/jhn.3.16" \
 
 ## Pack filesystem client
 
-1. Read `pack/protocol.json`.
-2. Enumerate `pack/notes/*.json`; validate optionally with `schemas/note.schema.json`.
-3. For each `attachments[]` with `kind:file`, load `pack/attachments/<sha256>`.
+1. Read `protocol.json` in the pack dir.
+2. Enumerate `notes/*.json`; validate optionally with `schemas/note.schema.json`.
+3. For each `attachments[]` with `kind:file`, load `attachments/<sha256>`.
 4. Ignore unknown keys. Hydrate legacy `body` → blocks.
 5. Write pretty-printed UTF-8 JSON + trailing newline (reference style).
 
 ## CORS / door
 
-- Door path **is** the secret. No accounts.
+- Door path **is** the pack key (and the secret). No accounts. One key → one pack.
 - API CORS defaults to `*`. `CORS_ORIGIN=off` disables.
 - Browser SPAs on another origin need door URL + CORS (default on).
 

@@ -1,6 +1,7 @@
-// keyverse demo — a cowyo-class capture door over an on-disk pack.
-// The pack directory (./pack) is the source of truth; this server is just a door.
+// keyverse demo — a cowyo-class capture door over on-disk packs.
+// Each multiword phrase is its own pack (notes follow the key). The server is just the door.
 import http from "node:http";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile, readdir, mkdir, unlink, access } from "node:fs/promises";
 import path from "node:path";
@@ -14,29 +15,31 @@ import {
 import QRCode from "qrcode";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-// PACK_DIR: absolute or relative path to the pack directory (default ./pack).
-const PACK_DIR = process.env.PACK_DIR
+// PACK_DIR: multipack root (one subdirectory per multiword key). Default ./packs.
+const PACKS_ROOT = process.env.PACK_DIR
   ? path.resolve(process.env.PACK_DIR)
-  : path.join(ROOT, "pack");
-const NOTES_DIR = path.join(PACK_DIR, "notes");
-const TEXT_DIR = path.join(PACK_DIR, "text", "bsb");
-const ATTACH_DIR = path.join(PACK_DIR, "attachments");
+  : path.join(ROOT, "packs");
+/** Shared disposable scripture cache (not user data; shared across packs). */
+const TEXT_DIR = path.join(PACKS_ROOT, "_cache", "text", "bsb");
 const PUBLIC_DIR = path.join(ROOT, "public");
 const PORT = Number(process.env.PORT || 4180);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_ATTACH_BYTES = Number(process.env.MAX_ATTACH_BYTES || 50 * 1024 * 1024);
-// Multiword door (cowyo-style): the URL *is* the key. No passwords, no accounts.
-// DOOR=quiet-river-lantern  or pack/door after first-run setup in the browser.
-// Do NOT auto-generate a secret key on boot — that left remote deploys stuck
-// with a phrase only in server logs. Empty door → setup page at `/`.
-// DOOR_OPEN=1 disables the door (open LAN demo only).
+// Multiword door (cowyo-style): the URL path *is* the pack key. No passwords, no accounts.
+// /{four-word-phrase}/… maps to PACKS_ROOT/{phrase}/ (one pack per key).
+// DOOR_OPEN=1 disables the prefix and uses a single shared pack (open LAN demo only).
 const DOOR_OPEN = process.env.DOOR_OPEN === "1" || process.env.DOOR_OPEN === "true";
-const DOOR_FILE = path.join(PACK_DIR, "door");
+/** Optional: ensure this pack exists on boot and log its URL (does not block other packs). */
+const BOOT_DOOR = (() => {
+  const raw = process.env.DOOR || process.env.PACK_DOOR || "";
+  return raw ? String(raw).trim() : "";
+})();
 /** Path segments that must never be a multiword door. */
 const RESERVED_DOOR_WORDS = new Set([
   "enter", "login", "setup", "api", "go", "note", "notes", "read", "offline",
   "icons", "public", "assets", "sw.js", "manifest.webmanifest", "manifest.json",
   "favicon.ico", "health", "healthz", "ready", "robots.txt",
+  "_cache", "_open", "packs",
 ]);
 // Interop constants (pack/protocol.json + GET /api/protocol)
 const PROTOCOL_NAME = "keyverse";
@@ -53,14 +56,39 @@ const FATHOM_SITE = (() => {
   return String(raw).trim();
 })();
 
-// ---------- multiword door (frictionless access) ----------
+// ---------- multiword door + multipack (request-scoped) ----------
 
-let DOOR = ""; // hyphenated multiword, e.g. quiet-river-lantern
-/** True when DOOR came from DOOR=/PACK_DOOR= (file edits won't stick across restarts). */
-let DOOR_FROM_ENV = false;
+/** @typedef {{ door: string, packDir: string }} PackContext */
+const packStore = new AsyncLocalStorage();
+
+const OPEN_PACK_ID = "_open";
+
+function packContext() {
+  return packStore.getStore() || null;
+}
+
+/** Active door phrase for this request (empty when DOOR_OPEN). */
+function door() {
+  return packContext()?.door || "";
+}
+
+function packDir() {
+  const ctx = packContext();
+  if (!ctx?.packDir) throw new Error("pack context missing");
+  return ctx.packDir;
+}
+
+function notesDir() {
+  return path.join(packDir(), "notes");
+}
+
+function attachDir() {
+  return path.join(packDir(), "attachments");
+}
 
 function basePath() {
-  return DOOR && !DOOR_OPEN ? `/${DOOR}` : "";
+  const d = door();
+  return d && !DOOR_OPEN ? `/${d}` : "";
 }
 
 /** Prefix an absolute app path with the door segment. */
@@ -97,11 +125,6 @@ async function generateDoorPhrase() {
   return parts.join("-");
 }
 
-/** True when the pack has no door yet — browser must create one (first open). */
-function doorNeedsSetup() {
-  return !DOOR_OPEN && !DOOR;
-}
-
 function isValidDoorPhrase(phrase) {
   const p = normalizeDoorPhrase(phrase);
   if (!p) return false;
@@ -112,101 +135,39 @@ function isValidDoorPhrase(phrase) {
   return true;
 }
 
-async function ensureDoor() {
-  DOOR_FROM_ENV = false;
-  if (DOOR_OPEN) {
-    DOOR = "";
-    return;
-  }
-  const fromEnv = normalizeDoorPhrase(process.env.DOOR || process.env.PACK_DOOR || "");
-  if (fromEnv) {
-    DOOR = fromEnv;
-    DOOR_FROM_ENV = true;
-    return;
-  }
-  try {
-    const existing = normalizeDoorPhrase(await readFile(DOOR_FILE, "utf8"));
-    if (existing && isValidDoorPhrase(existing)) {
-      DOOR = existing;
-      return;
-    }
-  } catch { /* no door yet → setup mode */ }
-  // Leave DOOR empty: first browser visit runs setup (create key), not a
-  // hidden auto-generated phrase stuck in server logs.
-  DOOR = "";
-}
-
-/**
- * Create or replace the multiword door from the browser.
- * Always allowed unless DOOR_OPEN or DOOR is pinned by environment.
- * Replacing rotates access to the same pack (notes stay; old links break).
- */
-async function setDoor(phrase) {
-  if (DOOR_OPEN) {
-    throw new Error("this site is open without a key — nothing to create");
-  }
-  if (DOOR_FROM_ENV) {
-    throw new Error(
-      "a fixed key is set by whoever hosts this site — ask them for the link, or to change it"
-    );
-  }
+function packPathFor(phrase) {
   const p = normalizeDoorPhrase(phrase);
-  if (!isValidDoorPhrase(p)) {
-    throw new Error("use 3–8 short words, e.g. quiet-river-lantern-notes");
-  }
-  await mkdir(PACK_DIR, { recursive: true });
-  await writeFile(DOOR_FILE, p + "\n", { mode: 0o600 });
-  DOOR = p;
-  return p;
+  if (!p) return null;
+  // prevent path escape
+  if (p.includes("..") || p.includes("/") || p.includes("\\")) return null;
+  return path.join(PACKS_ROOT, p);
 }
 
-function doorMatches(segment) {
-  if (DOOR_OPEN) return true;
-  if (!DOOR) return false;
-  return normalizeDoorPhrase(segment) === DOOR;
-}
-
-/** True when the browser is on the same machine as the server (safe first-open). */
-function isLocalClient(req) {
-  const raw = String(req.socket?.remoteAddress || "");
-  const ip = raw.replace(/^::ffff:/, "");
-  return ip === "127.0.0.1" || ip === "::1" || ip === "localhost";
-}
-
-/** Strip /{door}/… prefix; returns null if door required and missing/wrong. */
-function routePath(pathname) {
-  const raw = pathname || "/";
-  if (DOOR_OPEN) return { ok: true, path: raw === "" ? "/" : raw };
-
-  const parts = raw.split("/").filter(Boolean);
-  if (parts.length === 0) return { ok: false, path: "/", needDoor: true };
-
-  const head = parts[0].toLowerCase();
-  // reserved top-level words that are never doors
-  if (
-    head === "enter" || head === "login" || head === "setup" ||
-    RESERVED_DOOR_WORDS.has(head)
-  ) {
-    return { ok: false, path: raw, needDoor: true };
-  }
-
-  if (doorNeedsSetup()) return { ok: false, path: raw, needSetup: true };
-  if (!doorMatches(head)) return { ok: false, path: raw, badDoor: true };
-
-  const rest = "/" + parts.slice(1).join("/");
-  return { ok: true, path: rest === "/" ? "/" : rest.replace(/\/$/, "") || "/" };
-}
-
-// ---------- pack (storage) ----------
-
-async function ensurePack() {
-  await mkdir(NOTES_DIR, { recursive: true });
-  await mkdir(TEXT_DIR, { recursive: true });
-  await mkdir(ATTACH_DIR, { recursive: true });
-  const protocolPath = path.join(PACK_DIR, "protocol.json");
+async function pathExists(p) {
   try {
-    await readFile(protocolPath);
+    await access(p);
+    return true;
   } catch {
+    return false;
+  }
+}
+
+async function isPackDirectory(dir) {
+  return pathExists(path.join(dir, "notes")) || pathExists(path.join(dir, "protocol.json"));
+}
+
+async function packExists(phrase) {
+  const dir = packPathFor(phrase);
+  if (!dir) return false;
+  return isPackDirectory(dir);
+}
+
+async function ensurePackDirs(dir) {
+  await mkdir(path.join(dir, "notes"), { recursive: true });
+  await mkdir(path.join(dir, "attachments"), { recursive: true });
+  await mkdir(TEXT_DIR, { recursive: true });
+  const protocolPath = path.join(dir, "protocol.json");
+  if (!(await pathExists(protocolPath))) {
     await writeFile(
       protocolPath,
       JSON.stringify(
@@ -220,15 +181,134 @@ async function ensurePack() {
       ) + "\n",
     );
   }
-  await ensureDoor();
 }
+
+/**
+ * Create a new empty pack for phrase. Fails if that key already has a pack.
+ * @returns {Promise<string>} normalized phrase
+ */
+async function createPack(phrase) {
+  if (DOOR_OPEN) {
+    throw new Error("this site is open without a key — nothing to create");
+  }
+  const p = normalizeDoorPhrase(phrase);
+  if (!isValidDoorPhrase(p)) {
+    throw new Error("use 3–8 short words, e.g. quiet-river-lantern-notes");
+  }
+  const dir = packPathFor(p);
+  if (!dir) throw new Error("invalid key");
+  if (await packExists(p)) {
+    throw new Error("that key already has notes — open it from the sign-in page");
+  }
+  await mkdir(PACKS_ROOT, { recursive: true });
+  await ensurePackDirs(dir);
+  await writeFile(path.join(dir, "door"), p + "\n", { mode: 0o600 });
+  return p;
+}
+
+/** Run fn with pack context for an existing pack (or open pack in DOOR_OPEN). */
+async function withPack(phrase, fn) {
+  let doorPhrase = "";
+  let dir;
+  if (DOOR_OPEN) {
+    doorPhrase = "";
+    dir = path.join(PACKS_ROOT, OPEN_PACK_ID);
+  } else {
+    doorPhrase = normalizeDoorPhrase(phrase);
+    if (!isValidDoorPhrase(doorPhrase)) {
+      throw new Error("invalid pack key");
+    }
+    dir = packPathFor(doorPhrase);
+    if (!(await isPackDirectory(dir))) {
+      throw new Error("pack not found");
+    }
+  }
+  await ensurePackDirs(dir);
+  return packStore.run({ door: doorPhrase, packDir: dir }, fn);
+}
+
+/** True when the browser is on the same machine as the server (safe first-open). */
+function isLocalClient(req) {
+  const raw = String(req.socket?.remoteAddress || "");
+  const ip = raw.replace(/^::ffff:/, "");
+  return ip === "127.0.0.1" || ip === "::1" || ip === "localhost";
+}
+
+/**
+ * Strip /{door}/… prefix; resolve pack.
+ * Returns { ok, path, door?, badDoor?, needDoor? }.
+ */
+function routePath(pathname) {
+  const raw = pathname || "/";
+  if (DOOR_OPEN) return { ok: true, path: raw === "" ? "/" : raw, door: "" };
+
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 0) return { ok: false, path: "/", needDoor: true };
+
+  const head = parts[0].toLowerCase();
+  if (
+    head === "enter" || head === "login" || head === "setup" ||
+    RESERVED_DOOR_WORDS.has(head)
+  ) {
+    return { ok: false, path: raw, needDoor: true };
+  }
+
+  const phrase = normalizeDoorPhrase(head);
+  if (!isValidDoorPhrase(phrase)) {
+    return { ok: false, path: raw, badDoor: true };
+  }
+
+  const rest = "/" + parts.slice(1).join("/");
+  return {
+    ok: true,
+    door: phrase,
+    path: rest === "/" ? "/" : rest.replace(/\/$/, "") || "/",
+  };
+}
+
+// ---------- multipack boot ----------
+
+async function listKnownPackDoors() {
+  let entries;
+  try {
+    entries = await readdir(PACKS_ROOT, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const doors = [];
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    if (ent.name.startsWith("_")) continue;
+    if (!isValidDoorPhrase(ent.name)) continue;
+    if (await isPackDirectory(path.join(PACKS_ROOT, ent.name))) {
+      doors.push(ent.name);
+    }
+  }
+  return doors.sort();
+}
+
+async function ensurePacksRoot() {
+  await mkdir(PACKS_ROOT, { recursive: true });
+  await mkdir(TEXT_DIR, { recursive: true });
+  if (DOOR_OPEN) {
+    await ensurePackDirs(path.join(PACKS_ROOT, OPEN_PACK_ID));
+  }
+  // Optional boot pack (self-host convenience via DOOR=)
+  const boot = normalizeDoorPhrase(BOOT_DOOR);
+  if (boot && isValidDoorPhrase(boot) && !(await packExists(boot))) {
+    await createPack(boot);
+    console.log(`created boot pack: ${boot}`);
+  }
+}
+
+// ---------- pack (storage) ----------
 
 const newAttId = () => `att_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 
 function attachBlobPath(sha256) {
   const hex = String(sha256 || "").toLowerCase().replace(/[^a-f0-9]/g, "");
   if (hex.length !== 64) return null;
-  return path.join(ATTACH_DIR, hex);
+  return path.join(attachDir(), hex);
 }
 
 async function writeAttachmentBlob(buf) {
@@ -281,7 +361,7 @@ function normalizeAttachments(list) {
 }
 
 function notePath(slug) {
-  return path.join(NOTES_DIR, `${slug}.json`);
+  return path.join(notesDir(), `${slug}.json`);
 }
 
 async function readNote(slug) {
@@ -299,7 +379,7 @@ async function writeNote(note) {
 async function listNotes() {
   let files;
   try {
-    files = await readdir(NOTES_DIR);
+    files = await readdir(notesDir());
   } catch {
     return [];
   }
@@ -307,7 +387,7 @@ async function listNotes() {
   for (const f of files) {
     if (!f.endsWith(".json")) continue;
     try {
-      notes.push(hydrate(JSON.parse(await readFile(path.join(NOTES_DIR, f), "utf8"))));
+      notes.push(hydrate(JSON.parse(await readFile(path.join(notesDir(), f), "utf8"))));
     } catch {
       // skip unreadable entries; the pack stays best-effort readable
     }
@@ -3827,7 +3907,7 @@ function webManifest(startUrl) {
 
 /** Preferred install start: door home when known, else site root. */
 function defaultStartUrl() {
-  if (!DOOR_OPEN && DOOR) return `/${DOOR}/`;
+  if (!DOOR_OPEN && door()) return `/${door()}/`;
   return "/";
 }
 
@@ -4036,38 +4116,30 @@ function cryptoBarHtml({ locked = false } = {}) {
   </script>`;
 }
 
-/** Create or replace the notes key (always available from sign-in). */
-function renderSetupDoor({ error = "", suggested = "", replacing = false } = {}) {
+/** Create a new pack keyed by a multiword phrase. */
+function renderSetupDoor({ error = "", suggested = "" } = {}) {
   const suggestion = suggested || "quiet-river-lantern-notes";
-  const replacingNote = replacing
-    ? `<p class="login-error" role="status">You already have a key. A new one keeps your notes but <strong>old links stop working</strong> — bookmark the new one.</p>`
-    : "";
-  const envPinned = DOOR_FROM_ENV
-    ? `<p class="login-error" role="alert">This site’s key is fixed by whoever hosts it. Ask them for the link (you can’t change it here).</p>`
-    : "";
   const body = `
     <h1>keyverse</h1>
-    <p class="lead">${replacing ? "Choose a new key for your notes." : "Choose a key for your notes."} No account needed.</p>
+    <p class="lead">Create your notes. Your key is four words — no account.</p>
     ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
-    ${envPinned}
-    ${replacingNote}
     <form class="login-form" method="post" action="/setup" id="setup-form">
       <label for="door">Your key</label>
       <input type="text" id="door" name="door"
         value="${esc(suggestion)}"
         placeholder="four-words-like-this"
         autocomplete="off" autocapitalize="off" spellcheck="false"
-        required autofocus ${DOOR_FROM_ENV ? "disabled" : ""}>
-      <button type="submit" class="login-btn" name="intent" value="claim"
-        ${DOOR_FROM_ENV ? "disabled" : ""}>${replacing ? "Use this key and open" : "Create and open notes"}</button>
+        required autofocus>
+      <button type="submit" class="login-btn" name="intent" value="claim">Create and open notes</button>
       <button type="submit" class="login-btn login-btn-secondary" name="intent" value="generate"
-        formnovalidate ${DOOR_FROM_ENV ? "disabled" : ""}>Suggest another key</button>
+        formnovalidate>Suggest another key</button>
     </form>
-    <p class="muted" style="margin-top:1rem"><a href="/">← Back</a></p>
+    <p class="muted" style="margin-top:1rem"><a href="/">← Already have a key?</a></p>
     <details class="login-more">
       <summary>How keys work</summary>
-      <p>Your key is four words that open your notes — like a password, but also the link
-        (e.g. <code>…/quiet-river-lantern-notes/</code>). Bookmark it. Anyone with the link can open the same notes.</p>
+      <p>Your key is four words that open <strong>your</strong> pack of notes — also the link
+        (e.g. <code>…/quiet-river-lantern-notes/</code>). Bookmark it. Anyone with the link can open the same notes.
+        A different key is a different pack.</p>
     </details>
     ${siteFooterHtml({ install: false })}`;
 
@@ -4093,18 +4165,13 @@ function renderSetupDoor({ error = "", suggested = "", replacing = false } = {})
 }
 
 /**
- * Sign-in when a key already exists.
- * Local: one-tap open. Remote: enter key. Always offer create a new key.
+ * Sign-in: open an existing pack by multiword key.
+ * Local: one-tap open via last key in localStorage.
  */
 function renderEnterDoor({ error = "", local = false } = {}) {
-  if (doorNeedsSetup()) {
-    return renderSetupDoor({ error, replacing: false });
-  }
-  const openHref = DOOR ? `/${DOOR}/` : "/";
-  const showLocal = local && !!DOOR;
   const createKeyLink = `<p class="muted" style="margin-top:1.1rem">
       <a href="/setup">Create a new key</a>
-      <span style="opacity:.55"> — keeps your notes; old links stop working</span>
+      <span style="opacity:.55"> — starts a new empty pack of notes</span>
     </p>`;
 
   const keyForm = (opts = {}) => {
@@ -4120,12 +4187,12 @@ function renderEnterDoor({ error = "", local = false } = {}) {
   };
 
   let body;
-  if (showLocal) {
+  if (local) {
     body = `
       <h1>keyverse</h1>
-      <p class="lead">Your scripture notes on this device.</p>
+      <p class="lead">Your scripture notes.</p>
       ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
-      <a class="login-btn" href="${esc(openHref)}">Open my notes</a>
+      <a class="login-btn" href="#" id="open-my-notes">Open my notes</a>
       <details class="login-more"${error ? " open" : ""}>
         <summary>Use a different key</summary>
         ${keyForm({ required: true, autofocus: !!error, btn: "Continue" })}
@@ -4157,11 +4224,18 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       var KEY = "vp_door_key";
       var input = document.getElementById("door");
       var form = document.getElementById("login-form");
+      var openMine = document.getElementById("open-my-notes");
+      try {
+        var saved = localStorage.getItem(KEY);
+        if (saved) {
+          if (input && !input.value) input.value = saved;
+          if (openMine) openMine.href = "/" + saved.replace(/\\s+/g, "-").toLowerCase() + "/";
+        } else if (openMine) {
+          openMine.href = "/setup";
+          openMine.textContent = "Create my notes";
+        }
+      } catch (e) {}
       if (input && form) {
-        try {
-          var saved = localStorage.getItem(KEY);
-          if (saved && !input.value) input.value = saved;
-        } catch (e) {}
         form.addEventListener("submit", function () {
           var v = (input.value || "").trim().toLowerCase().replace(/\\s+/g, "-");
           if (v) try { localStorage.setItem(KEY, v); } catch (e) {}
@@ -4176,7 +4250,7 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       if (hint && isIOS && !isStandalone) hint.classList.add("show");
     })();
     </script>`,
-    { manifestScope: showLocal ? basePath() : "" },
+    { manifestScope: "" },
   );
 }
 
@@ -4403,8 +4477,8 @@ function publicOrigin(req, originParam) {
 
 /** Full pack door URL (trailing slash) for sharing. */
 function packShareUrl(req, originParam) {
-  if (DOOR_OPEN || !DOOR) return publicOrigin(req, originParam) + "/";
-  return `${publicOrigin(req, originParam)}/${DOOR}/`;
+  if (DOOR_OPEN || !door()) return publicOrigin(req, originParam) + "/";
+  return `${publicOrigin(req, originParam)}/${door()}/`;
 }
 
 async function shareQrSvg(text) {
@@ -4419,8 +4493,8 @@ async function shareQrSvg(text) {
 
 /** Multiword key → bookplate overlay (serif key + QR seal + Share / Copy). */
 function doorShareChipHtml() {
-  if (DOOR_OPEN || !DOOR) return "";
-  const keyLabel = esc(DOOR);
+  if (DOOR_OPEN || !door()) return "";
+  const keyLabel = esc(door());
   return `<div class="door-share-wrap" id="door-share-wrap" data-open="0">
     <button type="button" class="door-share" id="door-share"
       title="Share your notes link" aria-label="Share notes link: ${keyLabel}"
@@ -4452,7 +4526,7 @@ function doorShareChipHtml() {
     var action = document.getElementById("door-share-action");
     var copyBtn = document.getElementById("door-share-copy");
     if (!wrap || !btn || !panel || !closeBtn || !qrEl || !action || !copyBtn) return;
-    var key = ${JSON.stringify(DOOR)};
+    var key = ${JSON.stringify(door())};
     var ready = false;
     var loading = false;
 
@@ -6126,7 +6200,9 @@ function protocolInfo() {
   return {
     protocol: PROTOCOL_NAME,
     version: PROTOCOL_VERSION,
-    door: !DOOR_OPEN && !!DOOR,
+    multipack: !DOOR_OPEN,
+    door: !DOOR_OPEN && !!door(),
+    door_phrase: door() || null,
     door_open: DOOR_OPEN,
     cors: !corsDisabled(),
     max_attach_bytes: MAX_ATTACH_BYTES,
@@ -6136,7 +6212,8 @@ function protocolInfo() {
       encryption: true,
       suggest: true,
       resolve: true,
-      share_qr: !DOOR_OPEN && !!DOOR,
+      share_qr: !DOOR_OPEN && !!door(),
+      multipack: !DOOR_OPEN,
       pwa: true,
     },
     endpoints: [
@@ -6210,7 +6287,9 @@ const server = http.createServer(async (req, res) => {
           ok: true,
           protocol: PROTOCOL_NAME,
           version: PROTOCOL_VERSION,
-          door: !DOOR_OPEN && !!DOOR,
+          multipack: !DOOR_OPEN,
+          door_open: DOOR_OPEN,
+          packs_root: PACKS_ROOT,
         }) + "\n";
         res.writeHead(200, {
           "content-type": "application/json; charset=utf-8",
@@ -6244,18 +6323,15 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // ----- create / replace multiword key (always available; not gated on local state) -----
+    // ----- create a new pack (new multiword key) -----
     if (p === "/setup" || p === "/setup/") {
       if (DOOR_OPEN) {
         res.writeHead(302, { location: "/", "cache-control": "no-store" });
         return res.end();
       }
-      const setupOpts = () => ({
-        replacing: !doorNeedsSetup(),
-      });
       if (req.method === "GET" || req.method === "HEAD") {
         const suggested = await generateDoorPhrase();
-        return html(res, 200, renderSetupDoor({ ...setupOpts(), suggested }));
+        return html(res, 200, renderSetupDoor({ suggested }));
       }
       if (req.method === "POST") {
         let body = "";
@@ -6263,7 +6339,6 @@ const server = http.createServer(async (req, res) => {
           body = await readBody(req);
         } catch {
           return html(res, 400, renderSetupDoor({
-            ...setupOpts(),
             error: "Could not read form.",
             suggested: await generateDoorPhrase(),
           }));
@@ -6272,12 +6347,11 @@ const server = http.createServer(async (req, res) => {
         const intent = String(params.get("intent") || "claim");
         if (intent === "generate") {
           return html(res, 200, renderSetupDoor({
-            ...setupOpts(),
             suggested: await generateDoorPhrase(),
           }));
         }
         try {
-          const claimed = await setDoor(params.get("door"));
+          const claimed = await createPack(params.get("door"));
           res.writeHead(302, {
             location: `/${claimed}/`,
             "cache-control": "no-store",
@@ -6285,7 +6359,6 @@ const server = http.createServer(async (req, res) => {
           return res.end();
         } catch (err) {
           return html(res, 400, renderSetupDoor({
-            ...setupOpts(),
             error: String(err?.message || err),
             suggested: normalizeDoorPhrase(params.get("door")) || (await generateDoorPhrase()),
           }));
@@ -6295,13 +6368,9 @@ const server = http.createServer(async (req, res) => {
       return res.end("method not allowed");
     }
 
-    // ----- sign-in (multiword key in the URL path) -----
+    // ----- sign-in (open existing pack by multiword key) -----
     // GET /enter?door=… or /login?door=…  →  /{key}/
     if (req.method === "GET" && (p === "/enter" || p === "/enter/" || p === "/login" || p === "/login/")) {
-      if (doorNeedsSetup()) {
-        res.writeHead(302, { location: "/setup", "cache-control": "no-store" });
-        return res.end();
-      }
       const phrase = normalizeDoorPhrase(url.searchParams.get("door") || url.searchParams.get("q") || "");
       const local = isLocalClient(req);
       if (!phrase) {
@@ -6310,7 +6379,7 @@ const server = http.createServer(async (req, res) => {
           local,
         }));
       }
-      if (!DOOR_OPEN && phrase !== DOOR) {
+      if (!DOOR_OPEN && !(await packExists(phrase))) {
         return html(res, 200, renderEnterDoor({
           error: "That key didn’t work. Check the words and try again.",
           local,
@@ -6320,25 +6389,17 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
-    // bare / without door → setup (first run) or sign-in (local: one-tap open)
+    // bare / without door → sign-in (or open pack when DOOR_OPEN)
     if (!DOOR_OPEN && (p === "/" || p === "")) {
-      if (doorNeedsSetup()) {
-        res.writeHead(302, { location: "/setup", "cache-control": "no-store" });
-        return res.end();
-      }
       return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
     }
 
     const routed = routePath(p);
     if (!routed.ok) {
-      if (routed.needSetup || doorNeedsSetup()) {
-        res.writeHead(302, { location: "/setup", "cache-control": "no-store" });
-        return res.end();
-      }
       if (routed.needDoor) {
         return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
       }
-      // wrong key: do not confirm whether notes exist
+      // wrong / unknown key: do not confirm whether a pack exists
       return html(res, 404, page("keyverse", `<div class="login">
         <h1>keyverse</h1>
         <p class="lead">That link didn’t open anything.</p>
@@ -6346,6 +6407,21 @@ const server = http.createServer(async (req, res) => {
           · <a href="/setup">Create a new key</a></p>
       </div>`));
     }
+
+    // Pack must exist (unless open demo). Unknown phrase → same generic 404.
+    if (!DOOR_OPEN) {
+      if (!(await packExists(routed.door))) {
+        return html(res, 404, page("keyverse", `<div class="login">
+          <h1>keyverse</h1>
+          <p class="lead">That link didn’t open anything.</p>
+          <p class="muted"><a href="/">Try your key again</a>
+            · <a href="/setup">Create a new key</a></p>
+        </div>`));
+      }
+    }
+
+    // All pack-scoped handlers run inside pack context
+    return withPack(DOOR_OPEN ? OPEN_PACK_ID : routed.door, async () => {
     p = routed.path;
     // normalize trailing slash on app root inside door
     if (p === "") p = "/";
@@ -6391,7 +6467,7 @@ const server = http.createServer(async (req, res) => {
 
     // GET /api/share-qr?origin=https%3A%2F%2Fhost — SVG QR for this pack’s door URL
     if (req.method === "GET" && p === "/api/share-qr") {
-      if (DOOR_OPEN || !DOOR) {
+      if (DOOR_OPEN || !door()) {
         res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         return res.end("no door");
       }
@@ -6761,25 +6837,31 @@ const server = http.createServer(async (req, res) => {
     }
 
     json(res, 404, { error: "not found" });
+    }); // withPack
   } catch (err) {
     json(res, 500, { error: String(err?.message || err) });
   }
 });
 
-await ensurePack();
-server.listen(PORT, HOST, () => {
+await ensurePacksRoot();
+server.listen(PORT, HOST, async () => {
   const hostLabel = HOST === "0.0.0.0" ? "localhost" : HOST;
   const root = `http://${hostLabel}:${PORT}`;
   if (DOOR_OPEN) {
     console.log(`keyverse: ${root}/  (DOOR_OPEN — open access, no key)`);
-  } else if (doorNeedsSetup()) {
-    console.log(`keyverse: ${root}/  → create your key in the browser (first open)`);
-    console.log(`setup:    ${root}/setup`);
+    console.log(`pack on disk:   ${path.join(PACKS_ROOT, OPEN_PACK_ID)}`);
   } else {
-    console.log(`keyverse: ${root}/${DOOR}/`);
-    console.log(`open that link (or ${root}/ on this computer → “Open my notes”).`);
-    console.log(`your key: ${DOOR}${DOOR_FROM_ENV ? "  (from DOOR env)" : ""}`);
-    console.log(`new key:  ${root}/setup  (always available)`);
+    const doors = await listKnownPackDoors();
+    console.log(`keyverse multipack: ${root}/`);
+    console.log(`create:  ${root}/setup`);
+    console.log(`open:    ${root}/  (enter your four-word key)`);
+    if (doors.length) {
+      console.log(`packs:   ${doors.length}  (e.g. ${root}/${doors[0]}/)`);
+    } else {
+      console.log(`packs:   none yet — create one at /setup`);
+    }
+    const boot = normalizeDoorPhrase(BOOT_DOOR);
+    if (boot) console.log(`boot key: ${boot}  (from DOOR env)`);
   }
-  console.log(`pack on disk:   ${PACK_DIR}`);
+  console.log(`packs root:     ${PACKS_ROOT}`);
 });
