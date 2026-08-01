@@ -4,15 +4,19 @@ Day-to-day product surface of the reference door. Paths below assume you already
 opened your **multiword door** (`/{door}/…`). See [SELF_HOST.md](./SELF_HOST.md)
 and [ADR 0011](./adr/0011-multiword-door-access.md).
 
-## Open the pack
+## Open your notes (sign in)
 
-1. Start the server and copy the printed URL, e.g.  
-   `http://localhost:4180/quiet-river-lantern/`
-2. Bookmark it. That URL is access (cowyo-style).
-3. If you only remember the words: open `http://host:port/`, paste the phrase,
-   **Open door**.
+There is no account. Your **key** is four words (also the path in your notes URL).
 
-There is no account screen after that.
+| Situation | What to do |
+|-----------|------------|
+| **This computer** (you just ran the server) | Open `http://localhost:4180/` → **Open my notes** |
+| **Link from the terminal** | Open the full URL it printed — you’re in |
+| **Phone / another device** | Open the site → enter your key → **Open notes** |
+| **Return visit** | Bookmark after first open; key is remembered for prefilling |
+| **Share your link** | On home, tap the four-word key → native share sheet (or copies the link) |
+
+Wrong key → try again (the app won’t tell strangers whether a pack exists).
 
 ## Optional encryption (pack passphrase)
 
@@ -43,9 +47,16 @@ for sealed notes.
 
 | Action | Result |
 |--------|--------|
-| Type on the home search box | Goes to editor (`/note/…`) or reader for chapters (`/read/…`) |
+| Type on the home search box | **Reference autocomplete** as you type (books → chapters → verses) |
+| ↑ / ↓ | Move through suggestions |
+| Enter | Open the highlighted suggestion (or submit free text) |
+| Tab | Fill the box with the suggestion and keep typing (e.g. pick a book, then chapter) |
+| Esc | Close the suggestion list |
+| Free text submit | Same as before → editor (`/note/…`) or chapter reader (`/read/…`) |
 | `/go?q=Rom+8:28-30` | Same normalization |
 | Sloppy URL `/note/john.3.16` | 302 to canonical `/note/jhn.3.16` |
+
+API: `GET /api/suggest?q=john+3` (see PROTOCOL §7).
 
 ## Editor (`/note/<slug>`)
 
@@ -53,13 +64,21 @@ for sealed notes.
   (or Tab / Shift-Tab) change indent. Blank bullets are allowed.
 - **Autosave** after a short debounce. Status shows “saved” / “saved · encrypted” /
   “cleared” / errors.
-- **Wiki links:** type `[[John 3:16]]` or `[[John 3:16|label]]`. Shown as links
-  when the outline is read-only (reader / after reload). While editing, text is
-  raw `[[…]]`.
-- **Attachments:** two separate kinds on every note page:
-  - **Files** — “Add file” (any type; multi-select; mobile camera/files via system picker)
-  - **Links** — paste `https://…` and “Add link”  
-  Listed separately; remove with ×. Stored per PROTOCOL §5.
+- **Inline markdown** (stored as markers, like Dotflowy):
+
+  | Type | Example |
+  |------|---------|
+  | Bold | `**loved the world**` |
+  | Italic | `*only Son*` or `_only Son_` |
+  | Strike | `~~old note~~` |
+  | Code | `` `JHN.3.16` `` |
+  | Link | `[essay](https://example.com)` |
+  | Wiki | `[[John 3:16]]` or `[[John 3:16\|label]]` |
+
+  Focus a line → edit **source**. Blur / other lines → **rendered**. Reader
+  always shows rendered form. No nested styles (`***` is not bold+italic).
+- **Attachments:** one quiet list under the note. **+ File**, or **+ Link**
+  (expands to a field; Enter to add, Esc to cancel). Remove with ×.
 - **Within / Part of / Overlaps:** inbox cards — open the related note; they are
   not embedded editors (compose-don’t-absorb).
 

@@ -128,9 +128,32 @@ projection of `indent`; it is never stored nested.
   hook for merge, transclusion, and the future op log.
 - `indent`: non-negative integer, at most one deeper than the previous block
   when projected.
-- `text`: one line, markdown-ish, no newlines.
+- `text`: one line, no newlines. Markers for inline formatting stay **in the
+  string** (source of truth); clients render them for display.
 - Interchange form: `"  ".repeat(indent) + text` joined by `\n`. Parsing and
   serializing MUST round-trip.
+
+### 4.0 Inline markdown (base)
+
+Clients SHOULD render these flat (non-nested) inline forms when showing notes
+to humans. Storage is always the literal markers (dotflowy-style), never HTML.
+
+| Form | Renders as |
+|------|------------|
+| `` `code` `` | monospaced |
+| `**bold**` | strong |
+| `*italic*` or `_italic_` | emphasis (`snake_case` stays literal) |
+| `~~strike~~` | strikethrough |
+| `[label](https://…)` | external link (http/https only) |
+| `[[…]]` / `![[…]]` | wiki / embed (§4.1, §5) |
+
+Rules:
+
+- Flat only: no nested emphasis (`***` is not bold+italic).
+- Code spans are opaque (`` `**not bold**` `` stays literal inside).
+- The reference editor shows **source while a line is focused**, and rendered
+  markdown when idle. Readers always show rendered form.
+- Clients that cannot render MAY show raw markers.
 
 ### 4.1 Cross-references (wiki links)
 
@@ -239,6 +262,10 @@ the door is enabled.
 A serving client SHOULD expose (under `/{door}/` when enabled):
 
 - `GET /api/notes` — every record in the pack.
+- `GET /api/suggest?q=<partial>&limit=8` — passage reference autocomplete
+  (book / chapter / verse / range). Response:
+  `{ "q": "…", "suggestions": [{ "label", "insertText", "canonical", "kind" }] }`.
+  Powered by the same BCV library used for addressing; empty `q` → empty list.
 - `GET /api/note/<slug>` — one record; `?raw` returns the block interchange
   form as `text/plain`.
 - `PUT /api/note/<slug>` — body is either:

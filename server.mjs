@@ -9,6 +9,7 @@ import {
   tryParseAnyPassage,
   formatPassageForDisplay,
   getBookOrder,
+  autocompletePassage,
 } from "grab-bcv";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -97,6 +98,13 @@ function doorMatches(segment) {
   return normalizeDoorPhrase(segment) === DOOR;
 }
 
+/** True when the browser is on the same machine as the server (safe first-open). */
+function isLocalClient(req) {
+  const raw = String(req.socket?.remoteAddress || "");
+  const ip = raw.replace(/^::ffff:/, "");
+  return ip === "127.0.0.1" || ip === "::1" || ip === "localhost";
+}
+
 /** Strip /{door}/… prefix; returns null if door required and missing/wrong. */
 function routePath(pathname) {
   const raw = pathname || "/";
@@ -107,7 +115,7 @@ function routePath(pathname) {
 
   const head = parts[0].toLowerCase();
   // reserved top-level words that are never doors
-  if (head === "enter") return { ok: false, path: raw, needDoor: true };
+  if (head === "enter" || head === "login") return { ok: false, path: raw, needDoor: true };
 
   if (!doorMatches(head)) return { ok: false, path: raw, badDoor: true };
 
@@ -487,36 +495,178 @@ function renderEmbed(target, label, attachments = []) {
   return null;
 }
 
-function linkifyText(text, attachments = []) {
+/**
+ * Base inline markdown for block text (dotflowy-inspired: markers stay in the
+ * stored string; render is flat — no nested emphasis).
+ *
+ * Supported: `code`, **bold**, *italic* / _italic_, ~~strike~~,
+ * [label](https://…), [[wiki]], ![[embed]].
+ * Order: code → wiki/embed → md link → bold → strike → italic.
+ */
+function formatBlockText(text, attachments = []) {
   const s = String(text ?? "");
-  // embeds ![[…]] then wiki [[…]]
-  const re = /(!?)\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g;
-  let out = "", last = 0, m;
-  while ((m = re.exec(s))) {
-    out += esc(s.slice(last, m.index));
-    const isEmbed = m[1] === "!";
-    const target = m[2].trim();
-    const label = m[3] != null ? m[3].trim() : null;
-    if (isEmbed) {
-      const emb = renderEmbed(target, label, attachments);
-      out += emb != null ? emb : esc(m[0]);
-    } else {
-      const resolved = resolveWikiTarget(target);
-      const lab = label || resolved?.label || target;
-      if (resolved) {
-        out += `<a class="wikilink" href="${esc(resolved.href)}" data-wiki="${esc(target)}">${esc(lab)}</a>`;
-      } else {
-        out += esc(m[0]);
+  let i = 0;
+  let out = "";
+
+  const isWord = (ch) => ch != null && /[A-Za-z0-9]/.test(ch);
+
+  while (i < s.length) {
+    // inline code — interior is literal
+    if (s[i] === "`") {
+      const end = s.indexOf("`", i + 1);
+      if (end > i + 1 && !s.slice(i + 1, end).includes("\n")) {
+        out += `<code class="md-code">${esc(s.slice(i + 1, end))}</code>`;
+        i = end + 1;
+        continue;
       }
     }
-    last = m.index + m[0].length;
+
+    // embeds ![[…]] then wiki [[…]]
+    if (s[i] === "!" && s[i + 1] === "[" && s[i + 2] === "[") {
+      const end = s.indexOf("]]", i + 3);
+      if (end >= 0) {
+        const inner = s.slice(i + 3, end);
+        if (!inner.includes("\n")) {
+          const pipe = inner.indexOf("|");
+          const target = (pipe < 0 ? inner : inner.slice(0, pipe)).trim();
+          const label = pipe < 0 ? null : inner.slice(pipe + 1).trim();
+          const emb = renderEmbed(target, label, attachments);
+          out += emb != null ? emb : esc(s.slice(i, end + 2));
+          i = end + 2;
+          continue;
+        }
+      }
+    }
+    if (s[i] === "[" && s[i + 1] === "[") {
+      const end = s.indexOf("]]", i + 2);
+      if (end >= 0) {
+        const inner = s.slice(i + 2, end);
+        if (!inner.includes("\n")) {
+          const pipe = inner.indexOf("|");
+          const target = (pipe < 0 ? inner : inner.slice(0, pipe)).trim();
+          const label = pipe < 0 ? null : inner.slice(pipe + 1).trim();
+          const resolved = resolveWikiTarget(target);
+          const lab = (label && label.length ? label : null) || resolved?.label || target;
+          if (resolved) {
+            out += `<a class="wikilink" href="${esc(resolved.href)}" data-wiki="${esc(target)}">${esc(lab)}</a>`;
+          } else {
+            out += esc(s.slice(i, end + 2));
+          }
+          i = end + 2;
+          continue;
+        }
+      }
+    }
+
+    // markdown link [label](https://…)
+    if (s[i] === "[") {
+      const close = s.indexOf("]", i + 1);
+      if (close > i + 1 && s[close + 1] === "(") {
+        const urlEnd = s.indexOf(")", close + 2);
+        if (urlEnd > close + 2) {
+          const lab = s.slice(i + 1, close);
+          const url = s.slice(close + 2, urlEnd).trim();
+          if (
+            lab &&
+            !lab.includes("\n") &&
+            /^https?:\/\/[^\s]+$/i.test(url)
+          ) {
+            out += `<a class="md-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(lab)}</a>`;
+            i = urlEnd + 1;
+            continue;
+          }
+        }
+      }
+    }
+
+    // **bold**
+    if (s[i] === "*" && s[i + 1] === "*") {
+      const end = s.indexOf("**", i + 2);
+      if (end > i + 2) {
+        const inner = s.slice(i + 2, end);
+        if (inner && !inner.includes("*") && !inner.includes("\n")) {
+          out += `<strong class="md-strong">${esc(inner)}</strong>`;
+          i = end + 2;
+          continue;
+        }
+      }
+    }
+
+    // ~~strike~~
+    if (s[i] === "~" && s[i + 1] === "~") {
+      const end = s.indexOf("~~", i + 2);
+      if (end > i + 2) {
+        const inner = s.slice(i + 2, end);
+        if (inner && !inner.includes("~") && !inner.includes("\n")) {
+          out += `<s class="md-strike">${esc(inner)}</s>`;
+          i = end + 2;
+          continue;
+        }
+      }
+    }
+
+    // *italic*
+    if (s[i] === "*" && s[i + 1] !== "*") {
+      const end = s.indexOf("*", i + 1);
+      if (end > i + 1) {
+        const inner = s.slice(i + 1, end);
+        if (inner && !inner.includes("*") && !inner.includes("\n")) {
+          out += `<em class="md-em">${esc(inner)}</em>`;
+          i = end + 1;
+          continue;
+        }
+      }
+    }
+
+    // _italic_ (not snake_case)
+    if (s[i] === "_") {
+      const prev = i > 0 ? s[i - 1] : " ";
+      if (!isWord(prev)) {
+        const end = s.indexOf("_", i + 1);
+        if (end > i + 1) {
+          const next = end + 1 < s.length ? s[end + 1] : " ";
+          const inner = s.slice(i + 1, end);
+          if (
+            inner &&
+            !inner.includes("_") &&
+            !inner.includes("\n") &&
+            !isWord(next)
+          ) {
+            out += `<em class="md-em">${esc(inner)}</em>`;
+            i = end + 1;
+            continue;
+          }
+        }
+      }
+    }
+
+    // plain run until next marker candidate
+    let j = i + 1;
+    while (j < s.length) {
+      const c = s[j];
+      if (
+        c === "`" ||
+        c === "[" ||
+        c === "*" ||
+        c === "~" ||
+        c === "_" ||
+        (c === "!" && s[j + 1] === "[")
+      ) {
+        break;
+      }
+      j++;
+    }
+    out += esc(s.slice(i, j));
+    i = j;
   }
-  out += esc(s.slice(last));
   return out;
 }
 
-/** @deprecated use linkifyText */
-const linkifyWiki = (text) => linkifyText(text);
+/** @deprecated alias — prefer formatBlockText */
+function linkifyText(text, attachments = []) {
+  return formatBlockText(text, attachments);
+}
+const linkifyWiki = (text) => formatBlockText(text);
 
 const CSS = `
   :root { color-scheme: light dark; }
@@ -540,105 +690,103 @@ const CSS = `
   }
   a.underline:hover, .note-meta a:hover, .prose a:hover, a.wikilink:hover, a.attlink:hover { opacity: 1;
     text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
-  a.wikilink, a.attlink { border-radius: .15rem; }
-  a.wikilink:hover, a.attlink:hover {
+  a.wikilink, a.attlink, a.md-link { border-radius: .15rem; cursor: pointer; }
+  a.wikilink:hover, a.attlink:hover, a.md-link:hover {
     background: color-mix(in srgb, currentColor 6%, transparent);
   }
-  /* attachments: files and links as two first-class kinds */
+  /* attachments — one quiet list + one add row */
   .att-board {
-    margin: 1.1rem 0 1.35rem;
-    display: flex; flex-direction: column; gap: .85rem;
-  }
-  .att-kind-panel {
-    margin: 0;
-    padding: 0;
-  }
-  .att-kind-panel + .att-kind-panel {
-    padding-top: .75rem;
-    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  }
-  .att-kind-title {
+    margin: 1rem 0 0;
     font-family: -apple-system, system-ui, sans-serif;
-    font-size: .72rem; font-weight: 500; letter-spacing: .02em;
-    color: color-mix(in srgb, currentColor 42%, transparent);
-    margin: 0 0 .35rem;
   }
   .att-list { list-style: none; margin: 0; padding: 0; }
   .att-row {
-    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
-    padding: .5rem 0;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
-    font-family: -apple-system, system-ui, sans-serif; font-size: .88rem;
-    min-height: 2.5rem;
+    display: flex; align-items: center; gap: .45rem;
+    padding: .35rem 0;
+    font-size: .88rem;
+    min-height: 2.1rem;
   }
-  .att-row:last-child { border-bottom: 0; }
-  .att-icon {
-    flex: 0 0 auto; width: 1.5rem; text-align: center;
-    opacity: .4; font-size: .85rem; user-select: none;
+  .att-row .attlink {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 22%, transparent);
+    text-underline-offset: .12em;
   }
-  .att-row .attlink { flex: 1 1 8rem; min-width: 0; word-break: break-word; }
+  .att-row .attlink:hover { text-decoration-color: currentColor; }
   .att-meta {
-    flex: 0 1 auto;
-    color: color-mix(in srgb, currentColor 42%, transparent);
-    font-size: .78rem;
-  }
-  .att-empty {
-    margin: 0 0 .35rem;
-    font-family: -apple-system, system-ui, sans-serif;
-    font-size: .85rem;
-    color: color-mix(in srgb, currentColor 40%, transparent);
+    flex: 0 0 auto;
+    color: color-mix(in srgb, currentColor 38%, transparent);
+    font-size: .75rem;
   }
   .att-remove {
     flex: 0 0 auto;
     border: 0; background: transparent; cursor: pointer;
-    color: color-mix(in srgb, currentColor 45%, transparent);
-    font-size: .85rem; line-height: 1; padding: .35rem .45rem;
-    min-height: 2.25rem; min-width: 2.25rem;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    font-size: .9rem; line-height: 1; padding: .25rem .35rem;
+    min-height: 2rem; min-width: 2rem;
     -webkit-tap-highlight-color: transparent;
   }
   .att-remove:hover { color: inherit; }
-  .att-actions {
-    display: flex; flex-wrap: wrap; gap: .4rem; align-items: stretch;
+  .att-add {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .5rem;
     margin-top: .35rem;
   }
-  .att-actions input[type=url] {
-    flex: 1 1 12rem; min-width: 0; font-size: 16px;
-    padding: .55rem .65rem; border-radius: .35rem;
-    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-    background: transparent; color: inherit;
-  }
-  .att-actions button,
-  .att-actions label.att-file-btn {
-    flex: 0 1 auto;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-family: -apple-system, system-ui, sans-serif; font-size: .85rem;
-    padding: .55rem .85rem; border-radius: .35rem; cursor: pointer;
-    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-    background: transparent; color: color-mix(in srgb, currentColor 55%, transparent);
-    min-height: 2.6rem;
+  .att-add input[type=file] { display: none; }
+  .att-file-btn,
+  .att-link-btn {
+    flex: 0 0 auto;
+    display: inline-flex; align-items: center;
+    font: inherit; font-size: .85rem; padding: .45rem .55rem;
+    border: 0; background: transparent; cursor: pointer;
+    color: color-mix(in srgb, currentColor 48%, transparent);
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
-  .att-actions button:hover,
-  .att-actions label.att-file-btn:hover { color: inherit; background: color-mix(in srgb, currentColor 4%, transparent); }
-  .att-actions input[type=file] { display: none; }
+  .att-file-btn:hover,
+  .att-link-btn:hover { color: inherit; }
+  .att-file-btn.busy { opacity: .45; pointer-events: none; cursor: default; }
+  #status {
+    font-variant-numeric: tabular-nums;
+    min-height: 1.1em;
+  }
+  .att-link-wrap {
+    flex: 1 1 10rem; min-width: 0;
+    display: flex; align-items: center;
+  }
+  .att-link-wrap:not([data-open="1"]) .att-url { display: none; }
+  .att-link-wrap[data-open="1"] {
+    flex: 1 1 100%;
+  }
+  .att-link-wrap[data-open="1"] .att-link-btn { display: none; }
+  .att-add input.att-url {
+    flex: 1 1 auto; width: 100%; min-width: 0; font-size: 16px;
+    padding: .45rem .55rem; border-radius: .35rem;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    background: transparent; color: inherit;
+  }
+  .att-add input.att-url:focus {
+    outline: none;
+    border-color: color-mix(in srgb, currentColor 36%, transparent);
+  }
   .att-image img {
     display: block; max-width: min(100%, 22rem); max-height: 14rem;
     margin: .25rem 0; border-radius: .35rem;
   }
   .att-missing { opacity: .45; text-decoration: line-through; }
   .att-thumb {
-    display: block; width: 2.25rem; height: 2.25rem; object-fit: cover;
-    border-radius: .3rem; flex: 0 0 auto;
+    display: block; width: 1.65rem; height: 1.65rem; object-fit: cover;
+    border-radius: .25rem; flex: 0 0 auto;
     background: color-mix(in srgb, currentColor 6%, transparent);
   }
+  .att-icon {
+    flex: 0 0 auto; width: 1.1rem; text-align: center;
+    opacity: .35; font-size: .8rem; user-select: none;
+  }
   @media (max-width: 640px) {
-    .att-board { gap: 1rem; }
-    .att-actions { flex-direction: column; }
-    .att-actions input[type=url],
-    .att-actions button,
-    .att-actions label.att-file-btn { flex: 1 1 auto; width: 100%; }
-    .att-row { min-height: 2.85rem; }
+    .att-row { min-height: 2.5rem; }
+    .att-link-wrap[data-open="1"] { flex: 1 1 100%; }
   }
   code, kbd, .ui { font-family: -apple-system, system-ui, sans-serif; }
   button { font: inherit; color: inherit; }
@@ -649,8 +797,120 @@ const CSS = `
   }
   input:focus, .outliner:focus-within { outline: none;
     border-color: color-mix(in srgb, currentColor 45%, transparent); }
+  /* passage reference autocomplete (home search) */
+  .ref-search { position: relative; }
+  .ref-search input[type=text] { margin: 0; }
+  .ref-suggest {
+    position: absolute; left: 0; right: 0; top: calc(100% + .25rem); z-index: 40;
+    margin: 0; padding: .25rem 0; list-style: none;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: .45rem;
+    background: color-mix(in srgb, Canvas 92%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 .4rem 1.25rem color-mix(in srgb, currentColor 10%, transparent);
+    max-height: min(16rem, 50vh); overflow-y: auto;
+  }
+  .ref-suggest[hidden] { display: none; }
+  .ref-suggest li { margin: 0; }
+  .ref-suggest button {
+    display: flex; align-items: baseline; justify-content: space-between; gap: .75rem;
+    width: 100%; margin: 0; padding: .55rem .75rem;
+    border: 0; background: transparent; cursor: pointer;
+    font: inherit; font-size: .95rem; color: inherit; text-align: left;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ref-suggest button:hover,
+  .ref-suggest li[aria-selected="true"] button {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+  }
+  .ref-suggest .rs-label { font-weight: 500; }
+  .ref-suggest .rs-kind {
+    flex: 0 0 auto; font-size: .75rem;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    text-transform: lowercase;
+  }
+  @media (prefers-color-scheme: dark) {
+    .ref-suggest { background: color-mix(in srgb, #1c1c1e 94%, transparent); }
+  }
   .muted { color: color-mix(in srgb, currentColor 48%, transparent); font-size: .88rem; }
   .ui { font-family: -apple-system, system-ui, sans-serif; font-size: .88rem; }
+  .login {
+    max-width: 20rem; margin: 3rem auto 2rem; padding: 0 .5rem;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .login h1 { font-size: 1.4rem; font-weight: 650; margin: 0 0 .4rem; letter-spacing: -.025em; }
+  .login .lead { margin: 0 0 1.5rem; line-height: 1.4;
+    color: color-mix(in srgb, currentColor 52%, transparent); font-size: .95rem; }
+  .login-form { display: flex; flex-direction: column; gap: .6rem; margin: 0; }
+  .login-form label {
+    font-size: .8rem; font-weight: 500;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+  }
+  .login-form input[type=text] {
+    width: 100%; font-size: 16px; padding: .7rem .8rem;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: .55rem; background: transparent; color: inherit;
+  }
+  .login-form input:focus {
+    outline: none; border-color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  /* solid primary — high contrast, not washed grey */
+  .login-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; box-sizing: border-box;
+    margin: 0; padding: .8rem 1.1rem; min-height: 2.9rem;
+    font: inherit; font-size: .95rem; font-weight: 600;
+    border: 0; border-radius: .55rem; cursor: pointer;
+    text-decoration: none; text-align: center;
+    background: #111; color: #fff;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .login-btn:hover { background: #000; color: #fff; }
+  .login-btn:active { transform: scale(.99); }
+  @media (prefers-color-scheme: dark) {
+    .login-btn { background: #f2f2f2; color: #111; }
+    .login-btn:hover { background: #fff; color: #111; }
+  }
+  .login-error {
+    margin: 0 0 1rem; padding: .65rem .75rem; border-radius: .45rem;
+    font-size: .9rem; line-height: 1.35;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .login-more {
+    margin: 1.35rem 0 0; font-size: .85rem; line-height: 1.45;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+  }
+  .login-more summary {
+    cursor: pointer; list-style: none;
+    color: color-mix(in srgb, currentColor 55%, transparent);
+  }
+  .login-more summary::-webkit-details-marker { display: none; }
+  .login-more summary:hover { color: inherit; }
+  .login-more .login-form { margin-top: .85rem; }
+  .login-more p { margin: .65rem 0 0; }
+  .door-share {
+    display: inline-flex; align-items: center; gap: .35rem;
+    margin: 0; padding: .2rem .45rem; border: 0; border-radius: .35rem;
+    background: transparent; cursor: pointer;
+    font: inherit; font-family: -apple-system, system-ui, sans-serif;
+    font-size: .82rem; letter-spacing: .01em;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    max-width: 100%;
+  }
+  .door-share:hover { color: inherit; background: color-mix(in srgb, currentColor 6%, transparent); }
+  .door-share:active { transform: scale(.98); }
+  .door-share[data-flash="1"] { color: inherit; }
+  .door-share-key {
+    font-variant-ligatures: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: min(14rem, 42vw);
+  }
+  .door-share-hint {
+    flex: 0 0 auto; font-size: .75rem; opacity: .7;
+  }
   .crypto-bar {
     display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem;
     margin: 0 0 1rem; padding: .45rem 0 .55rem;
@@ -780,31 +1040,116 @@ const CSS = `
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   }
   .chapter-note .note { margin: 0; }
-  /* inbox: same list language as the index (flat rows, not filled cards) */
-  .inbox { margin: .15rem 0 0; }
-  .inbox-item {
+  /* related notes (Within / Part of / Overlaps) — clear hierarchy */
+  .related {
+    margin: 1.65rem 0 0;
+    padding-top: 1.15rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .related + .related {
+    margin-top: 1.25rem;
+  }
+  .related-label {
+    margin: 0 0 .15rem;
+    font-size: .7rem;
+    font-weight: 650;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  .related-sub {
+    margin: 0 0 .65rem;
+    font-size: .82rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    line-height: 1.35;
+  }
+  .inbox { margin: 0; display: flex; flex-direction: column; gap: .4rem; }
+
+  /* Within = contained notes: primary cards */
+  .related-within .inbox-item {
     display: block; text-decoration: none; color: inherit;
-    padding: .55rem 0;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    padding: .7rem .8rem;
+    border-radius: .45rem;
+    border: 1px solid color-mix(in srgb, currentColor 11%, transparent);
+    background: transparent;
   }
-  .inbox-item:hover {
+  .related-within .inbox-item:hover {
     background: color-mix(in srgb, currentColor 4%, transparent);
-    margin: 0 -.35rem; padding-left: .35rem; padding-right: .35rem; border-radius: .25rem;
+    border-color: color-mix(in srgb, currentColor 18%, transparent);
   }
+  .related-within .inbox-title {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: 1.02rem; font-weight: 600;
+  }
+  .related-within .inbox-excerpt {
+    margin: .3rem 0 0;
+    font-size: .9rem;
+    color: color-mix(in srgb, currentColor 52%, transparent);
+    line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Part of = parents: quieter compact links */
+  .related-parent .inbox {
+    gap: .2rem;
+  }
+  .related-parent .inbox-item {
+    display: block; text-decoration: none; color: inherit;
+    padding: .45rem .55rem;
+    border-radius: .35rem;
+    border: 0;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+  }
+  .related-parent .inbox-item:hover {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+  }
+  .related-parent .inbox-title {
+    font-size: .95rem; font-weight: 550;
+    color: color-mix(in srgb, currentColor 78%, transparent);
+  }
+  .related-parent .inbox-excerpt {
+    margin: .1rem 0 0;
+    font-size: .82rem;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .related-parent .inbox-excerpt.is-empty {
+    font-style: italic;
+    opacity: .75;
+  }
+
+  /* Overlaps = peer ranges: between the two */
+  .related-overlap .inbox-item {
+    display: block; text-decoration: none; color: inherit;
+    padding: .55rem .65rem;
+    border-radius: .4rem;
+    border-left: 2px solid color-mix(in srgb, currentColor 18%, transparent);
+    background: color-mix(in srgb, currentColor 3%, transparent);
+  }
+  .related-overlap .inbox-item:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .related-overlap .inbox-title { font-size: .98rem; font-weight: 600; }
+  .related-overlap .inbox-excerpt {
+    margin: .2rem 0 0;
+    font-size: .86rem;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
   .inbox-top {
     display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap;
   }
-  .inbox-title { font-weight: 600; margin-right: .1rem; }
   .inbox-kind {
-    font-family: -apple-system, system-ui, sans-serif;
-    font-size: .78rem;
-    color: color-mix(in srgb, currentColor 45%, transparent);
-  }
-  .inbox-excerpt {
-    margin: .15rem 0 0;
-    font-size: .88rem;
-    color: color-mix(in srgb, currentColor 48%, transparent);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .02em;
+    color: color-mix(in srgb, currentColor 40%, transparent);
   }
 
   /*
@@ -847,6 +1192,37 @@ const CSS = `
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* base inline markdown (markers stored in text; rendered in view mode) */
+  .md-strong { font-weight: 650; }
+  .md-em { font-style: italic; }
+  .md-strike { text-decoration: line-through; opacity: .85; }
+  .md-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .88em;
+    padding: .08em .32em;
+    border-radius: .28rem;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .md-link {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 28%, transparent);
+    text-underline-offset: .12em;
+  }
+  .md-link:hover { text-decoration-color: currentColor; }
+  .otext.view .md-code,
+  .otxt .md-code { font-size: .86em; }
+  .otext.view {
+    cursor: text;
+    min-height: var(--row-h, 1.55em);
+  }
+  /* wiki / md links stay clickable in view mode; rest of line enters edit */
+  .otext.view a {
+    pointer-events: auto;
+    position: relative;
+    z-index: 1;
+  }
+  .otxt a { pointer-events: auto; }
   /* blank rows keep a full row so the next depth never sits beside them */
   .oline.blank {
     height: var(--row-h);
@@ -931,7 +1307,9 @@ const CSS = `
     header h1 { font-size: 1.12rem; line-height: 1.25; }
     header a, #status { font-size: .82rem; }
     input[type=text] { font-size: 16px; padding: .7rem .75rem; }
-    .note-row, .inbox-item { padding: .7rem 0; min-height: 2.75rem; }
+    .note-row { padding: .7rem 0; min-height: 2.75rem; }
+    .related-within .inbox-item { padding: .75rem .85rem; min-height: 2.75rem; }
+    .related-parent .inbox-item { min-height: 2.5rem; }
     .verse {
       padding: .4rem 0 .4rem 0.85rem;
       margin-left: -0.5rem;
@@ -969,8 +1347,11 @@ const CSS = `
     .otool-btn:hover:not(:disabled) {
       background: color-mix(in srgb, currentColor 4%, transparent);
     }
-    .inbox-excerpt { white-space: normal; display: -webkit-box;
-      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .related-parent .inbox-excerpt,
+    .related-overlap .inbox-excerpt {
+      white-space: normal; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
   }
 
   @media (pointer: coarse) {
@@ -981,9 +1362,130 @@ const CSS = `
 
 // Shared client outliner — sibling/nested rows, no indent syntax to learn.
 // Enter = sibling (or split), Tab/Shift-Tab = nest/unnest, Backspace on empty = delete.
+// Base markdown: stored as markers in text; focused row = source, idle = rendered.
 const OUTLINER_JS = `
 function newId() {
   return "b_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\\"": "&quot;", "'": "&#39;" })[c];
+  });
+}
+
+/** Client twin of formatBlockText (wiki via /go; no attachment embeds in editor). */
+function formatBlockHtml(text) {
+  var s = String(text == null ? "" : text);
+  var i = 0, out = "";
+  var base = typeof BASE === "string" ? BASE : "";
+  function isWord(ch) { return ch != null && /[A-Za-z0-9]/.test(ch); }
+  while (i < s.length) {
+    if (s[i] === "\`") {
+      var ce = s.indexOf("\`", i + 1);
+      if (ce > i + 1 && s.slice(i + 1, ce).indexOf("\\n") < 0) {
+        out += '<code class="md-code">' + escHtml(s.slice(i + 1, ce)) + "</code>";
+        i = ce + 1; continue;
+      }
+    }
+    if (s[i] === "!" && s[i + 1] === "[" && s[i + 2] === "[") {
+      var ee = s.indexOf("]]", i + 3);
+      if (ee >= 0 && s.slice(i + 3, ee).indexOf("\\n") < 0) {
+        var einner = s.slice(i + 3, ee);
+        var epipe = einner.indexOf("|");
+        var et = (epipe < 0 ? einner : einner.slice(0, epipe)).trim();
+        var elab = epipe < 0 ? et : (einner.slice(epipe + 1).trim() || et);
+        if (/^https?:\\/\\//i.test(et)) {
+          out += '<a class="md-link" href="' + escHtml(et) + '" target="_blank" rel="noopener noreferrer">' +
+            escHtml(elab) + "</a>";
+        } else {
+          out += escHtml(s.slice(i, ee + 2));
+        }
+        i = ee + 2; continue;
+      }
+    }
+    if (s[i] === "[" && s[i + 1] === "[") {
+      var we = s.indexOf("]]", i + 2);
+      if (we >= 0 && s.slice(i + 2, we).indexOf("\\n") < 0) {
+        var winner = s.slice(i + 2, we);
+        var wpipe = winner.indexOf("|");
+        var wt = (wpipe < 0 ? winner : winner.slice(0, wpipe)).trim();
+        var wlab = wpipe < 0 ? wt : (winner.slice(wpipe + 1).trim() || wt);
+        out += '<a class="wikilink" href="' + base + "/go?q=" + encodeURIComponent(wt) + '">' +
+          escHtml(wlab) + "</a>";
+        i = we + 2; continue;
+      }
+    }
+    if (s[i] === "[") {
+      var mc = s.indexOf("]", i + 1);
+      if (mc > i + 1 && s[mc + 1] === "(") {
+        var mu = s.indexOf(")", mc + 2);
+        if (mu > mc + 2) {
+          var mlab = s.slice(i + 1, mc);
+          var murl = s.slice(mc + 2, mu).trim();
+          if (mlab && mlab.indexOf("\\n") < 0 && /^https?:\\/\\/[^\\s]+$/i.test(murl)) {
+            out += '<a class="md-link" href="' + escHtml(murl) + '" target="_blank" rel="noopener noreferrer">' +
+              escHtml(mlab) + "</a>";
+            i = mu + 1; continue;
+          }
+        }
+      }
+    }
+    if (s[i] === "*" && s[i + 1] === "*") {
+      var be = s.indexOf("**", i + 2);
+      if (be > i + 2) {
+        var bi = s.slice(i + 2, be);
+        if (bi && bi.indexOf("*") < 0 && bi.indexOf("\\n") < 0) {
+          out += '<strong class="md-strong">' + escHtml(bi) + "</strong>";
+          i = be + 2; continue;
+        }
+      }
+    }
+    if (s[i] === "~" && s[i + 1] === "~") {
+      var se = s.indexOf("~~", i + 2);
+      if (se > i + 2) {
+        var si = s.slice(i + 2, se);
+        if (si && si.indexOf("~") < 0 && si.indexOf("\\n") < 0) {
+          out += '<s class="md-strike">' + escHtml(si) + "</s>";
+          i = se + 2; continue;
+        }
+      }
+    }
+    if (s[i] === "*" && s[i + 1] !== "*") {
+      var ie = s.indexOf("*", i + 1);
+      if (ie > i + 1) {
+        var ii = s.slice(i + 1, ie);
+        if (ii && ii.indexOf("*") < 0 && ii.indexOf("\\n") < 0) {
+          out += '<em class="md-em">' + escHtml(ii) + "</em>";
+          i = ie + 1; continue;
+        }
+      }
+    }
+    if (s[i] === "_") {
+      var prev = i > 0 ? s[i - 1] : " ";
+      if (!isWord(prev)) {
+        var ue = s.indexOf("_", i + 1);
+        if (ue > i + 1) {
+          var un = ue + 1 < s.length ? s[ue + 1] : " ";
+          var ui = s.slice(i + 1, ue);
+          if (ui && ui.indexOf("_") < 0 && ui.indexOf("\\n") < 0 && !isWord(un)) {
+            out += '<em class="md-em">' + escHtml(ui) + "</em>";
+            i = ue + 1; continue;
+          }
+        }
+      }
+    }
+    var j = i + 1;
+    while (j < s.length) {
+      var c = s[j];
+      if (c === "\`" || c === "[" || c === "*" || c === "~" || c === "_" ||
+          (c === "!" && s[j + 1] === "[")) break;
+      j++;
+    }
+    out += escHtml(s.slice(i, j));
+    i = j;
+  }
+  return out;
 }
 
 function mountOutliner(host, opts) {
@@ -1048,6 +1550,7 @@ function mountOutliner(host, opts) {
   function render(focusId, caret) {
     host.innerHTML = "";
     const fresh = blocks.length === 1 && !blocks[0].text.trim();
+    if (focusId) activeId = focusId;
     for (const b of blocks) {
       const row = document.createElement("div");
       row.className = "oblock";
@@ -1060,22 +1563,33 @@ function mountOutliner(host, opts) {
 
       const text = document.createElement("div");
       text.className = "otext";
-      text.contentEditable = "true";
       text.spellcheck = true;
       text.inputMode = "text";
       text.enterKeyHint = "enter";
       // placeholder only on a brand-new empty note — blank bullets stay silent
       if (fresh) text.dataset.placeholder = placeholder;
-      text.textContent = b.text;
+
+      const editing = b.id === activeId;
+      if (editing) {
+        // source mode: raw markdown markers while typing
+        text.contentEditable = "true";
+        text.classList.remove("view");
+        text.textContent = b.text;
+      } else {
+        // view mode: base inline markdown + wiki
+        text.contentEditable = "false";
+        text.classList.add("view");
+        if (b.text && b.text.trim()) text.innerHTML = formatBlockHtml(b.text);
+        else text.textContent = "";
+      }
 
       row.appendChild(bullet);
       row.appendChild(text);
       host.appendChild(row);
     }
     if (focusId) {
-      activeId = focusId;
       const el = host.querySelector('.oblock[data-id="' + CSS.escape(focusId) + '"] .otext');
-      if (el) {
+      if (el && el.isContentEditable) {
         el.focus();
         placeCaret(el, caret == null ? endOf(el) : caret);
       }
@@ -1119,7 +1633,11 @@ function mountOutliner(host, opts) {
     const rows = [...host.querySelectorAll(".oblock")];
     for (const row of rows) {
       const b = blocks.find(x => x.id === row.dataset.id);
-      if (b) b.text = row.querySelector(".otext").textContent.replace(/\\u00a0/g, " ");
+      const el = row.querySelector(".otext");
+      // only source (contenteditable) rows are authoritative; view mode is HTML
+      if (b && el && el.isContentEditable) {
+        b.text = el.textContent.replace(/\\u00a0/g, " ");
+      }
     }
   }
 
@@ -1211,12 +1729,60 @@ function mountOutliner(host, opts) {
   });
 
   host.addEventListener("focusin", (e) => {
+    // focusing a link should not open the source editor
+    if (e.target.closest && e.target.closest("a")) return;
     const row = e.target.closest(".oblock");
-    if (row) { activeId = row.dataset.id; refreshToolbar(); }
+    if (!row) return;
+    const el = row.querySelector(".otext");
+    // click a view-mode row → switch to source for that line
+    if (el && !el.isContentEditable) {
+      const id = row.dataset.id;
+      const b = blocks.find(x => x.id === id);
+      const caret = b && b.text ? b.text.length : 0;
+      render(id, caret);
+      return;
+    }
+    activeId = row.dataset.id;
+    refreshToolbar();
+  });
+
+  host.addEventListener("focusout", (e) => {
+    if (!e.target.classList || !e.target.classList.contains("otext")) return;
+    // when leaving the outliner (not moving to another row), re-render to show markdown
+    const next = e.relatedTarget;
+    if (next && host.contains(next)) return;
+    syncFromDom();
+    const id = activeId;
+    activeId = null;
+    render(null);
+    activeId = id;
+    refreshToolbar();
+  });
+
+  host.addEventListener("pointerdown", (e) => {
+    // let wiki / markdown / attachment links navigate
+    if (e.target.closest("a")) return;
+    const el = e.target.closest(".otext.view");
+    if (!el) return;
+    const row = el.closest(".oblock");
+    if (!row) return;
+    // enter source mode before focus so caret lands in plain text
+    e.preventDefault();
+    const id = row.dataset.id;
+    const b = blocks.find(x => x.id === id);
+    render(id, b && b.text ? b.text.length : 0);
+  });
+
+  // capture click on links so focusin doesn't fight navigation
+  host.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href]");
+    if (!a || !host.contains(a)) return;
+    // allow default navigation (same tab) for internal wiki links
+    e.stopPropagation();
   });
 
   host.addEventListener("input", (e) => {
-    if (!e.target.classList.contains("otext")) return;
+    if (!e.target.classList.contains("otext") || !e.target.isContentEditable) return;
     const row = e.target.closest(".oblock");
     const b = blocks.find(x => x.id === row.dataset.id);
     if (b) b.text = e.target.textContent.replace(/\\u00a0/g, " ");
@@ -1533,36 +2099,98 @@ function cryptoBarHtml({ locked = false } = {}) {
   </script>`;
 }
 
-function renderEnterDoor(error = "") {
+/**
+ * Sign-in at bare `/`.
+ * Local: one solid button. Remote: key field + one button.
+ * Alternate key path is tucked under a details row (not a second primary).
+ */
+function renderEnterDoor({ error = "", local = false } = {}) {
+  const openHref = DOOR ? `/${DOOR}/` : "/";
+  const showLocal = local && !!DOOR;
+
+  const keyForm = (opts = {}) => {
+    const { required = true, autofocus = false, btn = "Open notes" } = opts;
+    return `<form class="login-form" method="get" action="/enter" id="login-form">
+      <label for="door">Your key</label>
+      <input type="text" id="door" name="door"
+        placeholder="four-words-like-this"
+        autocomplete="username" autocapitalize="off" spellcheck="false"
+        ${required ? "required" : ""} ${autofocus ? "autofocus" : ""}>
+      <button type="submit" class="login-btn">${esc(btn)}</button>
+    </form>`;
+  };
+
+  let body;
+  if (showLocal) {
+    // One primary action. Key form only if they open “Use a different key”.
+    body = `
+      <h1>versepack</h1>
+      <p class="lead">Scripture notes on this machine.</p>
+      ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
+      <a class="login-btn" href="${esc(openHref)}">Open my notes</a>
+      <details class="login-more"${error ? " open" : ""}>
+        <summary>Use a different key</summary>
+        ${keyForm({ required: true, autofocus: !!error, btn: "Continue" })}
+      </details>`;
+  } else {
+    body = `
+      <h1>versepack</h1>
+      <p class="lead">Open your notes with your key.</p>
+      ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
+      ${keyForm({ required: true, autofocus: true, btn: "Open notes" })}
+      <details class="login-more">
+        <summary>Don’t have a key?</summary>
+        <p>Use the link from when you set this up, or ask whoever runs the server for their notes link. After you open once, bookmark the page.</p>
+      </details>`;
+  }
+
   return page(
     "versepack",
-    `<header><h1>versepack</h1></header>
-    <p class="ui" style="max-width:28rem;line-height:1.5">
-      Your notes open at a <strong>multiword URL</strong> — same idea as cowyo.
-      There is no account. <em>Knowing the words is access</em> (optional client-side
-      passphrase encryption is separate, set inside the pack).
-    </p>
-    <form class="ui" method="get" action="/enter" style="margin:1.25rem 0;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center">
-      <input type="text" name="door" placeholder="quiet-river-lantern"
-        autocomplete="off" autocapitalize="off" spellcheck="false"
-        style="flex:1 1 14rem;font-size:16px" required>
-      <button type="submit" class="ui" style="flex:0 0 auto;padding:.55rem .75rem;border:1px solid color-mix(in srgb,currentColor 16%,transparent);border-radius:.35rem;background:transparent;cursor:pointer">Open door</button>
-    </form>
-    ${error ? `<p class="muted ui">${esc(error)}</p>` : ""}
-    <p class="muted ui">Bookmark the full URL after you open it. Share the words only with people who should edit this pack.</p>`,
+    `<div class="login">${body}</div>
+    <script>
+    (function () {
+      var KEY = "vp_door_key";
+      var input = document.getElementById("door");
+      var form = document.getElementById("login-form");
+      if (!input || !form) return;
+      try {
+        var saved = localStorage.getItem(KEY);
+        if (saved && !input.value) input.value = saved;
+      } catch (e) {}
+      form.addEventListener("submit", function () {
+        var v = (input.value || "").trim().toLowerCase().replace(/\\s+/g, "-");
+        if (v) try { localStorage.setItem(KEY, v); } catch (e) {}
+      });
+    })();
+    </script>`,
   );
+}
+
+function stripInlineMarkers(text) {
+  let line = String(text || "");
+  // wiki labels
+  line = line.replace(/!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, l) => (l && l.trim()) || t.trim());
+  line = line.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, l) => (l && l.trim()) || t.trim());
+  // md links → label
+  line = line.replace(/\[([^\]]+)\]\(https?:\/\/[^)\s]+\)/gi, "$1");
+  // code / emphasis markers (flat)
+  line = line.replace(/`([^`\n]+)`/g, "$1");
+  line = line.replace(/\*\*([^*]+)\*\*/g, "$1");
+  line = line.replace(/~~([^~]+)~~/g, "$1");
+  line = line.replace(/\*([^*]+)\*/g, "$1");
+  line = line.replace(/(?<![\w])_([^_\n]+)_(?![\w])/g, "$1");
+  return line;
 }
 
 function excerpt(note) {
   if (isEncryptedNote(note)) return "encrypted";
   let line = (note.blocks || []).find((b) => b.text.trim())?.text || "";
-  // show wiki-link labels, not raw [[…]] brackets
-  line = line.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, l) => (l && l.trim()) || t.trim());
+  line = stripInlineMarkers(line);
   return line.length > 90 ? line.slice(0, 90) + "…" : line;
 }
 
 // Read-only outline — same depth grid as the outliner (margin-left: depth * gutter).
-// Block text is linkified: wiki [[passage]] + embeds ![[att:…]] / ![[https://…]].
+// Block text: base markdown + wiki [[passage]] + embeds ![[att:…]] / ![[https://…]].
 function renderOutline(blocks, attachments = []) {
   const items = blocks || [];
   if (!items.length) return "";
@@ -1571,7 +2199,7 @@ function renderOutline(blocks, attachments = []) {
     const empty = !String(b.text || "").trim();
     return `<div class="oline${empty ? " blank" : ""}" style="--depth:${depth}" title="${esc(b.id)}">
       <span class="odot" aria-hidden="true"></span>
-      <span class="otxt">${empty ? "" : linkifyText(b.text, attachments)}</span>
+      <span class="otxt">${empty ? "" : formatBlockText(b.text, attachments)}</span>
     </div>`;
   }).join("")}</div>`;
 }
@@ -1583,19 +2211,18 @@ function fmtBytes(n) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Files and links as two separate kinds (editor: editable; reader: read-only). */
+/** Compact attachments: one list + File / paste-link row (no empty-state chrome). */
 function renderAttachmentsBoard(attachments = [], { editable = false } = {}) {
-  const files = (attachments || []).filter((a) => a.kind === "file");
-  const links = (attachments || []).filter((a) => a.kind === "url");
-  if (!editable && !files.length && !links.length) return "";
+  const list = attachments || [];
+  if (!editable && !list.length) return "";
 
   const removeBtn = (id) =>
     editable
       ? `<button type="button" class="att-remove" data-att="${esc(id)}" title="Remove" aria-label="Remove">\u00d7</button>`
       : "";
 
-  const fileRows = files.length
-    ? files.map((a) => {
+  const rows = list.map((a) => {
+    if (a.kind === "file") {
       const href = u(`/api/attachments/${a.sha256}?name=${encodeURIComponent(a.name || "file")}`);
       const isImg = (a.mime || "").startsWith("image/");
       const icon = isImg
@@ -1604,63 +2231,68 @@ function renderAttachmentsBoard(attachments = [], { editable = false } = {}) {
       return `<li class="att-row" data-att="${esc(a.id)}" data-kind="file">
         ${icon}
         <a class="attlink" href="${esc(href)}" ${isImg ? 'target="_blank" rel="noopener"' : `download="${esc(a.name || "file")}"`}>${esc(a.name || "file")}</a>
-        <span class="att-meta">${esc((a.mime || "file").split(";")[0] || "file")} \u00b7 ${fmtBytes(a.bytes)}</span>
+        <span class="att-meta">${fmtBytes(a.bytes)}</span>
         ${removeBtn(a.id)}
       </li>`;
-    }).join("")
-    : (editable ? `<p class="att-empty">No files yet</p>` : "");
+    }
+    return `<li class="att-row" data-att="${esc(a.id)}" data-kind="url">
+      <span class="att-icon" aria-hidden="true">\u2197</span>
+      <a class="attlink" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title || a.url)}</a>
+      ${removeBtn(a.id)}
+    </li>`;
+  }).join("");
 
-  const linkRows = links.length
-    ? links.map((a) => `<li class="att-row" data-att="${esc(a.id)}" data-kind="url">
-        <span class="att-icon" aria-hidden="true">\u2197</span>
-        <a class="attlink" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title || a.url)}</a>
-        <span class="att-meta">link</span>
-        ${removeBtn(a.id)}
-      </li>`).join("")
-    : (editable ? `<p class="att-empty">No links yet</p>` : "");
-
-  const filePanel = (editable || files.length)
-    ? `<div class="att-kind-panel" data-kind="file">
-        <div class="att-kind-title">Files</div>
-        <ul class="att-list">${fileRows}</ul>
-        ${editable ? `<div class="att-actions">
-          <label class="att-file-btn">Add file
-            <input type="file" id="att-file" multiple accept="*/*">
-          </label>
-        </div>` : ""}
-      </div>`
+  const addRow = editable
+    ? `<form class="att-add" id="att-url-form">
+        <label class="att-file-btn">+ File
+          <input type="file" id="att-file" multiple accept="*/*">
+        </label>
+        <div class="att-link-wrap" id="att-link-wrap">
+          <button type="button" class="att-link-btn" id="att-link-open">+ Link</button>
+          <input class="att-url" type="url" id="att-url" name="url"
+            placeholder="https://…" inputmode="url" autocomplete="url">
+        </div>
+      </form>`
     : "";
 
-  const linkPanel = (editable || links.length)
-    ? `<div class="att-kind-panel" data-kind="url">
-        <div class="att-kind-title">Links</div>
-        <ul class="att-list">${linkRows}</ul>
-        ${editable ? `<form class="att-actions" id="att-url-form">
-          <input type="url" id="att-url" name="url" placeholder="https://\u2026" inputmode="url" autocomplete="url" required>
-          <button type="submit">Add link</button>
-        </form>` : ""}
-      </div>`
-    : "";
-
-  return `<div class="att-board" id="att-board">${filePanel}${linkPanel}</div>`;
+  return `<div class="att-board" id="att-board">
+    ${rows ? `<ul class="att-list">${rows}</ul>` : ""}
+    ${addRow}
+  </div>`;
 }
 
 // Editor page: related notes as inbox items (open the note — don't embed it).
 function inboxItem({ scope, note }) {
   const display = formatPassageForDisplay(scope.parsed);
   const line = excerpt(note);
+  const empty = !line || line === "encrypted";
+  const excerptText = line || "empty";
   return `<a class="inbox-item" href="${u(`/note/${scope.slug}`)}">
     <div class="inbox-top">
       <span class="inbox-title ref">${esc(display)}</span>
       <span class="inbox-kind">${esc(scope.kind)}</span>
     </div>
-    <div class="inbox-excerpt">${esc(line) || "empty"}</div>
+    <div class="inbox-excerpt${empty && !line ? " is-empty" : ""}">${esc(excerptText)}</div>
   </a>`;
 }
 
 function inboxList(entries) {
   if (!entries?.length) return "";
   return `<div class="inbox">${entries.map((e) => inboxItem(e)).join("\n")}</div>`;
+}
+
+/** Section chrome for compose-don’t-absorb related notes. */
+function relatedSection(kind, label, sub, entries) {
+  if (!entries?.length) return "";
+  const cls =
+    kind === "contains" ? "related-within" :
+    kind === "within" ? "related-parent" :
+    "related-overlap";
+  return `<section class="related ${cls}">
+    <h2 class="related-label ui">${esc(label)}</h2>
+    ${sub ? `<p class="related-sub">${esc(sub)}</p>` : ""}
+    ${inboxList(entries)}
+  </section>`;
 }
 
 // Reader: plain outline; click body to edit inline (any scope). Show/hide is verse-level.
@@ -1701,6 +2333,257 @@ function blocksJson(blocks) {
   return JSON.stringify(blocks || []);
 }
 
+/** Clickable multiword key → native share sheet (fallback: copy link). */
+function doorShareChipHtml() {
+  if (DOOR_OPEN || !DOOR) return "";
+  return `<button type="button" class="door-share" id="door-share"
+      title="Share your notes link" aria-label="Share notes link: ${esc(DOOR)}">
+      <span class="door-share-key">${esc(DOOR)}</span>
+      <span class="door-share-hint" aria-hidden="true">↗</span>
+    </button>
+    <script>
+    (function () {
+      var btn = document.getElementById("door-share");
+      if (!btn) return;
+      var key = ${JSON.stringify(DOOR)};
+      var hint = btn.querySelector(".door-share-hint");
+      function packUrl() {
+        return location.origin + "/" + key + "/";
+      }
+      function flash(msg) {
+        if (!hint) return;
+        var prev = hint.textContent;
+        hint.textContent = msg;
+        btn.dataset.flash = "1";
+        setTimeout(function () {
+          hint.textContent = prev;
+          btn.dataset.flash = "0";
+        }, 1400);
+      }
+      async function copyUrl() {
+        var url = packUrl();
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = url; ta.setAttribute("readonly", "");
+            ta.style.position = "fixed"; ta.style.left = "-9999px";
+            document.body.appendChild(ta); ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          flash("copied");
+        } catch (e) {
+          flash("—");
+          window.prompt("Copy your notes link:", url);
+        }
+      }
+      btn.addEventListener("click", async function () {
+        var url = packUrl();
+        if (navigator.share) {
+          try {
+            await navigator.share({
+              title: "versepack",
+              text: "Open my scripture notes",
+              url: url,
+            });
+            return;
+          } catch (err) {
+            // user cancelled or share failed — fall through only on real errors
+            if (err && err.name === "AbortError") return;
+          }
+        }
+        await copyUrl();
+      });
+      // remember key for bare-/ prefill
+      try { localStorage.setItem("vp_door_key", key); } catch (e) {}
+    })();
+    </script>`;
+}
+
+/** Passage autocomplete for the home search box (grab-bcv autocompletePassage). */
+function refSearchHtml() {
+  return `<div class="ref-search" id="ref-search">
+    <form action="${u("/go")}" method="get" id="ref-form" role="search" autocomplete="off">
+      <input class="ui" type="text" name="q" id="ref-input"
+        placeholder="John 3:16" autofocus autocomplete="off" autocorrect="off"
+        autocapitalize="off" spellcheck="false" inputmode="search"
+        role="combobox" aria-autocomplete="list" aria-expanded="false"
+        aria-controls="ref-suggest" aria-haspopup="listbox">
+    </form>
+    <ul class="ref-suggest" id="ref-suggest" role="listbox" hidden></ul>
+  </div>
+  <script>
+  (function () {
+    var input = document.getElementById("ref-input");
+    var list = document.getElementById("ref-suggest");
+    var form = document.getElementById("ref-form");
+    if (!input || !list || !form) return;
+    var items = [];
+    var active = -1;
+    var timer = null;
+    var seq = 0;
+    var base = typeof BASE === "string" ? BASE : "";
+
+    function hide() {
+      list.hidden = true;
+      list.innerHTML = "";
+      items = [];
+      active = -1;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+    }
+
+    function kindLabel(k) {
+      if (k === "book") return "book";
+      if (k === "chapter") return "chapter";
+      if (k === "range") return "range";
+      return "verse";
+    }
+
+    function render() {
+      if (!items.length) { hide(); return; }
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      list.innerHTML = items.map(function (s, i) {
+        var id = "ref-opt-" + i;
+        var sel = i === active ? ' aria-selected="true"' : ' aria-selected="false"';
+        return '<li role="option" id="' + id + '"' + sel + '>' +
+          '<button type="button" data-i="' + i + '">' +
+          '<span class="rs-label"></span><span class="rs-kind"></span></button></li>';
+      }).join("");
+      var rows = list.querySelectorAll("li");
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].querySelector(".rs-label").textContent = items[i].label;
+        rows[i].querySelector(".rs-kind").textContent = kindLabel(items[i].kind);
+      }
+      if (active >= 0) {
+        var el = document.getElementById("ref-opt-" + active);
+        if (el) {
+          input.setAttribute("aria-activedescendant", el.id);
+          el.scrollIntoView({ block: "nearest" });
+        }
+      } else {
+        input.removeAttribute("aria-activedescendant");
+      }
+    }
+
+    function setActive(i) {
+      if (!items.length) { active = -1; return; }
+      active = (i + items.length) % items.length;
+      render();
+    }
+
+    function goHref(s) {
+      // book alone is incomplete for /go — keep typing after insert
+      if (s.kind === "book") return null;
+      var slug = String(s.canonical || "").toLowerCase();
+      if (!slug) return null;
+      if (s.kind === "chapter") return base + "/read/" + slug;
+      return base + "/note/" + slug;
+    }
+
+    function apply(s, opts) {
+      opts = opts || {};
+      if (!s) return;
+      var href = goHref(s);
+      if (href && !opts.insertOnly) {
+        location.href = href;
+        return;
+      }
+      // insert and keep focus (books, or Tab to complete without navigating)
+      var text = s.insertText || s.label || "";
+      if (s.kind === "book" && text && text.slice(-1) !== " ") text += " ";
+      input.value = text;
+      hide();
+      input.focus();
+      try {
+        var n = input.value.length;
+        input.setSelectionRange(n, n);
+      } catch (e) {}
+      // fetch next level of suggestions immediately
+      fetchSuggest(input.value);
+    }
+
+    function fetchSuggest(q) {
+      q = String(q || "").trim();
+      if (q.length < 1) { hide(); return; }
+      var my = ++seq;
+      fetch(base + "/api/suggest?q=" + encodeURIComponent(q) + "&limit=8", {
+        headers: { accept: "application/json" },
+      })
+        .then(function (r) { return r.ok ? r.json() : { suggestions: [] }; })
+        .then(function (data) {
+          if (my !== seq) return;
+          items = (data && data.suggestions) || [];
+          active = items.length ? 0 : -1;
+          render();
+        })
+        .catch(function () { if (my === seq) hide(); });
+    }
+
+    function schedule() {
+      clearTimeout(timer);
+      timer = setTimeout(function () { fetchSuggest(input.value); }, 80);
+    }
+
+    input.addEventListener("input", schedule);
+    input.addEventListener("focus", function () {
+      if (input.value.trim()) fetchSuggest(input.value);
+    });
+
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        if (!list.hidden) { e.preventDefault(); hide(); }
+        return;
+      }
+      if (list.hidden || !items.length) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActive(active < 0 ? 0 : active + 1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActive(active < 0 ? items.length - 1 : active - 1);
+      } else if (e.key === "Tab") {
+        if (active >= 0 && items[active]) {
+          e.preventDefault();
+          apply(items[active], { insertOnly: true });
+        }
+      } else if (e.key === "Enter") {
+        if (active >= 0 && items[active]) {
+          e.preventDefault();
+          apply(items[active]);
+        }
+        // else let form submit /go
+      }
+    });
+
+    list.addEventListener("mousedown", function (e) {
+      // prevent input blur before click
+      e.preventDefault();
+    });
+    list.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-i]");
+      if (!btn) return;
+      var i = Number(btn.getAttribute("data-i"));
+      if (items[i]) apply(items[i]);
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest("#ref-search")) hide();
+    });
+
+    form.addEventListener("submit", function () {
+      // if a suggestion is highlighted and matches, prefer direct nav
+      if (active >= 0 && items[active] && items[active].kind !== "book") {
+        // allow default if value already equals — still fine via /go
+      }
+    });
+  })();
+  </script>`;
+}
+
 async function renderIndex() {
   const notes = await listNotes();
   const rows = notes
@@ -1716,12 +2599,10 @@ async function renderIndex() {
   return page(
     "versepack",
     `<header><h1>versepack</h1>
-      ${!DOOR_OPEN && DOOR ? `<span class="muted ui" title="Your multiword door — bookmark this site">${esc(DOOR)}</span>` : ""}
+      ${doorShareChipHtml()}
     </header>
     ${cryptoBarHtml()}
-    <form action="${u("/go")}" method="get">
-      <input class="ui" type="text" name="q" placeholder="John 3:16" autofocus autocomplete="off">
-    </form>
+    ${refSearchHtml()}
     <p class="muted ui" style="margin-top:.75rem">${notes.length} note${notes.length === 1 ? "" : "s"}</p>
     ${rows || `<p class="muted">Type a passage above.</p>`}`,
   );
@@ -1729,16 +2610,26 @@ async function renderIndex() {
 
 function renderEditor(scope, note, rel) {
   const display = formatPassageForDisplay(scope.parsed);
-  const sections = [];
-  if (rel.contains.length) {
-    sections.push(`<h2 class="ui">Within ${esc(display)}</h2>${inboxList(rel.contains)}`);
-  }
-  if (rel.within.length) {
-    sections.push(`<h2 class="ui">Part of</h2>${inboxList(rel.within)}`);
-  }
-  if (rel.overlaps.length) {
-    sections.push(`<h2 class="ui">Overlaps</h2>${inboxList(rel.overlaps)}`);
-  }
+  const sections = [
+    relatedSection(
+      "contains",
+      "Within",
+      `Notes on passages inside ${display}`,
+      rel.contains,
+    ),
+    relatedSection(
+      "within",
+      "Part of",
+      "Broader passages this note sits in",
+      rel.within,
+    ),
+    relatedSection(
+      "overlaps",
+      "Overlaps",
+      "Ranges that partially overlap this note",
+      rel.overlaps,
+    ),
+  ].filter(Boolean);
   const locked = isEncryptedNote(note);
   const initial = !locked && note?.blocks?.length ? note.blocks : [{ id: "b_new", indent: 0, text: "" }];
   const atts = !locked ? (note?.attachments || []) : [];
@@ -1754,7 +2645,6 @@ function renderEditor(scope, note, rel) {
     ${cryptoBarHtml({ locked })}
     <div id="note-main" ${locked ? "hidden" : ""}>
     <div id="editor"></div>
-    <p class="muted ui hint">Enter new item &middot; nest / unnest &middot; [[John 3:16]] links</p>
     <div id="att-root">${renderAttachmentsBoard(atts, { editable: true })}</div>
     </div>
     <div id="crypto-gate" class="crypto-lock" ${locked ? "" : "hidden"}>
@@ -1777,6 +2667,229 @@ function renderEditor(scope, note, rel) {
       let attachments = JSON.parse(document.getElementById("initial-atts").textContent);
       const cipher = JSON.parse(document.getElementById("initial-cipher").textContent);
       let outlinerApi = null;
+      const attRoot = document.getElementById("att-root");
+      let uploadBusy = false;
+
+      function setStatus(msg) {
+        const el = document.getElementById("status");
+        if (el) el.textContent = msg || "";
+      }
+
+      function escH(s) {
+        return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
+      }
+      function fmtSize(n) {
+        n = Number(n) || 0;
+        if (n < 1024) return n + " B";
+        if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+        return (n / 1048576).toFixed(1) + " MB";
+      }
+      function shortName(name, max) {
+        name = String(name || "file");
+        max = max || 28;
+        if (name.length <= max) return name;
+        return name.slice(0, max - 1) + "\\u2026";
+      }
+
+      function renderAtts() {
+        if (!attRoot) return;
+        const rows = (attachments || []).map(a => {
+          if (a.kind === "file") {
+            const href = BASE + "/api/attachments/" + a.sha256 + "?name=" + encodeURIComponent(a.name || "file");
+            const isImg = (a.mime || "").indexOf("image/") === 0;
+            const icon = isImg
+              ? '<img class="att-thumb" src="' + href + '" alt="">'
+              : '<span class="att-icon" aria-hidden="true">\\u25A1</span>';
+            return '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="file">' +
+              icon +
+              '<a class="attlink" href="' + href + '"' + (isImg ? ' target="_blank" rel="noopener"' : " download") + '>' +
+              escH(a.name || "file") + '</a>' +
+              '<span class="att-meta">' + fmtSize(a.bytes) + '</span>' +
+              '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">\\u00d7</button></li>';
+          }
+          return '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="url">' +
+            '<span class="att-icon" aria-hidden="true">\\u2197</span>' +
+            '<a class="attlink" href="' + escH(a.url) + '" target="_blank" rel="noopener noreferrer">' +
+            escH(a.title || a.url) + '</a>' +
+            '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">\\u00d7</button></li>';
+        }).join("");
+        attRoot.innerHTML =
+          '<div class="att-board" id="att-board">' +
+            (rows ? '<ul class="att-list">' + rows + '</ul>' : '') +
+            '<form class="att-add" id="att-url-form">' +
+              '<label class="att-file-btn' + (uploadBusy ? " busy" : "") + '">+ File' +
+              '<input type="file" id="att-file" multiple accept="*/*"' + (uploadBusy ? " disabled" : "") + '></label>' +
+              '<div class="att-link-wrap" id="att-link-wrap">' +
+                '<button type="button" class="att-link-btn" id="att-link-open">+ Link</button>' +
+                '<input class="att-url" type="url" id="att-url" placeholder="https://\\u2026" inputmode="url" autocomplete="url">' +
+              '</div>' +
+            '</form>' +
+          '</div>';
+        wireAttControls();
+      }
+
+      function newAttIdLocal() {
+        return "att_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      }
+
+      async function reencryptIfNeeded() {
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase() && outlinerApi) {
+          setStatus("encrypting\\u2026");
+          await outlinerApi.flush(true);
+          setStatus("saved \\u00b7 encrypted");
+          return true;
+        }
+        return false;
+      }
+
+      async function postUrl(url) {
+        setStatus("adding link\\u2026");
+        // With a pack passphrase, fold URL into the encrypted envelope (no plaintext on disk).
+        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+          attachments = attachments.concat([{
+            id: newAttIdLocal(), kind: "url", url, created_at: new Date().toISOString(),
+          }]);
+          renderAtts();
+          await reencryptIfNeeded();
+          return;
+        }
+        try {
+          const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind: "url", url }),
+          });
+          if (!r.ok) { setStatus("link failed"); return; }
+          const data = await r.json();
+          if (data.encrypted && data.attachment) {
+            attachments = attachments.concat([data.attachment]);
+          } else {
+            attachments = data.attachments || [];
+          }
+          renderAtts();
+          setStatus("link added");
+        } catch { setStatus("offline"); }
+      }
+
+      async function postFiles(fileList) {
+        const files = [...fileList];
+        if (!files.length) return;
+        uploadBusy = true;
+        renderAtts();
+        const total = files.length;
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const name = shortName(file.name || "file");
+          const size = fmtSize(file.size);
+          setStatus(total > 1
+            ? "uploading " + (i + 1) + "/" + total + " \\u00b7 " + name
+            : "uploading " + name + " (" + size + ")");
+          try {
+            const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
+              method: "POST",
+              headers: {
+                "content-type": file.type || "application/octet-stream",
+                "x-filename": file.name || "file",
+              },
+              body: file,
+            });
+            if (!r.ok) {
+              let detail = "";
+              try {
+                const err = await r.json();
+                if (err && err.error) detail = " \\u00b7 " + err.error;
+              } catch (e) {}
+              setStatus("upload failed \\u00b7 " + name + detail);
+              uploadBusy = false;
+              renderAtts();
+              return;
+            }
+            const data = await r.json();
+            if (data.encrypted && data.attachment) {
+              attachments = attachments.concat([data.attachment]);
+            } else {
+              attachments = data.attachments || [];
+            }
+            renderAtts();
+            if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+              await reencryptIfNeeded();
+            } else {
+              setStatus(total > 1
+                ? "uploaded " + (i + 1) + "/" + total + " \\u00b7 " + name
+                : "uploaded " + name);
+            }
+          } catch {
+            setStatus("upload offline \\u00b7 " + name);
+            uploadBusy = false;
+            renderAtts();
+            return;
+          }
+        }
+        uploadBusy = false;
+        renderAtts();
+        if (!(typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase())) {
+          setStatus(total > 1 ? "uploaded " + total + " files" : "uploaded " + shortName(files[0].name || "file"));
+        }
+      }
+
+      function wireAttControls() {
+        const form = document.getElementById("att-url-form");
+        const wrap = document.getElementById("att-link-wrap");
+        const openBtn = document.getElementById("att-link-open");
+        const input = document.getElementById("att-url");
+
+        function openLinkField() {
+          if (!wrap || !input) return;
+          wrap.dataset.open = "1";
+          input.focus();
+          try { input.select(); } catch (e) {}
+        }
+        function closeLinkField() {
+          if (!wrap || !input) return;
+          if ((input.value || "").trim()) return;
+          wrap.dataset.open = "0";
+          input.value = "";
+        }
+
+        if (openBtn) {
+          openBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            openLinkField();
+          });
+        }
+        if (input) {
+          input.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              input.value = "";
+              if (wrap) wrap.dataset.open = "0";
+              if (openBtn) openBtn.focus();
+            }
+          });
+          input.addEventListener("blur", () => {
+            setTimeout(closeLinkField, 120);
+          });
+        }
+        if (form) {
+          form.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const url = (input && input.value || "").trim();
+            if (!url) { openLinkField(); return; }
+            postUrl(url).then(() => {
+              if (input) input.value = "";
+              if (wrap) wrap.dataset.open = "0";
+            });
+          });
+        }
+        const fileInput = document.getElementById("att-file");
+        if (fileInput) {
+          fileInput.addEventListener("change", (e) => {
+            const files = [...(e.target.files || [])];
+            e.target.value = "";
+            if (files.length) postFiles(files);
+          });
+        }
+      }
 
       function startEditor() {
         const host = document.getElementById("editor");
@@ -1813,6 +2926,42 @@ function renderEditor(scope, note, rel) {
         }
       }
 
+      if (attRoot) {
+        attRoot.addEventListener("click", async (e) => {
+          const btn = e.target.closest(".att-remove");
+          if (!btn) return;
+          e.preventDefault();
+          const id = btn.dataset.att;
+          const removed = attachments.find(a => a.id === id);
+          setStatus("removing\\u2026");
+          if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
+            attachments = attachments.filter(a => a.id !== id);
+            renderAtts();
+            try {
+              let delUrl = BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id);
+              if (removed && removed.kind === "file" && removed.sha256) {
+                delUrl += "?sha256=" + encodeURIComponent(removed.sha256);
+              }
+              await fetch(delUrl, { method: "DELETE" });
+            } catch { /* GC best-effort */ }
+            await reencryptIfNeeded();
+            return;
+          }
+          try {
+            const r = await fetch(BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id), { method: "DELETE" });
+            if (!r.ok) { setStatus("remove failed"); return; }
+            const data = await r.json();
+            if (data.encrypted) {
+              attachments = attachments.filter(a => a.id !== id);
+            } else {
+              attachments = data.attachments || [];
+            }
+            renderAtts();
+            setStatus("removed");
+          } catch { setStatus("offline"); }
+        });
+      }
+
       if (cipher) {
         if (VP_CRYPTO.hasPassphrase()) {
           tryUnlock(VP_CRYPTO.getPassphrase()).then(ok => {
@@ -1826,195 +2975,6 @@ function renderEditor(scope, note, rel) {
       } else {
         startEditor();
       }
-
-      const attRoot = document.getElementById("att-root");
-
-      function escH(s) {
-        return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
-      }
-      function fmtSize(n) {
-        n = Number(n) || 0;
-        if (n < 1024) return n + " B";
-        if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
-        return (n / 1048576).toFixed(1) + " MB";
-      }
-      function renderAtts() {
-        const files = attachments.filter(a => a.kind === "file");
-        const links = attachments.filter(a => a.kind === "url");
-        function fileRows() {
-          if (!files.length) return '<p class="att-empty">No files yet</p>';
-          return '<ul class="att-list">' + files.map(a => {
-            const href = BASE + "/api/attachments/" + a.sha256 + "?name=" + encodeURIComponent(a.name || "file");
-            const isImg = (a.mime || "").indexOf("image/") === 0;
-            const icon = isImg
-              ? '<img class="att-thumb" src="' + href + '" alt="">'
-              : '<span class="att-icon" aria-hidden="true">\\u25A1</span>';
-            return '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="file">' +
-              icon +
-              '<a class="attlink" href="' + href + '"' + (isImg ? ' target="_blank" rel="noopener"' : " download") + '>' +
-              escH(a.name || "file") + '</a>' +
-              '<span class="att-meta">' + escH((a.mime || "file").split(";")[0]) + " \\u00b7 " + fmtSize(a.bytes) + '</span>' +
-              '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">\\u00d7</button></li>';
-          }).join("") + "</ul>";
-        }
-        function linkRows() {
-          if (!links.length) return '<p class="att-empty">No links yet</p>';
-          return '<ul class="att-list">' + links.map(a =>
-            '<li class="att-row" data-att="' + escH(a.id) + '" data-kind="url">' +
-            '<span class="att-icon" aria-hidden="true">\\u2197</span>' +
-            '<a class="attlink" href="' + escH(a.url) + '" target="_blank" rel="noopener noreferrer">' +
-            escH(a.title || a.url) + '</a>' +
-            '<span class="att-meta">link</span>' +
-            '<button type="button" class="att-remove" data-att="' + escH(a.id) + '" aria-label="Remove">\\u00d7</button></li>'
-          ).join("") + "</ul>";
-        }
-        attRoot.innerHTML =
-          '<div class="att-board" id="att-board">' +
-            '<div class="att-kind-panel" data-kind="file">' +
-              '<div class="att-kind-title">Files</div>' + fileRows() +
-              '<div class="att-actions"><label class="att-file-btn">Add file' +
-              '<input type="file" id="att-file" multiple accept="*/*"></label></div>' +
-            '</div>' +
-            '<div class="att-kind-panel" data-kind="url">' +
-              '<div class="att-kind-title">Links</div>' + linkRows() +
-              '<form class="att-actions" id="att-url-form">' +
-              '<input type="url" id="att-url" placeholder="https://\\u2026" inputmode="url" autocomplete="url" required>' +
-              '<button type="submit">Add link</button></form>' +
-            '</div>' +
-          '</div>';
-        wireAttControls();
-      }
-
-      function newAttIdLocal() {
-        return "att_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      }
-
-      async function reencryptIfNeeded() {
-        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase() && outlinerApi) {
-          await outlinerApi.flush(true);
-        }
-      }
-
-      async function postUrl(url) {
-        const status = document.getElementById("status");
-        // With a pack passphrase, fold URL into the encrypted envelope (no plaintext on disk).
-        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
-          attachments = attachments.concat([{
-            id: newAttIdLocal(), kind: "url", url, created_at: new Date().toISOString(),
-          }]);
-          renderAtts();
-          status.textContent = "\\u2026";
-          await reencryptIfNeeded();
-          return;
-        }
-        status.textContent = "\\u2026";
-        try {
-          const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ kind: "url", url }),
-          });
-          if (!r.ok) { status.textContent = "error"; return; }
-          const data = await r.json();
-          if (data.encrypted && data.attachment) {
-            attachments = attachments.concat([data.attachment]);
-          } else {
-            attachments = data.attachments || [];
-          }
-          renderAtts();
-          status.textContent = "saved";
-        } catch { status.textContent = "offline"; }
-      }
-
-      async function postFiles(fileList) {
-        const status = document.getElementById("status");
-        for (const file of fileList) {
-          status.textContent = "\\u2026";
-          try {
-            const r = await fetch(BASE + "/api/note/" + slug + "/attachments", {
-              method: "POST",
-              headers: {
-                "content-type": file.type || "application/octet-stream",
-                "x-filename": file.name || "file",
-              },
-              body: file,
-            });
-            if (!r.ok) { status.textContent = "error"; return; }
-            const data = await r.json();
-            if (data.encrypted && data.attachment) {
-              attachments = attachments.concat([data.attachment]);
-            } else {
-              attachments = data.attachments || [];
-            }
-            renderAtts();
-            // File bytes are content-addressed on disk; metadata goes into cipher when encrypting.
-            if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
-              await reencryptIfNeeded();
-            } else {
-              status.textContent = "saved";
-            }
-          } catch { status.textContent = "offline"; }
-        }
-      }
-
-      function wireAttControls() {
-        const form = document.getElementById("att-url-form");
-        if (form) {
-          form.addEventListener("submit", (e) => {
-            e.preventDefault();
-            const input = document.getElementById("att-url");
-            const url = (input && input.value || "").trim();
-            if (!url) return;
-            postUrl(url).then(() => { if (input) input.value = ""; });
-          });
-        }
-        const fileInput = document.getElementById("att-file");
-        if (fileInput) {
-          fileInput.addEventListener("change", (e) => {
-            const files = [...(e.target.files || [])];
-            e.target.value = "";
-            if (files.length) postFiles(files);
-          });
-        }
-      }
-
-      attRoot.addEventListener("click", async (e) => {
-        const btn = e.target.closest(".att-remove");
-        if (!btn) return;
-        e.preventDefault();
-        const id = btn.dataset.att;
-        const status = document.getElementById("status");
-        const removed = attachments.find(a => a.id === id);
-        status.textContent = "\\u2026";
-        // Encrypted / encrypting: drop locally, re-seal note, optionally GC blob.
-        if (typeof VP_CRYPTO !== "undefined" && VP_CRYPTO.hasPassphrase()) {
-          attachments = attachments.filter(a => a.id !== id);
-          renderAtts();
-          try {
-            let delUrl = BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id);
-            if (removed && removed.kind === "file" && removed.sha256) {
-              delUrl += "?sha256=" + encodeURIComponent(removed.sha256);
-            }
-            await fetch(delUrl, { method: "DELETE" });
-          } catch { /* GC best-effort */ }
-          await reencryptIfNeeded();
-          return;
-        }
-        try {
-          const r = await fetch(BASE + "/api/note/" + slug + "/attachments/" + encodeURIComponent(id), { method: "DELETE" });
-          if (!r.ok) { status.textContent = "error"; return; }
-          const data = await r.json();
-          if (data.encrypted) {
-            attachments = attachments.filter(a => a.id !== id);
-          } else {
-            attachments = data.attachments || [];
-          }
-          renderAtts();
-          status.textContent = "saved";
-        } catch { status.textContent = "offline"; }
-      });
-
-      wireAttControls();
     </script>`,
   );
 }
@@ -2111,33 +3071,6 @@ async function renderRead(scope) {
       const editors = new Map();
       document.querySelector(".verse.hl")?.scrollIntoView({ block: "center" });
 
-      function escHtml(s) {
-        return String(s).replace(/[&<>"']/g, c =>
-          ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
-      }
-      function linkifyWikiClient(text) {
-        const s = String(text || "");
-        let out = "", i = 0;
-        while (i < s.length) {
-          if (s[i] === "[" && s[i + 1] === "[") {
-            const end = s.indexOf("]]", i + 2);
-            if (end < 0) { out += escHtml(s[i]); i++; continue; }
-            const inner = s.slice(i + 2, end);
-            const pipe = inner.indexOf("|");
-            const target = (pipe < 0 ? inner : inner.slice(0, pipe)).trim();
-            const label = (pipe < 0 ? target : inner.slice(pipe + 1).trim()) || target;
-            out += '<a class="wikilink" href="' + BASE + "/go?q=" + encodeURIComponent(target) + '">' +
-              escHtml(label) + "</a>";
-            i = end + 2;
-          } else {
-            let j = i + 1;
-            while (j < s.length && !(s[j] === "[" && s[j + 1] === "[")) j++;
-            out += escHtml(s.slice(i, j));
-            i = j;
-          }
-        }
-        return out;
-      }
       function outlineHtml(blocks) {
         const items = blocks || [];
         if (!items.length) return "";
@@ -2146,7 +3079,7 @@ async function renderRead(scope) {
           const empty = !(b.text && b.text.trim());
           return '<div class="oline' + (empty ? ' blank' : '') + '" style="--depth:' + depth + '">' +
             '<span class="odot" aria-hidden="true"></span>' +
-            '<span class="otxt">' + (empty ? "" : linkifyWikiClient(b.text)) + '</span></div>';
+            '<span class="otxt">' + (empty ? "" : formatBlockHtml(b.text)) + '</span></div>';
         }).join("") + '</div>';
       }
 
@@ -2338,35 +3271,70 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     let p = url.pathname;
 
-    // ----- multiword door (cowyo-style access) -----
-    // GET /enter?door=quiet-river-lantern  →  /quiet-river-lantern/
-    if (req.method === "GET" && (p === "/enter" || p === "/enter/")) {
+    // ----- sign-in (multiword key in the URL path) -----
+    // GET /enter?door=… or /login?door=…  →  /{key}/
+    if (req.method === "GET" && (p === "/enter" || p === "/enter/" || p === "/login" || p === "/login/")) {
       const phrase = normalizeDoorPhrase(url.searchParams.get("door") || url.searchParams.get("q") || "");
-      if (!phrase) return html(res, 200, renderEnterDoor("Type the multiword door from your host."));
-      if (!DOOR_OPEN && phrase !== DOOR) {
-        return html(res, 200, renderEnterDoor("That door does not open this pack."));
+      const local = isLocalClient(req);
+      if (!phrase) {
+        return html(res, 200, renderEnterDoor({
+          error: "Enter your key to open your notes.",
+          local,
+        }));
       }
-      res.writeHead(302, { location: `/${phrase}/` });
+      if (!DOOR_OPEN && phrase !== DOOR) {
+        return html(res, 200, renderEnterDoor({
+          error: "That key didn’t work. Check the words and try again.",
+          local,
+        }));
+      }
+      res.writeHead(302, { location: `/${phrase}/`, "cache-control": "no-store" });
       return res.end();
     }
 
-    // bare / without door → explain frictionless URL key
+    // bare / without door → sign-in (local clients get one-tap open)
     if (!DOOR_OPEN && (p === "/" || p === "")) {
-      return html(res, 200, renderEnterDoor());
+      return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
     }
 
     const routed = routePath(p);
     if (!routed.ok) {
-      if (routed.needDoor) return html(res, 200, renderEnterDoor());
-      // wrong multiword: look like a missing pad (do not confirm which doors exist)
-      return html(res, 404, page("not found", `<p class="ui">Nothing here.</p>
-        <p class="muted ui"><a href="/">Open a door</a></p>`));
+      if (routed.needDoor) {
+        return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
+      }
+      // wrong key: do not confirm whether a pack exists
+      return html(res, 404, page("versepack", `<div class="login">
+        <h1>versepack</h1>
+        <p class="lead">Nothing here.</p>
+        <p class="muted"><a href="/">Sign in</a></p>
+      </div>`));
     }
     p = routed.path;
     // normalize trailing slash on app root inside door
     if (p === "") p = "/";
 
     if (req.method === "GET" && p === "/") return html(res, 200, await renderIndex());
+
+    // GET /api/suggest?q=john+3  — passage reference autocomplete (grab-bcv)
+    if (req.method === "GET" && p === "/api/suggest") {
+      const q = String(url.searchParams.get("q") || "").slice(0, 80);
+      const limit = Math.min(20, Math.max(1, Number(url.searchParams.get("limit")) || 8));
+      let suggestions = [];
+      try {
+        if (q.trim()) suggestions = autocompletePassage(q, { limit });
+      } catch {
+        suggestions = [];
+      }
+      return json(res, 200, {
+        q,
+        suggestions: suggestions.map((s) => ({
+          label: s.label,
+          insertText: s.insertText,
+          canonical: s.canonical,
+          kind: s.kind,
+        })),
+      });
+    }
 
     if (req.method === "GET" && p === "/go") {
       const scope = parseScope(url.searchParams.get("q") || "");
@@ -2709,12 +3677,11 @@ server.listen(PORT, HOST, () => {
   const hostLabel = HOST === "0.0.0.0" ? "localhost" : HOST;
   const root = `http://${hostLabel}:${PORT}`;
   if (DOOR_OPEN) {
-    console.log(`versepack door: ${root}/  (DOOR_OPEN — no multiword key)`);
+    console.log(`versepack: ${root}/  (DOOR_OPEN — open access, no key)`);
   } else {
-    console.log(`versepack door: ${root}/${DOOR}/`);
-    console.log(`bookmark that URL — the multiword path is your key (cowyo-style).`);
-    console.log(`no account. share the door words only with co-editors.`);
-    console.log(`optional pack passphrase (client-side) seals notes — never sent to this process.`);
+    console.log(`versepack: ${root}/${DOOR}/`);
+    console.log(`open that link (or ${root}/ on this computer → “Open my notes”).`);
+    console.log(`your key: ${DOOR}`);
   }
   console.log(`pack on disk:   ${PACK_DIR}`);
 });

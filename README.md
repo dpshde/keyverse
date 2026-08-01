@@ -8,10 +8,11 @@ A **cowyo-class** capture door over an on-disk scripture note pack.
 
 | Idea | How it shows up |
 |------|------------------|
-| **Address = passage** | `/note/jhn.3.16`, `/note/jhn.3.16-18`, `/note/1jn.1` — or type a human ref on home / `/go?q=` |
+| **Address = passage** | `/note/jhn.3.16` — home search with **reference autocomplete** (books → chapters → verses) |
 | **Open → type → saved** | Outliner (Enter, Nest/Unnest, Tab). Autosave. No save button. No account form. |
 | **Pack is the truth** | `pack/notes/<slug>.json` — readable with the server dead |
 | **Outlines** | Flat `{id, indent, text}` blocks; tree projected from indent |
+| **Markdown** | Base inline: `**bold**` `*italic*` `` `code` `` `~~strike~~` `[links](url)` + wiki |
 | **Compose, don’t absorb** | Containment from OSIS geometry; each address keeps its own file |
 | **Cross-refs** | `[[John 3:16]]` or `[[John 3:16\|label]]` in any block ([PROTOCOL §4.1](PROTOCOL.md)) |
 | **Attachments** | Any file type + URL refs ([PROTOCOL §5](PROTOCOL.md)); UI on the note page |
@@ -19,26 +20,26 @@ A **cowyo-class** capture door over an on-disk scripture note pack.
 | **Access** | Multiword URL is the key — cowyo-style ([ADR 0011](docs/adr/0011-multiword-door-access.md)) |
 | **Encryption** | Optional pack passphrase; notes save as AES-GCM ciphertext in the browser ([ADR 0012](docs/adr/0012-client-side-note-encryption.md)) |
 
-## Access = multiword URL (your “login”)
+## Sign in = your key (four words)
 
-There is **no account**. On first start the server creates a four-word
-door phrase and prints:
+There is **no account**. On first start the server creates a four-word key and
+prints a link. Same key is the path in every notes URL.
 
 ```text
-versepack door: http://localhost:4180/quiet-river-lantern/
-bookmark that URL — the multiword path is your key (cowyo-style).
+versepack: http://localhost:4180/quiet-river-lantern/
+your key: quiet-river-lantern
 ```
 
 | | |
 |--|--|
-| **Open the pack** | Bookmark / open `http://host:port/{door}/` |
-| **Share with co-editors** | Share that full URL (or the four words) |
-| **Forgot the words** | `cat pack/door` on the host |
+| **This computer** | Open `http://localhost:4180/` → **Open my notes** |
+| **Any device** | Open the printed link, or type your key on `/` |
+| **Share** | Share the full URL (or the four words) only with co-editors |
+| **Forgot** | `cat pack/door` on the host |
 | **Choose your own** | `DOOR=my-study-garden-notes pnpm start` |
 | **Open demo (no key)** | `DOOR_OPEN=1 pnpm start` — not for production |
 
-Bare `http://localhost:4180/` only offers an “open door” field. Wrong words →
-generic “Nothing here.” All pages and APIs sit under `/{door}/…`.
+All notes and APIs live under `/{key}/…`.
 
 ### Optional encryption (separate from the door)
 

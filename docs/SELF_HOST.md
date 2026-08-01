@@ -22,28 +22,29 @@ pnpm install          # or: npm install
 
 `words-door.txt` ships with the repo (word list for multiword doors).
 
-## Access model (cowyo-style)
+## Access model (your key)
 
-**There is no traditional login.** A four-word path segment is the pack key:
+**There is no username/password account.** Each pack has a four-word **key**
+that lives in the URL path:
 
 ```text
 http://localhost:4180/quiet-river-lantern/
                      ^^^^^^^^^^^^^^^^^^^^
-                     this is “logging in”
+                     this is your key
 ```
 
 | Action | How |
 |--------|-----|
-| First run | Server generates `pack/door` and prints the full URL |
-| Open the pack | Open/bookmark that URL |
-| Remember only the words | Visit `/`, paste phrase, **Open door** → redirects to `/{door}/` |
-| Lost phrase | `cat $PACK_DIR/door` on the host |
-| Fix the phrase | `DOOR=my-own-four-words pnpm start` (old bookmarks break) |
-| Disable for a local demo | `DOOR_OPEN=1 pnpm start` |
+| First run on this computer | Open `http://localhost:4180/` → **Open my notes** (no typing) |
+| Full link | Server prints `http://host:port/{key}/` — open or bookmark it |
+| Phone / remote | Visit `/`, type your key, **Open notes** |
+| Lost key | `cat $PACK_DIR/door` on the host |
+| Choose your own key | `DOOR=my-own-four-words pnpm start` (old bookmarks break) |
+| Open demo (no key) | `DOOR_OPEN=1 pnpm start` — not for production |
 
-Wrong multiword path returns a generic “Nothing here” (does not confirm doors).
-Anyone with the full door URL can read and write the pack — treat the phrase
-like a password. See [ADR 0011](./adr/0011-multiword-door-access.md).
+Remote visitors without the key only see a simple sign-in. Wrong keys look like
+a dead page (does not confirm packs). Treat the key like a password. See
+[ADR 0011](./adr/0011-multiword-door-access.md).
 
 ### Optional note encryption (separate from the door)
 
