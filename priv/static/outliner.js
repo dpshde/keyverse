@@ -18,19 +18,19 @@ function formatBlockHtml(text) {
   while (i < s.length) {
     if (s[i] === "\`") {
       var ce = s.indexOf("\`", i + 1);
-      if (ce > i + 1 && s.slice(i + 1, ce).indexOf("\\n") < 0) {
+      if (ce > i + 1 && s.slice(i + 1, ce).indexOf("\n") < 0) {
         out += '<code class="md-code">' + escHtml(s.slice(i + 1, ce)) + "</code>";
         i = ce + 1; continue;
       }
     }
     if (s[i] === "!" && s[i + 1] === "[" && s[i + 2] === "[") {
       var ee = s.indexOf("]]", i + 3);
-      if (ee >= 0 && s.slice(i + 3, ee).indexOf("\\n") < 0) {
+      if (ee >= 0 && s.slice(i + 3, ee).indexOf("\n") < 0) {
         var einner = s.slice(i + 3, ee);
         var epipe = einner.indexOf("|");
         var et = (epipe < 0 ? einner : einner.slice(0, epipe)).trim();
         var elab = epipe < 0 ? et : (einner.slice(epipe + 1).trim() || et);
-        if (/^https?:\\/\\//i.test(et)) {
+        if (/^https?:\/\//i.test(et)) {
           out += '<a class="md-link" href="' + escHtml(et) + '" target="_blank" rel="noopener noreferrer">' +
             escHtml(elab) + "</a>";
         } else {
@@ -41,7 +41,7 @@ function formatBlockHtml(text) {
     }
     if (s[i] === "[" && s[i + 1] === "[") {
       var we = s.indexOf("]]", i + 2);
-      if (we >= 0 && s.slice(i + 2, we).indexOf("\\n") < 0) {
+      if (we >= 0 && s.slice(i + 2, we).indexOf("\n") < 0) {
         var winner = s.slice(i + 2, we);
         var wpipe = winner.indexOf("|");
         var wt = (wpipe < 0 ? winner : winner.slice(0, wpipe)).trim();
@@ -58,7 +58,7 @@ function formatBlockHtml(text) {
         if (mu > mc + 2) {
           var mlab = s.slice(i + 1, mc);
           var murl = s.slice(mc + 2, mu).trim();
-          if (mlab && mlab.indexOf("\\n") < 0 && /^https?:\\/\\/[^\\s]+$/i.test(murl)) {
+          if (mlab && mlab.indexOf("\n") < 0 && /^https?:\/\/[^\s]+$/i.test(murl)) {
             out += '<a class="md-link" href="' + escHtml(murl) + '" target="_blank" rel="noopener noreferrer">' +
               escHtml(mlab) + "</a>";
             i = mu + 1; continue;
@@ -70,7 +70,7 @@ function formatBlockHtml(text) {
       var be = s.indexOf("**", i + 2);
       if (be > i + 2) {
         var bi = s.slice(i + 2, be);
-        if (bi && bi.indexOf("*") < 0 && bi.indexOf("\\n") < 0) {
+        if (bi && bi.indexOf("*") < 0 && bi.indexOf("\n") < 0) {
           out += '<strong class="md-strong">' + escHtml(bi) + "</strong>";
           i = be + 2; continue;
         }
@@ -80,7 +80,7 @@ function formatBlockHtml(text) {
       var se = s.indexOf("~~", i + 2);
       if (se > i + 2) {
         var si = s.slice(i + 2, se);
-        if (si && si.indexOf("~") < 0 && si.indexOf("\\n") < 0) {
+        if (si && si.indexOf("~") < 0 && si.indexOf("\n") < 0) {
           out += '<s class="md-strike">' + escHtml(si) + "</s>";
           i = se + 2; continue;
         }
@@ -90,7 +90,7 @@ function formatBlockHtml(text) {
       var ie = s.indexOf("*", i + 1);
       if (ie > i + 1) {
         var ii = s.slice(i + 1, ie);
-        if (ii && ii.indexOf("*") < 0 && ii.indexOf("\\n") < 0) {
+        if (ii && ii.indexOf("*") < 0 && ii.indexOf("\n") < 0) {
           out += '<em class="md-em">' + escHtml(ii) + "</em>";
           i = ie + 1; continue;
         }
@@ -103,7 +103,7 @@ function formatBlockHtml(text) {
         if (ue > i + 1) {
           var un = ue + 1 < s.length ? s[ue + 1] : " ";
           var ui = s.slice(i + 1, ue);
-          if (ui && ui.indexOf("_") < 0 && ui.indexOf("\\n") < 0 && !isWord(un)) {
+          if (ui && ui.indexOf("_") < 0 && ui.indexOf("\n") < 0 && !isWord(un)) {
             out += '<em class="md-em">' + escHtml(ui) + "</em>";
             i = ue + 1; continue;
           }
@@ -1327,7 +1327,7 @@ function mountOutliner(host, opts) {
     if (!textEl || !textEl.isContentEditable) return;
     e.preventDefault();
     const paste = (e.clipboardData || window.clipboardData).getData("text") || "";
-    const lines = paste.replace(/\\r\\n/g, "\\n").split("\\n");
+    const lines = paste.replace(/\r\n/g, "\\n").split("\\n");
     syncFromDom();
     pushHistory();
     const i = indexOfRow(textEl.closest(".oblock"));

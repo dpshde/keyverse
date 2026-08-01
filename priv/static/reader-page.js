@@ -2,7 +2,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
 
       
       const seeds = JSON.parse(document.getElementById("verse-seeds").textContent);
-      const chapterDisplay = JSON.stringify(META.display);
+      const chapterDisplay = META.display;
       // slug → { api, noteEl }
       const editors = new Map();
       let anchorV = null;       // last plain-clicked verse number (shift+click base)
@@ -153,7 +153,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const a = Math.min(lo, hi), b = Math.max(lo, hi);
         const el = verseEl(a);
         if (!el) return null;
-        const m = String(el.dataset.slug || "").match(/^(.*)\\.(\\d+)$/);
+        const m = String(el.dataset.slug || "").match(/^(.*)\.(\d+)$/);
         if (!m) return null;
         if (a === b) return m[1] + "." + a;
         return m[1] + "." + a + "-" + b;
@@ -162,7 +162,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       function rangeLabel(lo, hi) {
         const a = Math.min(lo, hi), b = Math.max(lo, hi);
         if (a === b) return chapterDisplay + ":" + a;
-        return chapterDisplay + ":" + a + "\\u2013" + b;
+        return chapterDisplay + ":" + a + "\u2013" + b;
       }
 
       function noteHasContent(noteEl) {
@@ -182,7 +182,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
           if (n.dataset.kind === "range") {
             let lo = Number(n.dataset.lo), hi = Number(n.dataset.hi);
             if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
-              const m = String(n.dataset.slug || "").match(/\\.(\\d+)-(\\d+)$/);
+              const m = String(n.dataset.slug || "").match(/\.(\d+)-(\d+)$/);
               if (m) { lo = Number(m[1]); hi = Number(m[2]); }
             }
             if (Number.isFinite(lo) && Number.isFinite(hi)) {
@@ -284,13 +284,13 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
             noteEl.insertBefore(lab, noteEl.firstChild);
           }
           if (!lab.textContent.trim()) {
-            const m = String(slug).match(/\\.(\\d+)-(\\d+)$/);
+            const m = String(slug).match(/\.(\d+)-(\d+)$/);
             if (m) lab.textContent = rangeLabel(Number(m[1]), Number(m[2]));
             else lab.textContent = slug;
           }
         }
         // Label already names the passage — keep the field quiet.
-        const ph = "Write\\u2026";
+        const ph = "Write\u2026";
         const api = mountOutliner(host, {
           slug,
           blocks: seeds[slug] || [{ id: newId(), indent: 0, text: "" }],
@@ -456,7 +456,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
           if (!noteHasContent(el) && !editors.has(el.dataset.slug)) continue;
           let lo = Number(el.dataset.lo), hi = Number(el.dataset.hi);
           if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
-            const m = String(el.dataset.slug || "").match(/\\.(\\d+)-(\\d+)$/);
+            const m = String(el.dataset.slug || "").match(/\.(\d+)-(\d+)$/);
             if (!m) continue;
             lo = Number(m[1]); hi = Number(m[2]);
           }
