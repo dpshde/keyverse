@@ -35,10 +35,12 @@ http://localhost:4180/quiet-river-lantern/
 
 | Action | How |
 |--------|-----|
-| First run on this computer | Open `http://localhost:4180/` → **Open my notes** (no typing) |
+| First run (no key yet) | Open the site → **Create and open notes** (browser creates `pack/door`) |
+| This computer after key exists | Open `http://localhost:4180/` → **Open my notes** (no typing) |
+| Create / rotate key anytime | `/setup` — not gated on browser local state |
 | Full link | Server prints `http://host:port/{key}/` — open or bookmark it |
 | Phone / remote | Visit `/`, type your key, **Open notes** |
-| Lost key | `cat $PACK_DIR/door` on the host |
+| Lost key | `cat $PACK_DIR/door` on the host, or `/setup` to create a new one (same pack) |
 | Choose your own key | `DOOR=my-own-four-words pnpm start` (old bookmarks break) |
 | Open demo (no key) | `DOOR_OPEN=1 pnpm start` — not for production |
 

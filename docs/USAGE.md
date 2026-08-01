@@ -29,13 +29,17 @@ There is no account. Your **key** is four words (also the path in your notes URL
 
 | Situation | What to do |
 |-----------|------------|
-| **This computer** (you just ran the server) | Open `http://localhost:4180/` → **Open my notes** |
+| **First open (no key yet)** | Open the site → **Create and open notes** (suggested key, or type your own) |
+| **This computer** (key already set) | Open `http://localhost:4180/` → **Open my notes** |
 | **Link from the terminal** | Open the full URL it printed — you’re in |
 | **Phone / another device** | Open the site → enter your key → **Open notes** |
+| **Create a new key anytime** | Sign-in page → **Create a new key** (`/setup`) — same pack, old links stop working |
 | **Return visit** | Bookmark after first open; key is remembered for prefilling |
 | **Share your link** | On home, tap the four-word key → popup with QR code + **Share** (or copies the link) |
 
 Wrong key → try again (the app won’t tell strangers whether a pack exists).
+
+If the host pins `DOOR=` in the environment, the key is fixed there (setup can’t override it).
 
 ## Optional encryption (pack passphrase)
 

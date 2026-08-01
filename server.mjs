@@ -26,10 +26,18 @@ const PORT = Number(process.env.PORT || 4180);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_ATTACH_BYTES = Number(process.env.MAX_ATTACH_BYTES || 50 * 1024 * 1024);
 // Multiword door (cowyo-style): the URL *is* the key. No passwords, no accounts.
-// DOOR=quiet-river-lantern  or auto-written to pack/door
+// DOOR=quiet-river-lantern  or pack/door after first-run setup in the browser.
+// Do NOT auto-generate a secret key on boot — that left remote deploys stuck
+// with a phrase only in server logs. Empty door → setup page at `/`.
 // DOOR_OPEN=1 disables the door (open LAN demo only).
 const DOOR_OPEN = process.env.DOOR_OPEN === "1" || process.env.DOOR_OPEN === "true";
 const DOOR_FILE = path.join(PACK_DIR, "door");
+/** Path segments that must never be a multiword door. */
+const RESERVED_DOOR_WORDS = new Set([
+  "enter", "login", "setup", "api", "go", "note", "notes", "read", "offline",
+  "icons", "public", "assets", "sw.js", "manifest.webmanifest", "manifest.json",
+  "favicon.ico", "health", "healthz", "ready", "robots.txt",
+]);
 // Interop constants (pack/protocol.json + GET /api/protocol)
 const PROTOCOL_NAME = "keyverse";
 const PROTOCOL_VERSION = "0.1-demo";
@@ -48,6 +56,8 @@ const FATHOM_SITE = (() => {
 // ---------- multiword door (frictionless access) ----------
 
 let DOOR = ""; // hyphenated multiword, e.g. quiet-river-lantern
+/** True when DOOR came from DOOR=/PACK_DOOR= (file edits won't stick across restarts). */
+let DOOR_FROM_ENV = false;
 
 function basePath() {
   return DOOR && !DOOR_OPEN ? `/${DOOR}` : "";
@@ -87,7 +97,23 @@ async function generateDoorPhrase() {
   return parts.join("-");
 }
 
+/** True when the pack has no door yet — browser must create one (first open). */
+function doorNeedsSetup() {
+  return !DOOR_OPEN && !DOOR;
+}
+
+function isValidDoorPhrase(phrase) {
+  const p = normalizeDoorPhrase(phrase);
+  if (!p) return false;
+  const parts = p.split("-").filter(Boolean);
+  if (parts.length < 3 || parts.length > 8) return false;
+  if (parts.some((w) => w.length < 2 || w.length > 12)) return false;
+  if (RESERVED_DOOR_WORDS.has(p) || parts.some((w) => RESERVED_DOOR_WORDS.has(w))) return false;
+  return true;
+}
+
 async function ensureDoor() {
+  DOOR_FROM_ENV = false;
   if (DOOR_OPEN) {
     DOOR = "";
     return;
@@ -95,22 +121,48 @@ async function ensureDoor() {
   const fromEnv = normalizeDoorPhrase(process.env.DOOR || process.env.PACK_DOOR || "");
   if (fromEnv) {
     DOOR = fromEnv;
+    DOOR_FROM_ENV = true;
     return;
   }
   try {
     const existing = normalizeDoorPhrase(await readFile(DOOR_FILE, "utf8"));
-    if (existing && existing.split("-").length >= 3) {
+    if (existing && isValidDoorPhrase(existing)) {
       DOOR = existing;
       return;
     }
-  } catch { /* generate */ }
-  DOOR = await generateDoorPhrase();
+  } catch { /* no door yet → setup mode */ }
+  // Leave DOOR empty: first browser visit runs setup (create key), not a
+  // hidden auto-generated phrase stuck in server logs.
+  DOOR = "";
+}
+
+/**
+ * Create or replace the multiword door from the browser.
+ * Always allowed unless DOOR_OPEN or DOOR is pinned by environment.
+ * Replacing rotates access to the same pack (notes stay; old links break).
+ */
+async function setDoor(phrase) {
+  if (DOOR_OPEN) {
+    throw new Error("door is open (DOOR_OPEN); this server has no key");
+  }
+  if (DOOR_FROM_ENV) {
+    throw new Error(
+      "this server’s key is fixed by the DOOR environment variable — change DOOR there, then redeploy"
+    );
+  }
+  const p = normalizeDoorPhrase(phrase);
+  if (!isValidDoorPhrase(p)) {
+    throw new Error("use 3–8 short words (letters/numbers), e.g. quiet-river-lantern-notes");
+  }
   await mkdir(PACK_DIR, { recursive: true });
-  await writeFile(DOOR_FILE, DOOR + "\n", { mode: 0o600 });
+  await writeFile(DOOR_FILE, p + "\n", { mode: 0o600 });
+  DOOR = p;
+  return p;
 }
 
 function doorMatches(segment) {
   if (DOOR_OPEN) return true;
+  if (!DOOR) return false;
   return normalizeDoorPhrase(segment) === DOOR;
 }
 
@@ -131,8 +183,14 @@ function routePath(pathname) {
 
   const head = parts[0].toLowerCase();
   // reserved top-level words that are never doors
-  if (head === "enter" || head === "login") return { ok: false, path: raw, needDoor: true };
+  if (
+    head === "enter" || head === "login" || head === "setup" ||
+    RESERVED_DOOR_WORDS.has(head)
+  ) {
+    return { ok: false, path: raw, needDoor: true };
+  }
 
+  if (doorNeedsSetup()) return { ok: false, path: raw, needSetup: true };
   if (!doorMatches(head)) return { ok: false, path: raw, badDoor: true };
 
   const rest = "/" + parts.slice(1).join("/");
@@ -1181,26 +1239,37 @@ const CSS = `
   }
   input:focus, .outliner:focus-within { outline: none;
     border-color: color-mix(in srgb, currentColor 45%, transparent); }
-  /* passage reference autocomplete (home search) */
-  .ref-search { position: relative; }
+  /* passage reference autocomplete (home search) — one composite radius + border */
+  .ref-search {
+    --rs-radius: .45rem;
+    --rs-border: color-mix(in srgb, currentColor 18%, transparent);
+    position: relative;
+  }
   .ref-search form { margin: 0; }
-  .ref-search input[type=text] { margin: 0; display: block; }
+  .ref-search input[type=text] {
+    margin: 0; display: block;
+    border-color: var(--rs-border);
+    border-radius: var(--rs-radius);
+  }
   .ref-search input[aria-expanded="true"] {
-    border-radius: .4rem .4rem 0 0;
+    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
+    border-bottom-color: color-mix(in srgb, currentColor 10%, transparent);
   }
   .ref-suggest {
     position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
-    margin: 0; padding: 0; list-style: none;
-    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    margin: -1px 0 0; padding: 0; list-style: none; /* overlap to merge borders */
+    border: 1px solid var(--rs-border);
     border-top: 0;
-    border-radius: 0 0 .45rem .45rem;
+    border-radius: 0 0 var(--rs-radius) var(--rs-radius);
     background: color-mix(in srgb, Canvas 92%, transparent);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     box-shadow: 0 .4rem 1.25rem color-mix(in srgb, currentColor 10%, transparent);
     max-height: min(16rem, 50vh); overflow-y: auto;
+    overflow-x: hidden;
   }
   .ref-suggest[hidden] { display: none; }
   .ref-suggest li { margin: 0; }
+  .ref-suggest li:last-child button { border-radius: 0 0 var(--rs-radius) var(--rs-radius); }
   .ref-suggest button {
     display: flex; align-items: baseline; justify-content: space-between; gap: .75rem;
     width: 100%; margin: 0; padding: .55rem .75rem;
@@ -1265,9 +1334,30 @@ const CSS = `
   }
   .login-btn:hover { background: #000; color: #fff; }
   .login-btn:active { transform: scale(.99); }
+  .login-btn-secondary {
+    margin-top: .45rem;
+    background: transparent;
+    color: inherit;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    font-weight: 550;
+  }
+  .login-btn-secondary:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    color: inherit;
+    border-color: color-mix(in srgb, currentColor 28%, transparent);
+  }
   @media (prefers-color-scheme: dark) {
     .login-btn { background: #f2f2f2; color: #111; }
     .login-btn:hover { background: #fff; color: #111; }
+    .login-btn-secondary {
+      background: transparent;
+      color: color-mix(in srgb, currentColor 72%, transparent);
+      border-color: color-mix(in srgb, currentColor 18%, transparent);
+    }
+    .login-btn-secondary:hover {
+      background: color-mix(in srgb, currentColor 8%, transparent);
+      color: inherit;
+    }
   }
   .login-error {
     margin: 0 0 1rem; padding: .65rem .75rem; border-radius: .45rem;
@@ -1322,16 +1412,19 @@ const CSS = `
     visibility: hidden; pointer-events: none;
   }
   .door-share-panel {
+    --ds-radius: .5rem;
+    --ds-radius-inner: .35rem;
     position: absolute; right: 0; top: 0; z-index: 60;
     width: 12.5rem;
-    padding: .65rem .65rem .6rem;
-    border-radius: .12rem;
-    border: 1px solid color-mix(in srgb, #2a241c 16%, transparent);
+    box-sizing: border-box;
+    padding: .7rem .7rem .65rem;
+    border-radius: var(--ds-radius);
+    border: 1px solid color-mix(in srgb, #2a241c 14%, transparent);
     background: #f6f1e7;
     color: #1c1915;
-    box-shadow:
-      0 .05rem 0 color-mix(in srgb, #2a241c 6%, transparent),
-      0 .55rem 1.6rem color-mix(in srgb, #1c1915 18%, transparent);
+    /* single soft shadow — hard offset shadows misalign with border-radius */
+    box-shadow: 0 .45rem 1.5rem color-mix(in srgb, #1c1915 16%, transparent);
+    overflow: hidden;
     animation: door-share-in 170ms cubic-bezier(.2, .8, .2, 1) both;
   }
   .door-share-panel[hidden] { display: none; animation: none; }
@@ -1355,7 +1448,7 @@ const CSS = `
   .door-share-x {
     flex: 0 0 auto;
     margin: -.15rem -.2rem 0 0; padding: .2rem .35rem;
-    border: 0; border-radius: .15rem;
+    border: 0; border-radius: var(--ds-radius-inner);
     background: transparent; cursor: pointer;
     font: inherit; font-size: .95rem; line-height: 1;
     color: color-mix(in srgb, currentColor 42%, transparent);
@@ -1370,7 +1463,7 @@ const CSS = `
     display: flex; align-items: center; justify-content: center;
     width: 100%; aspect-ratio: 1; margin: 0; padding: 0;
     border: 1px solid color-mix(in srgb, #2a241c 12%, transparent);
-    border-radius: .08rem;
+    border-radius: var(--ds-radius-inner);
     background: #fff;
     overflow: hidden;
   }
@@ -1401,7 +1494,7 @@ const CSS = `
     margin: 0; padding: .48rem .6rem; min-height: 2.05rem;
     font: inherit; font-size: .82rem; font-weight: 600;
     letter-spacing: .01em;
-    border: 1px solid #1c1915; border-radius: .1rem; cursor: pointer;
+    border: 1px solid #1c1915; border-radius: var(--ds-radius-inner); cursor: pointer;
     background: #1c1915; color: #f6f1e7;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
@@ -1416,7 +1509,7 @@ const CSS = `
   .door-share-copy {
     display: inline-flex; align-items: center; justify-content: center;
     width: 100%; margin: 0; padding: .25rem .4rem;
-    border: 0; border-radius: .1rem; cursor: pointer;
+    border: 0; border-radius: var(--ds-radius-inner); cursor: pointer;
     background: transparent;
     font: inherit; font-size: .76rem; font-weight: 500;
     color: color-mix(in srgb, #1c1915 52%, transparent);
@@ -1438,14 +1531,12 @@ const CSS = `
     .door-share-panel {
       background: #1a1814;
       color: #ece6db;
-      border-color: color-mix(in srgb, #ece6db 14%, transparent);
-      box-shadow:
-        0 .05rem 0 color-mix(in srgb, #000 35%, transparent),
-        0 .6rem 1.7rem color-mix(in srgb, #000 45%, transparent);
+      border-color: color-mix(in srgb, #ece6db 16%, transparent);
+      box-shadow: 0 .5rem 1.6rem color-mix(in srgb, #000 48%, transparent);
     }
     .door-share-qr {
       background: #fff;
-      border-color: color-mix(in srgb, #ece6db 10%, transparent);
+      border-color: color-mix(in srgb, #ece6db 12%, transparent);
     }
     .door-share-action {
       background: #ece6db; color: #1a1814; border-color: #ece6db;
@@ -3946,13 +4037,81 @@ function cryptoBarHtml({ locked = false } = {}) {
 }
 
 /**
- * Sign-in at bare `/`.
+ * Create or replace multiword key in the browser.
+ * Always available (not gated on localStorage / isLocalClient / existing door).
+ */
+function renderSetupDoor({ error = "", suggested = "", replacing = false } = {}) {
+  const suggestion = suggested || "quiet-river-lantern-notes";
+  const replacingNote = replacing
+    ? `<p class="login-error" role="status">A key already exists. Creating a new one <strong>replaces</strong> it — same notes, old links stop working.</p>`
+    : "";
+  const envPinned = DOOR_FROM_ENV
+    ? `<p class="login-error" role="alert">This server’s key is fixed by the <code>DOOR</code> environment variable. Change it there and redeploy — the form below can’t override it.</p>`
+    : "";
+  const body = `
+    <h1>keyverse</h1>
+    <p class="lead">${replacing ? "Create a new notes key." : "Create your notes key."} There is no account.</p>
+    ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
+    ${envPinned}
+    ${replacingNote}
+    <form class="login-form" method="post" action="/setup" id="setup-form">
+      <label for="door">Your key</label>
+      <input type="text" id="door" name="door"
+        value="${esc(suggestion)}"
+        placeholder="four-words-like-this"
+        autocomplete="off" autocapitalize="off" spellcheck="false"
+        required autofocus ${DOOR_FROM_ENV ? "disabled" : ""}>
+      <button type="submit" class="login-btn" name="intent" value="claim"
+        ${DOOR_FROM_ENV ? "disabled" : ""}>${replacing ? "Replace key and open" : "Create and open notes"}</button>
+      <button type="submit" class="login-btn login-btn-secondary" name="intent" value="generate"
+        formnovalidate ${DOOR_FROM_ENV ? "disabled" : ""}>Generate another key</button>
+    </form>
+    <p class="muted" style="margin-top:1rem"><a href="/">← Back to sign in</a></p>
+    <details class="login-more" open>
+      <summary>How this works</summary>
+      <p>The key is the path in your notes URL (e.g. <code>…/quiet-river-lantern-notes/</code>).
+        Bookmark it after you open. Anyone with the link can read and write this pack —
+        treat the key like a password.</p>
+      <p>You can create a new key anytime from sign-in. That rotates access to the <em>same</em> pack.</p>
+    </details>
+    ${siteFooterHtml({ install: false })}`;
+
+  return page(
+    "keyverse · setup",
+    `<div class="login">${body}</div>
+    <script>
+    (function () {
+      var KEY = "vp_door_key";
+      var form = document.getElementById("setup-form");
+      var input = document.getElementById("door");
+      if (!form || !input) return;
+      form.addEventListener("submit", function (e) {
+        var intent = (e.submitter && e.submitter.value) || "claim";
+        if (intent === "generate") return;
+        var v = (input.value || "").trim().toLowerCase().replace(/\\s+/g, "-");
+        if (v) try { localStorage.setItem(KEY, v); } catch (err) {}
+      });
+    })();
+    </script>`,
+    { manifestScope: "" },
+  );
+}
+
+/**
+ * Sign-in at bare `/` when a door already exists.
  * Local: one solid button. Remote: key field + one button.
- * Alternate key path is tucked under a details row (not a second primary).
+ * “Create a new key” is always available (not gated on browser/local state).
  */
 function renderEnterDoor({ error = "", local = false } = {}) {
+  if (doorNeedsSetup()) {
+    return renderSetupDoor({ error, replacing: false });
+  }
   const openHref = DOOR ? `/${DOOR}/` : "/";
   const showLocal = local && !!DOOR;
+  const createKeyLink = `<p class="muted" style="margin-top:1.1rem">
+      <a href="/setup">Create a new key</a>
+      <span style="opacity:.55"> — same pack, new link</span>
+    </p>`;
 
   const keyForm = (opts = {}) => {
     const { required = true, autofocus = false, btn = "Open notes" } = opts;
@@ -3977,20 +4136,24 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       <details class="login-more"${error ? " open" : ""}>
         <summary>Use a different key</summary>
         ${keyForm({ required: true, autofocus: !!error, btn: "Continue" })}
-      </details>`;
+      </details>
+      ${createKeyLink}`;
   } else {
     body = `
       <h1>keyverse</h1>
       <p class="lead">Open your notes with your key.</p>
       ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
       ${keyForm({ required: true, autofocus: true, btn: "Open notes" })}
+      ${createKeyLink}
       <div class="ios-install-hint" id="ios-install-hint">
         <strong>Install on this device:</strong> Share → <strong>Add to Home Screen</strong>.
         Opens like an app; your key stays in the URL.
       </div>
       <details class="login-more">
         <summary>Don’t have a key?</summary>
-        <p>Use the link from when you set this up, or ask whoever runs the server for their notes link. After you open once, bookmark the page — or install the app from your browser menu.</p>
+        <p><a href="/setup">Create a new key</a> in the browser — no account.
+          That becomes your notes URL. Bookmark it.</p>
+        <p>If someone else already set up this server, ask them for their link instead.</p>
       </details>
       ${siteFooterHtml({ install: true })}`;
   }
@@ -6090,9 +6253,64 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // ----- create / replace multiword key (always available; not gated on local state) -----
+    if (p === "/setup" || p === "/setup/") {
+      if (DOOR_OPEN) {
+        res.writeHead(302, { location: "/", "cache-control": "no-store" });
+        return res.end();
+      }
+      const setupOpts = () => ({
+        replacing: !doorNeedsSetup(),
+      });
+      if (req.method === "GET" || req.method === "HEAD") {
+        const suggested = await generateDoorPhrase();
+        return html(res, 200, renderSetupDoor({ ...setupOpts(), suggested }));
+      }
+      if (req.method === "POST") {
+        let body = "";
+        try {
+          body = await readBody(req);
+        } catch {
+          return html(res, 400, renderSetupDoor({
+            ...setupOpts(),
+            error: "Could not read form.",
+            suggested: await generateDoorPhrase(),
+          }));
+        }
+        const params = new URLSearchParams(body);
+        const intent = String(params.get("intent") || "claim");
+        if (intent === "generate") {
+          return html(res, 200, renderSetupDoor({
+            ...setupOpts(),
+            suggested: await generateDoorPhrase(),
+          }));
+        }
+        try {
+          const claimed = await setDoor(params.get("door"));
+          res.writeHead(302, {
+            location: `/${claimed}/`,
+            "cache-control": "no-store",
+          });
+          return res.end();
+        } catch (err) {
+          return html(res, 400, renderSetupDoor({
+            ...setupOpts(),
+            error: String(err?.message || err),
+            suggested: normalizeDoorPhrase(params.get("door")) || (await generateDoorPhrase()),
+          }));
+        }
+      }
+      res.writeHead(405, { allow: "GET, HEAD, POST" });
+      return res.end("method not allowed");
+    }
+
     // ----- sign-in (multiword key in the URL path) -----
     // GET /enter?door=… or /login?door=…  →  /{key}/
     if (req.method === "GET" && (p === "/enter" || p === "/enter/" || p === "/login" || p === "/login/")) {
+      if (doorNeedsSetup()) {
+        res.writeHead(302, { location: "/setup", "cache-control": "no-store" });
+        return res.end();
+      }
       const phrase = normalizeDoorPhrase(url.searchParams.get("door") || url.searchParams.get("q") || "");
       const local = isLocalClient(req);
       if (!phrase) {
@@ -6111,13 +6329,21 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
-    // bare / without door → sign-in (local clients get one-tap open)
+    // bare / without door → setup (first run) or sign-in (local: one-tap open)
     if (!DOOR_OPEN && (p === "/" || p === "")) {
+      if (doorNeedsSetup()) {
+        res.writeHead(302, { location: "/setup", "cache-control": "no-store" });
+        return res.end();
+      }
       return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
     }
 
     const routed = routePath(p);
     if (!routed.ok) {
+      if (routed.needSetup || doorNeedsSetup()) {
+        res.writeHead(302, { location: "/setup", "cache-control": "no-store" });
+        return res.end();
+      }
       if (routed.needDoor) {
         return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
       }
@@ -6554,10 +6780,14 @@ server.listen(PORT, HOST, () => {
   const root = `http://${hostLabel}:${PORT}`;
   if (DOOR_OPEN) {
     console.log(`keyverse: ${root}/  (DOOR_OPEN — open access, no key)`);
+  } else if (doorNeedsSetup()) {
+    console.log(`keyverse: ${root}/  → create your key in the browser (first open)`);
+    console.log(`setup:    ${root}/setup`);
   } else {
     console.log(`keyverse: ${root}/${DOOR}/`);
     console.log(`open that link (or ${root}/ on this computer → “Open my notes”).`);
-    console.log(`your key: ${DOOR}`);
+    console.log(`your key: ${DOOR}${DOOR_FROM_ENV ? "  (from DOOR env)" : ""}`);
+    console.log(`new key:  ${root}/setup  (always available)`);
   }
   console.log(`pack on disk:   ${PACK_DIR}`);
 });
