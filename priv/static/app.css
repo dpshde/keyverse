@@ -42,6 +42,26 @@
   .site-foot a:hover { color: inherit; opacity: 1;
     text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
   .login .site-foot { justify-content: center; border-top: 0; margin-top: 2rem; padding-top: 0; }
+  /* Home: title left, multiword key right */
+  .home-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: .5rem .75rem;
+    margin: 0 0 .35rem;
+  }
+  .home-head h1 {
+    margin: 0;
+    min-width: 0;
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: -.02em;
+  }
+  .home-head .door-share-wrap {
+    flex: 0 1 auto;
+    margin-left: auto;
+    max-width: min(16rem, 52%);
+  }
   .ios-install-hint {
     display: none; margin: 1rem 0 0; padding: .75rem .85rem; border-radius: .5rem;
     font-family: -apple-system, system-ui, sans-serif; font-size: .86rem; line-height: 1.4;

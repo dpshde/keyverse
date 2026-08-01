@@ -331,8 +331,8 @@ defmodule Keyverse.Html do
 
     body = """
     <header class="ui home-head">
-      #{door_share_chip(door)}
       <h1>keyverse</h1>
+      #{door_share_chip(door)}
     </header>
     #{crypto_bar(false)}
     #{ref_search_html(base)}
