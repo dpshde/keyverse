@@ -10,3 +10,4 @@ deps
 *.md
 !package.json
 .elixir_ls
+# keep bin/railway-start.sh for deploy startCommand

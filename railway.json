@@ -4,7 +4,7 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "RELEASE_DISTRIBUTION=none /app/_build/prod/rel/keyverse/bin/keyverse start",
+    "startCommand": "sh bin/railway-start.sh",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
