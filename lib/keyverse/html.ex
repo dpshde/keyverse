@@ -631,7 +631,13 @@ defmodule Keyverse.Html do
     chapter_scope = Scope.parse("#{book}.#{chapter}")
     display = if chapter_scope, do: Scope.display(chapter_scope), else: Scope.display(scope)
 
-    case Keyverse.TextCache.get_chapter(book, chapter) do
+    # Overlap BSB resolve (ETS/disk/upstream) with note listing — biggest SSR win on cold miss.
+    text_task = Task.async(fn -> Keyverse.TextCache.get_chapter(book, chapter) end)
+    notes_task = Task.async(fn -> Note.list(pack_dir) end)
+    text_result = Task.await(text_task, 45_000)
+    notes = Task.await(notes_task, 30_000)
+
+    case text_result do
       {:error, reason} ->
         body = """
         <p>Could not fetch text (#{esc(to_string(reason))}).
@@ -648,7 +654,6 @@ defmodule Keyverse.Html do
             Tree.scope_interval(scope)
           end
 
-        notes = Note.list(pack_dir)
         verse_notes = %{}
         range_notes = %{}
         range_cover = MapSet.new()

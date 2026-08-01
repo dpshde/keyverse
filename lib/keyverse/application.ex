@@ -10,7 +10,8 @@ defmodule Keyverse.Application do
       [
         {Registry, keys: :unique, name: Keyverse.Pack.WriterRegistry},
         {DynamicSupervisor, name: Keyverse.Pack.WriterSupervisor, strategy: :one_for_one},
-        Keyverse.Metrics
+        Keyverse.Metrics,
+        Keyverse.TextCache
       ] ++
         if Application.get_env(:keyverse, :start_server, true) do
           [

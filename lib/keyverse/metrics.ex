@@ -19,7 +19,11 @@ defmodule Keyverse.Metrics do
     :http_export,
     :http_import,
     :http_other,
-    :pack_write
+    :pack_write,
+    :bsb_get,
+    :bsb_fetch,
+    :bsb_ets_hit,
+    :bsb_disk_hit
   ]
 
   # --- public API ----------------------------------------------------------
@@ -122,6 +126,8 @@ defmodule Keyverse.Metrics do
     snap = snapshot()
     put = snap.ops[:http_put_note] || %{}
     get = snap.ops[:http_get_note] || %{}
+    bsb = snap.ops[:bsb_get] || %{}
+    bsb_stats = Keyverse.TextCache.stats()
 
     %{
       uptime_ms: snap.uptime_ms,
@@ -130,7 +136,10 @@ defmodule Keyverse.Metrics do
       put_p95_ms: get_in(put, [:latency_ms, :p95]),
       get_p95_ms: get_in(get, [:latency_ms, :p95]),
       put_count: put[:count] || 0,
-      get_count: get[:count] || 0
+      get_count: get[:count] || 0,
+      bsb_get_p95_ms: get_in(bsb, [:latency_ms, :p95]),
+      bsb_get_count: bsb[:count] || 0,
+      bsb_ets: bsb_stats.ets_entries
     }
   end
 
