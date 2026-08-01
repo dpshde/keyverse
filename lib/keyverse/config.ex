@@ -53,7 +53,16 @@ defmodule Keyverse.Config do
     Application.spec(:keyverse, :vsn) |> to_string()
   end
 
-  def static_dir, do: Application.app_dir(:keyverse, "priv/static")
+  def static_dir do
+    # Prefer repo priv during mix run / tests so new static files are served
+    # without requiring a full release copy into _build.
+    candidates = [
+      Path.join([File.cwd!(), "priv", "static"]),
+      Application.app_dir(:keyverse, "priv/static")
+    ]
+
+    Enum.find(candidates, &File.dir?/1) || List.first(candidates)
+  end
 
   def words_path do
     candidates = [

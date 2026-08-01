@@ -14,3 +14,8 @@ _build/
 deps/
 *.ez
 .elixir_ls/
+
+# E2E / local artifacts
+.e2e-packs/
+artifacts/
+

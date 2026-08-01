@@ -10,10 +10,14 @@
     "test": "mix test",
     "check": "mix compile --warnings-as-errors",
     "legacy:node": "node server.mjs",
-    "extract:client": "node scripts/extract_client_js.mjs"
+    "extract:client": "node scripts/extract_client_js.mjs",
+    "test:e2e:local-mount": "node scripts/e2e-local-mount.mjs"
   },
   "dependencies": {
     "grab-bcv": "^0.1.7",
     "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "playwright": "^1.54.2"
   }
 }

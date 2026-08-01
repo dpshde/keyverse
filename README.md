@@ -14,6 +14,7 @@ A **cowyo-class** capture door over on-disk scripture note packs.
 | **Open → type → saved** | Outliner (same browser UX as before). Autosave. No account. |
 | **Pack is the truth** | `packs/{key}/notes/<slug>.json` — readable with the server dead |
 | **You own the data** | Export/import `.zip` (notes + attachments); no account lock-in |
+| **Local folder (RO)** | `/local` — open a pack directory in Chromium (read-only) |
 | **Multipack** | Four-word key = your pack; another key is another library |
 | **Attachments** | Files + URL refs |
 | **Access** | Multiword URL is the key — cowyo-style |
@@ -31,8 +32,9 @@ mix keyverse.conformance   # offline pack fixtures (protocol gate)
 mix run --no-halt
 # open http://localhost:4180/setup  → create your key
 # home page: Export pack (.zip) / Import pack
+# local RO:  http://localhost:4180/local  → Open local pack…
+npm run test:e2e:local-mount   # Playwright + Chromium (OPFS fixture)
 ```
-
 | Env | Default | Meaning |
 |-----|---------|---------|
 | `PORT` | `4180` | Listen port |

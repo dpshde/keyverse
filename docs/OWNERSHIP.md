@@ -75,7 +75,10 @@ Note counts, attachment totals, protocol version, export include/exclude lists.
 1. Hold the pack directory or zip.
 2. Read notes with any JSON tool.
 3. Point another keyverse host at the folder (`PACK_DIR=…`) or import the zip.
-4. Sealed notes need your **passphrase** (not the multiword door) — see PROTOCOL §3.1.
+4. **Browser read-only mount (Chromium):** open `/local` → **Open local pack…**
+   (File System Access). Same pack layout; no upload. Edit still needs a door or
+   future read-write mount.
+5. Sealed notes need your **passphrase** (not the multiword door) — see PROTOCOL §3.1.
 
 ## Single-writer (v0.2)
 One writer per pack at a time is assumed. Concurrent multi-device merge is

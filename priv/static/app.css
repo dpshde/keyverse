@@ -1235,3 +1235,126 @@
 .pack-own-import{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:0}
 .pack-own-replace{font-size:.85rem;opacity:.8}
 .pack-own-hint{margin:.75rem 0 0;font-size:.85rem;max-width:36rem}
+
+/* Local pack mount (ADR 0017 read-only) */
+.local-shell{min-height:70vh}
+.local-topbar{
+  display:flex;flex-wrap:wrap;gap:.35rem 1rem;align-items:center;
+  padding:.65rem 1rem 0;max-width:36rem;margin:0 auto;
+}
+.local-badge{
+  font-size:.72rem;letter-spacing:.02em;padding:.15rem .5rem;border-radius:999px;
+  border:1px solid color-mix(in srgb,currentColor 16%,transparent);
+  color:color-mix(in srgb,currentColor 62%,transparent);
+}
+.local-status{margin:0;font-size:.88rem}
+.local-status.is-error{color:#b00020;opacity:1}
+.local-landing{max-width:26rem}
+.local-secondary-links{
+  margin-top:1.15rem;font-size:.9rem;
+  display:flex;flex-wrap:wrap;gap:.35rem .45rem;align-items:center;
+  justify-content:center;
+}
+.local-dot{opacity:.4;user-select:none}
+.local-page{max-width:36rem;margin:0 auto;padding:0 1rem 2.5rem}
+.local-page-head{
+  display:block;
+  padding:1rem 0 .5rem;
+}
+.local-page-title-row{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:.75rem;
+  width:100%;
+}
+.local-page-title-row h1{
+  margin:0;
+  font-size:1.35rem;
+  font-weight:650;
+  letter-spacing:-.025em;
+  min-width:0;
+}
+.local-ro-pill{
+  font-size:.78rem;
+  flex:0 0 auto;
+  white-space:nowrap;
+  opacity:.7;
+}
+.local-pack-sub{
+  display:block;
+  margin:.4rem 0 0;
+  font-size:.9rem;
+  line-height:1.4;
+  max-width:100%;
+}
+.local-section-label{
+  margin:1.25rem 0 .35rem;font-size:.8rem;font-weight:600;
+  letter-spacing:.04em;text-transform:uppercase;
+  color:color-mix(in srgb,currentColor 48%,transparent);
+}
+.local-notes-section{margin:0}
+.local-note-list{list-style:none;margin:0;padding:0}
+.local-note-row{
+  margin:0;
+  border-bottom:1px solid color-mix(in srgb,currentColor 9%,transparent);
+}
+.local-note-open{
+  display:flex;flex-direction:column;align-items:flex-start;gap:.12rem;
+  width:100%;text-align:left;padding:.7rem 0;
+  border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;
+  border-radius:0;
+}
+.local-note-open:hover .local-note-label{text-decoration:underline;text-underline-offset:.12em}
+.local-note-label{font-weight:600;font-size:1rem}
+.local-note-meta{font-size:.82rem}
+.local-page-foot{
+  margin-top:1.75rem;padding-top:1rem;
+  border-top:1px solid color-mix(in srgb,currentColor 9%,transparent);
+  font-size:.88rem;
+  display:flex;flex-wrap:wrap;gap:.35rem .45rem;align-items:center;
+}
+.local-page-foot a{
+  color:inherit;text-decoration:underline;
+  text-decoration-color:color-mix(in srgb,currentColor 22%,transparent);
+  text-underline-offset:.12em;
+}
+.local-page-foot a:hover{text-decoration-color:currentColor}
+.local-note-head .local-back{
+  display:block;
+  width:fit-content;
+  margin:0 0 .65rem;
+  font-size:.9rem;
+  color:inherit;
+  text-decoration:none;
+}
+.local-note-head .local-back:hover{
+  text-decoration:underline;
+  text-underline-offset:.12em;
+}
+.local-note-body{padding:.5rem 0 1rem}
+.local-ro-outline{margin:.15rem 0 1rem}
+.local-atts{margin-top:1.1rem}
+/* File open is a button styled like attlink — don’t stretch full row */
+.local-atts .att-row button.attlink{
+  flex:0 1 auto;
+  max-width:100%;
+  margin:0;padding:0;border:0;background:transparent;
+  font:inherit;font-size:inherit;text-align:left;cursor:pointer;
+  color:inherit;
+  text-decoration:underline;
+  text-decoration-color:color-mix(in srgb,currentColor 22%,transparent);
+  text-underline-offset:.12em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.local-atts .att-row button.attlink:hover{
+  text-decoration-color:currentColor;
+  background:color-mix(in srgb,currentColor 6%,transparent);
+}
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
+}
+/* Keep global pack-own max-width from bleeding into local layout oddly */
+.local-shell .pack-own{max-width:none;margin-left:0;margin-right:0}
+

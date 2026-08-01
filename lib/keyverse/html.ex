@@ -133,7 +133,9 @@ defmodule Keyverse.Html do
     create_link = """
     <p class="muted" style="margin-top:1.1rem">
       <a href="/setup">Create a new key</a>
-      <span style="opacity:.55"> — starts a new empty pack of notes</span>
+    </p>
+    <p class="muted" style="margin-top:.55rem">
+      <a href="/local" data-testid="open-local-mount">Open notes on this device</a>
     </p>
     """
 
@@ -229,6 +231,26 @@ defmodule Keyverse.Html do
     """
 
     page("Offline · keyverse", body, base: "", manifest_scope: "")
+  end
+
+  @doc """
+  Client-side read-only local pack mount shell (ADR 0017 Phase 1).
+  No server-side pack; File System Access / OPFS via pack-store.js.
+  """
+  def render_local_mount do
+    body = """
+    <div class="local-shell">
+      <div class="local-topbar ui">
+        <span class="local-badge" id="local-badge" hidden></span>
+        <p id="local-status" class="local-status muted" role="status" hidden></p>
+      </div>
+      <div id="local-app" data-testid="local-app"></div>
+    </div>
+    <script src="/pack-store.js"></script>
+    <script src="/local-mount.js"></script>
+    """
+
+    page("keyverse", body, base: "", manifest_scope: "")
   end
 
   def render_dead_link do

@@ -71,6 +71,18 @@ defmodule Keyverse.Router do
     send_static(conn, "crypto-bar.js", "application/javascript", "public, max-age=3600")
   end
 
+  get "/pack-store.js" do
+    send_static(conn, "pack-store.js", "application/javascript", "public, max-age=3600")
+  end
+
+  get "/local-mount.js" do
+    send_static(conn, "local-mount.js", "application/javascript", "public, max-age=3600")
+  end
+
+  get "/local" do
+    html(conn, 200, Html.render_local_mount())
+  end
+
   get "/manifest.webmanifest" do
     send_json(conn, 200, Html.web_manifest("/"))
   end
@@ -741,6 +753,7 @@ defmodule Keyverse.Router do
         pack_writers: true,
         metrics: true,
         pwa: true,
+        local_fs_mount_ro: true,
         host: "elixir"
       },
       endpoints: [
@@ -758,6 +771,7 @@ defmodule Keyverse.Router do
         "GET /api/pack/export",
         "POST /api/pack/import",
         "GET /api/share-qr?origin=",
+        "GET /local",
         "GET /metrics",
         "GET /manifest.webmanifest",
         "GET /sw.js",
@@ -768,7 +782,8 @@ defmodule Keyverse.Router do
         user_owned_pack: true,
         source_of_truth: "filesystem pack directory",
         export: "GET /api/pack/export",
-        import: "POST /api/pack/import?mode=merge|replace"
+        import: "POST /api/pack/import?mode=merge|replace",
+        local_mount: "GET /local (browser directory / OPFS, read-only)"
       },
       scaling: %{
         pack_write_queue: "per-pack GenServer",
