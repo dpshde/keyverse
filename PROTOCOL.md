@@ -1,4 +1,6 @@
-# keyverse protocol v0.1-demo
+# keyverse protocol v0.2
+
+> Supersedes `0.1-demo` additively (ignore-unknown). Older packs with `version: "0.1-demo"` remain valid.
 
 keyverse is a *pack format*, not an app. The protocol is: how notes are
 addressed, how they are laid out on disk, and what a record contains. Anything
@@ -51,7 +53,7 @@ its own pack directory:
 ```
 packs/                         multipack root (PACK_DIR)
   quiet-river-lantern/         one pack = one multiword key
-    protocol.json              {"protocol":"keyverse","version":"0.1-demo","schemas":"schemas/"}
+    protocol.json              {"protocol":"keyverse","version":"0.2","schemas":"schemas/"}
     door                       same phrase (optional; for portability)
     notes/<slug>.json          one record per addressed note
     attachments/<sha256>       content-addressed file bytes

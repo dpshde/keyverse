@@ -6,14 +6,14 @@
 ## Protocol
 
 - Name: `keyverse`
-- Version: `0.1-demo` (demo-era; expect breaking refinements before 1.0)
+- Version: `0.2` (demo-era; expect breaking refinements before 1.0)
 - Normative: PROTOCOL.md
 - Layers: pack core vs door profiles (docs/adr/0014)
 - Ownership: docs/OWNERSHIP.md (export/import zip)
 - HTTP matrix: docs/API.md
 - Schemas: schemas/ (note, attachment, cipher, protocol)
 - Conformance: protocol/fixtures + `mix keyverse.conformance`
-- Manifest: pack/protocol.json → `{"protocol":"keyverse","version":"0.1-demo"}`
+- Manifest: pack/protocol.json → `{"protocol":"keyverse","version":"0.2"}`
 - Discovery: GET /{door}/api/protocol
 
 ## Preferred integration: pack filesystem

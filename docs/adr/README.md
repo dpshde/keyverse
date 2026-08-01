@@ -19,6 +19,7 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0013](./0013-outline-collapse-and-structural-ops.md) | Outline collapse and structural ops on flat blocks | Accepted |
 | [0014](./0014-protocol-layers-pack-vs-door.md) | Protocol layers: pack core vs door profiles | Accepted |
 | [0015](./0015-user-owned-pack-transfer.md) | User-owned pack transfer (export / import) | Accepted |
+| [0016](./0016-per-pack-write-queue-and-metrics.md) | Per-pack write queue and host metrics | Accepted |
 
 ## How to add an ADR
 

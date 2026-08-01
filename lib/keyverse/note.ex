@@ -200,6 +200,10 @@ defmodule Keyverse.Note do
   end
 
   def put_note(pack_dir, scope, attrs) do
+    Keyverse.Pack.Writer.call(pack_dir, fn -> put_note_locked(pack_dir, scope, attrs) end)
+  end
+
+  defp put_note_locked(pack_dir, scope, attrs) do
     existing = read(pack_dir, scope.slug)
     now = iso_now()
 
@@ -266,6 +270,10 @@ defmodule Keyverse.Note do
   end
 
   def write_attachment_blob!(pack_dir, bin) when is_binary(bin) do
+    Keyverse.Pack.Writer.call(pack_dir, fn -> write_attachment_blob_locked!(pack_dir, bin) end)
+  end
+
+  defp write_attachment_blob_locked!(pack_dir, bin) when is_binary(bin) do
     sha = :crypto.hash(:sha256, bin) |> Base.encode16(case: :lower)
     dir = Pack.attach_dir(pack_dir)
     File.mkdir_p!(dir)

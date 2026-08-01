@@ -263,7 +263,10 @@ Do **not** use `mix run` in the deploy image (Mix tree is not shipped). Do **not
 (stays in the foreground for containers). `RELEASE_DISTRIBUTION=none` avoids needing a
 distributed node name in single-container Railway.
 
-Healthcheck: `GET /health` (expects `"host":"elixir"`).
+Healthcheck: `GET /health` (expects `"host":"elixir"`). Includes `metrics`
+summary (`put_p95_ms`, `get_p95_ms`, `pack_count`, `writers`, `uptime_ms`).
+
+Full snapshot: `GET /metrics` (JSON; rolling latency samples + volume bytes).
 
 ### CI (GitHub Actions)
 

@@ -7,14 +7,22 @@ defmodule Keyverse.Application do
     Keyverse.Config.ensure_packs_root!()
 
     children =
-      if Application.get_env(:keyverse, :start_server, true) do
-        [
-          {Bandit,
-           plug: Keyverse.Router, scheme: :http, port: Keyverse.Config.port(), ip: Keyverse.Config.ip()}
-        ]
-      else
-        []
-      end
+      [
+        {Registry, keys: :unique, name: Keyverse.Pack.WriterRegistry},
+        {DynamicSupervisor, name: Keyverse.Pack.WriterSupervisor, strategy: :one_for_one},
+        Keyverse.Metrics
+      ] ++
+        if Application.get_env(:keyverse, :start_server, true) do
+          [
+            {Bandit,
+             plug: Keyverse.Router,
+             scheme: :http,
+             port: Keyverse.Config.port(),
+             ip: Keyverse.Config.ip()}
+          ]
+        else
+          []
+        end
 
     opts = [strategy: :one_for_one, name: Keyverse.Supervisor]
     result = Supervisor.start_link(children, opts)
@@ -22,7 +30,6 @@ defmodule Keyverse.Application do
     if Application.get_env(:keyverse, :start_server, true), do: log_boot()
     result
   end
-
 
   defp log_boot do
     host = if Keyverse.Config.host() in ["0.0.0.0", ""], do: "localhost", else: Keyverse.Config.host()
@@ -51,5 +58,7 @@ defmodule Keyverse.Application do
     end
 
     IO.puts("packs root:     #{Keyverse.Config.packs_root()}")
+    IO.puts("app version:    #{Keyverse.Config.app_version()}")
+    IO.puts("protocol:       #{Keyverse.Config.protocol_name()} #{Keyverse.Config.protocol_version()}")
   end
 end

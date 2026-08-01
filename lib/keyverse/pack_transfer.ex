@@ -64,6 +64,12 @@ defmodule Keyverse.PackTransfer do
     mode = Keyword.get(opts, :mode, :merge)
     validate? = Keyword.get(opts, :validate, true)
 
+    Keyverse.Pack.Writer.call(pack_dir, fn ->
+      import_zip_locked(pack_dir, zip_binary, mode, validate?)
+    end)
+  end
+
+  defp import_zip_locked(pack_dir, zip_binary, mode, validate?) do
     File.mkdir_p!(pack_dir)
 
     case :zip.extract(zip_binary, [:memory]) do

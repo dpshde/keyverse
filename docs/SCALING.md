@@ -164,27 +164,40 @@ None of them replace the pack protocol. They only replace `server.mjs`.
 Do these before a rewrite; they apply everywhere:
 
 1. **Pagination** on `GET /api/notes` (and avoid full-pack HTML lists for huge packs).
-2. **Per-pack write queue** (serialize PUTs/POSTs for a key in-process).
+2. **Per-pack write queue** (serialize PUTs/POSTs for a key in-process) — **done in Elixir** (`Keyverse.Pack.Writer`).
 3. **Caps** on attach size (already), pack count, and request body times.
 4. **Shared scripture cache** (already under `_cache/`) — never fan-out BSB
    fetches per pack.
-5. **Horizontal split** by key hash if needed: reverse proxy → several Node
-   (or other) workers, each with a shard of `PACK_DIR` or a shared volume with
+5. **Horizontal split** by key hash if needed: reverse proxy → several
+   workers, each with a shard of `PACK_DIR` or a shared volume with
    sticky routing by door segment.
-6. **Don’t block the event loop** on large directory walks; stream or index.
+6. **Don’t block** on large directory walks; stream or index.
 
-If these keep the host healthy, stay on Node and invest in product.
+If these keep the host healthy, invest in product over another rewrite.
 
 ## Decision guide
 
 | Situation | Prefer |
 |-----------|--------|
-| Self-host / household / early multipack | **Node** reference door |
+| Self-host / household / early multipack | **Elixir** reference door (or Node legacy) |
 | Protocol and second clients | **Pack on disk + HTTP matrix** (language-agnostic) |
-| Public multipack, many idle clients, planned presence/sync | **BEAM / Phoenix** host |
+| Public multipack, many idle clients, planned presence/sync | **BEAM** host + per-pack writers (now) / Phoenix later |
 | Want one static binary, low drama deploys, no BEAM shop | **Go** host |
 | Max throughput / constrained metal | **Rust** host |
 | Need scale *now* without rewrite | **Shard processes** + proxy sticky by `{door}` |
+
+## Multi-replica on Railway (or any shared volume)
+
+**Current production:** one replica, one volume (`PACK_DIR=/data`).
+
+| Goal | Required |
+|------|----------|
+| 2+ replicas, same volume | **Sticky routing by door path** (`/{door}/…` → same instance) **or** split `PACK_DIR` shards |
+| No sticky | **Do not** multi-replica — two writers can corrupt the same note file |
+| Attachments at scale | Object store / larger volume; export zips grow with CAS |
+| Observe load | `GET /metrics` (p50/p95 per op, user_data_bytes, writer count) |
+
+Per-pack write queues serialize writers **inside one VM**. They do not coordinate across VMs.
 
 ## Boundary that must not move
 
@@ -202,7 +215,7 @@ many doors on one machine — and, later, of sync layered *under* the pack
 
 ## Summary
 
-Node is a good **reference door**: fast to ship, enough for single-writer
+Node is a good **legacy reference door**: fast to ship, enough for single-writer
 multipack at moderate load. BEAM is a better **shape** for a serious multipack
 host because isolation, supervision, and per-pack concurrency match “many
 keys, many libraries, one origin.” Go and Rust are solid alternatives when

@@ -77,7 +77,7 @@ Note counts, attachment totals, protocol version, export include/exclude lists.
 3. Point another keyverse host at the folder (`PACK_DIR=…`) or import the zip.
 4. Sealed notes need your **passphrase** (not the multiword door) — see PROTOCOL §3.1.
 
-## Single-writer (v0.1-demo)
+## Single-writer (v0.2)
 One writer per pack at a time is assumed. Concurrent multi-device merge is
 deferred (ADR 0008). Practical rule: export before switching devices if both
 might write; prefer one active door session.

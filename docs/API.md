@@ -201,6 +201,17 @@ Restore a pack zip into this door’s directory.
 | `400` | missing/invalid zip |
 | `422` | `{ ok: false, error: "conformance_failed", errors: […] }` |
 
+## Host metrics
+
+### `GET /health`
+
+Liveness + short metrics summary (`metrics.put_p95_ms`, `pack_count`, …).
+
+### `GET /metrics`
+
+JSON snapshot: per-op counts/errors, latency p50/p95/p99, `user_data_bytes`,
+active pack writers, uptime. Not Prometheus text format (yet).
+
 ## Progressive web app (shell)
 
 These are **outside** the door path (except door-scoped manifest) so the browser

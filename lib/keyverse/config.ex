@@ -44,7 +44,14 @@ defmodule Keyverse.Config do
   end
 
   def protocol_name, do: "keyverse"
-  def protocol_version, do: "0.1-demo"
+
+  # Pack format version (0.2 = ownership transfer + conformance fixtures frozen).
+  # Additive vs 0.1-demo: clients MUST ignore unknown keys.
+  def protocol_version, do: "0.2"
+
+  def app_version do
+    Application.spec(:keyverse, :vsn) |> to_string()
+  end
 
   def static_dir, do: Application.app_dir(:keyverse, "priv/static")
 

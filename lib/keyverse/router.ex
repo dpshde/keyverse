@@ -23,6 +23,10 @@ defmodule Keyverse.Router do
     health(conn)
   end
 
+  get "/metrics" do
+    metrics(conn)
+  end
+
   get "/sw.js" do
     send_static(conn, "sw.js", "application/javascript", "no-cache")
   end
@@ -266,7 +270,10 @@ defmodule Keyverse.Router do
         send_json(conn, 200, %{q: q, suggestions: suggestions})
 
       {"GET", "/api/notes"} ->
-        send_json(conn, 200, Note.list(pack_dir))
+        t0 = System.monotonic_time(:microsecond)
+        notes = Note.list(pack_dir)
+        Keyverse.Metrics.record(:http_list_notes, (System.monotonic_time(:microsecond) - t0) / 1000)
+        send_json(conn, 200, notes)
 
       {"GET", "/api/share-qr"} ->
         if Config.door_open?() or door == "" do
@@ -286,8 +293,12 @@ defmodule Keyverse.Router do
         send_json(conn, 200, PackTransfer.manifest(pack_dir))
 
       {"GET", "/api/pack/export"} ->
+        t0 = System.monotonic_time(:microsecond)
+
         case PackTransfer.export_zip(pack_dir) do
           {:ok, name, bin} ->
+            Keyverse.Metrics.record(:http_export, (System.monotonic_time(:microsecond) - t0) / 1000)
+
             conn
             |> put_resp_content_type("application/zip")
             |> put_resp_header("content-disposition", ~s(attachment; filename="#{name}"))
@@ -295,6 +306,7 @@ defmodule Keyverse.Router do
             |> send_resp(200, bin)
 
           {:error, reason} ->
+            Keyverse.Metrics.record(:http_export, (System.monotonic_time(:microsecond) - t0) / 1000, %{error: true})
             send_json(conn, 400, %{error: to_string(reason)})
         end
 
@@ -370,75 +382,88 @@ defmodule Keyverse.Router do
   end
 
   defp handle_api_note(conn, pack_dir, "GET", slug) do
-    case Scope.parse(slug) do
-      nil ->
-        send_json(conn, 400, %{error: "invalid passage address"})
+    t0 = System.monotonic_time(:microsecond)
 
-      scope ->
-        note = Note.read(pack_dir, scope.slug)
+    result =
+      case Scope.parse(slug) do
+        nil ->
+          send_json(conn, 400, %{error: "invalid passage address"})
 
-        cond do
-          is_nil(note) ->
-            send_json(conn, 404, %{error: "no note at this address"})
+        scope ->
+          note = Note.read(pack_dir, scope.slug)
 
-          raw_request?(conn) and Note.encrypted?(note) ->
-            send_json(conn, 409, %{error: "encrypted", message: "note is encrypted; raw plaintext unavailable"})
+          cond do
+            is_nil(note) ->
+              send_json(conn, 404, %{error: "no note at this address"})
 
-          raw_request?(conn) ->
-            conn
-            |> put_resp_content_type("text/plain")
-            |> send_resp(200, Note.serialize_blocks(note["blocks"] || []) <> "\n")
+            raw_request?(conn) and Note.encrypted?(note) ->
+              send_json(conn, 409, %{error: "encrypted", message: "note is encrypted; raw plaintext unavailable"})
 
-          true ->
-            send_json(conn, 200, note)
-        end
-    end
+            raw_request?(conn) ->
+              conn
+              |> put_resp_content_type("text/plain")
+              |> send_resp(200, Note.serialize_blocks(note["blocks"] || []) <> "\n")
+
+            true ->
+              send_json(conn, 200, note)
+          end
+      end
+
+    Keyverse.Metrics.record(:http_get_note, (System.monotonic_time(:microsecond) - t0) / 1000)
+    result
   end
 
   defp handle_api_note(conn, pack_dir, "PUT", slug) do
-    case Scope.parse(slug) do
-      nil ->
-        send_json(conn, 400, %{error: "invalid passage address"})
+    t0 = System.monotonic_time(:microsecond)
 
-      scope ->
-        ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
+    result =
+      case Scope.parse(slug) do
+        nil ->
+          send_json(conn, 400, %{error: "invalid passage address"})
 
-        result =
-          if String.contains?(ct, "application/json") or is_map(conn.body_params) and conn.body_params != %{} do
-            parsed = if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
-              conn.body_params
-            else
-              {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
-              case Jason.decode(body) do
-                {:ok, p} -> p
-                _ -> %{}
+        scope ->
+          ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
+
+          result =
+            if String.contains?(ct, "application/json") or is_map(conn.body_params) and conn.body_params != %{} do
+              parsed = if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
+                conn.body_params
+              else
+                {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+                case Jason.decode(body) do
+                  {:ok, p} -> p
+                  _ -> %{}
+                end
               end
+
+              case parsed do
+                %{"encrypted" => true, "cipher" => cipher} ->
+                  Note.put_note(pack_dir, scope, %{encrypted: true, cipher: cipher})
+
+                %{} = p when map_size(p) == 0 ->
+                  {:error, "invalid json"}
+
+                parsed ->
+                  Note.put_note(pack_dir, scope, parsed)
+              end
+            else
+              {:ok, body, conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+              _ = conn
+              blocks = Note.parse_interchange_text(body)
+              Note.put_note(pack_dir, scope, %{"blocks" => blocks})
             end
 
-            case parsed do
-              %{"encrypted" => true, "cipher" => cipher} ->
-                Note.put_note(pack_dir, scope, %{encrypted: true, cipher: cipher})
-
-              %{} = p when map_size(p) == 0 ->
-                {:error, "invalid json"}
-
-              parsed ->
-                Note.put_note(pack_dir, scope, parsed)
-            end
-          else
-            {:ok, body, conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
-            _ = conn
-            blocks = Note.parse_interchange_text(body)
-            Note.put_note(pack_dir, scope, %{"blocks" => blocks})
+          case result do
+            {:deleted, true} -> send_json(conn, 200, %{deleted: true})
+            {:ok, note} -> send_json(conn, 200, note)
+            note when is_map(note) -> send_json(conn, 200, note)
+            {:error, msg} -> send_json(conn, 400, %{error: msg})
           end
+      end
 
-        case result do
-          {:deleted, true} -> send_json(conn, 200, %{deleted: true})
-          {:ok, note} -> send_json(conn, 200, note)
-          note when is_map(note) -> send_json(conn, 200, note)
-          {:error, msg} -> send_json(conn, 400, %{error: msg})
-        end
-    end
+    err = is_struct(result, Plug.Conn) and result.status >= 400
+    Keyverse.Metrics.record(:http_put_note, (System.monotonic_time(:microsecond) - t0) / 1000, %{error: err})
+    result
   end
 
   defp handle_api_note(conn, _pack_dir, _, _slug) do
@@ -446,6 +471,7 @@ defmodule Keyverse.Router do
   end
 
   defp handle_pack_import(conn, pack_dir) do
+    t0 = System.monotonic_time(:microsecond)
     conn = Plug.Conn.fetch_query_params(conn)
     mode = if conn.query_params["mode"] == "replace", do: :replace, else: :merge
 
@@ -472,31 +498,36 @@ defmodule Keyverse.Router do
           end
       end
 
-    cond do
-      is_nil(zip_bin) or zip_bin == "" ->
-        send_json(conn, 400, %{error: "missing pack zip (multipart field pack or raw body)"})
+    result =
+      cond do
+        is_nil(zip_bin) or zip_bin == "" ->
+          send_json(conn, 400, %{error: "missing pack zip (multipart field pack or raw body)"})
 
-      true ->
-        case PackTransfer.import_zip(pack_dir, zip_bin, mode: mode, validate: true) do
-          {:ok, info} ->
-            send_json(conn, 200, %{
-              ok: true,
-              mode: info.mode,
-              files: info.files,
-              manifest: PackTransfer.manifest(pack_dir)
-            })
+        true ->
+          case PackTransfer.import_zip(pack_dir, zip_bin, mode: mode, validate: true) do
+            {:ok, info} ->
+              send_json(conn, 200, %{
+                ok: true,
+                mode: info.mode,
+                files: info.files,
+                manifest: PackTransfer.manifest(pack_dir)
+              })
 
-          {:error, {:conformance_failed, report}} ->
-            send_json(conn, 422, %{
-              ok: false,
-              error: "conformance_failed",
-              errors: report.errors
-            })
+            {:error, {:conformance_failed, report}} ->
+              send_json(conn, 422, %{
+                ok: false,
+                error: "conformance_failed",
+                errors: report.errors
+              })
 
-          {:error, reason} ->
-            send_json(conn, 400, %{ok: false, error: to_string(reason)})
-        end
-    end
+            {:error, reason} ->
+              send_json(conn, 400, %{ok: false, error: to_string(reason)})
+          end
+      end
+
+    err = is_struct(result, Plug.Conn) and result.status >= 400
+    Keyverse.Metrics.record(:http_import, (System.monotonic_time(:microsecond) - t0) / 1000, %{error: err})
+    result
   end
 
   defp handle_api_attach(conn, pack_dir, "POST", slug) do
@@ -690,6 +721,7 @@ defmodule Keyverse.Router do
     %{
       protocol: Config.protocol_name(),
       version: Config.protocol_version(),
+      app_version: Config.app_version(),
       multipack: not Config.door_open?(),
       door: not Config.door_open?() and door != "",
       door_phrase: if(door == "", do: nil, else: door),
@@ -706,6 +738,8 @@ defmodule Keyverse.Router do
         multipack: not Config.door_open?(),
         pack_export: true,
         pack_import: true,
+        pack_writers: true,
+        metrics: true,
         pwa: true,
         host: "elixir"
       },
@@ -724,6 +758,7 @@ defmodule Keyverse.Router do
         "GET /api/pack/export",
         "POST /api/pack/import",
         "GET /api/share-qr?origin=",
+        "GET /metrics",
         "GET /manifest.webmanifest",
         "GET /sw.js",
         "GET /offline",
@@ -734,6 +769,11 @@ defmodule Keyverse.Router do
         source_of_truth: "filesystem pack directory",
         export: "GET /api/pack/export",
         import: "POST /api/pack/import?mode=merge|replace"
+      },
+      scaling: %{
+        pack_write_queue: "per-pack GenServer",
+        replicas: "single-writer per pack; sticky door routing required for multi-replica",
+        see: "docs/SCALING.md"
       },
       schemas: "schemas/",
       docs: %{
@@ -746,16 +786,32 @@ defmodule Keyverse.Router do
   end
 
   defp health(conn) do
+    t0 = System.monotonic_time(:microsecond)
+    summary = Keyverse.Metrics.health_summary()
+
     body =
       Jason.encode!(%{
         ok: true,
         protocol: Config.protocol_name(),
         version: Config.protocol_version(),
+        app_version: Config.app_version(),
         multipack: not Config.door_open?(),
         door_open: Config.door_open?(),
         packs_root: Config.packs_root(),
-        host: "elixir"
+        host: "elixir",
+        metrics: summary
       })
+
+    Keyverse.Metrics.record(:http_health, (System.monotonic_time(:microsecond) - t0) / 1000)
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> put_resp_header("cache-control", "no-store")
+    |> send_resp(200, body <> "\n")
+  end
+
+  defp metrics(conn) do
+    body = Jason.encode!(Keyverse.Metrics.snapshot(), pretty: true)
 
     conn
     |> put_resp_content_type("application/json")
