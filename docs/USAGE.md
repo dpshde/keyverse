@@ -1,50 +1,40 @@
 # Using keyverse
 
-Day-to-day product surface of the reference door. Paths below assume you already
-opened your **multiword door** (`/{door}/…`). See [SELF_HOST.md](./SELF_HOST.md)
-and [ADR 0011](./adr/0011-multiword-door-access.md).
+Day-to-day use of keyverse. Hosting and deploy: [SELF_HOST.md](./SELF_HOST.md),
+[PRODUCTION.md](./PRODUCTION.md).
 
-## Install as an app (PWA)
-
-keyverse is a progressive web app. On a supporting browser (Chrome/Edge/Android,
-Safari/iOS after “Add to Home Screen”):
+## Install as an app
 
 | Platform | How |
 |----------|-----|
-| **Desktop Chrome / Edge** | Install icon in the address bar, or **Install** on the home header when offered |
+| **Desktop Chrome / Edge** | Install icon in the address bar, or **Install** when offered |
 | **Android Chrome** | Menu → **Install app** / **Add to Home screen** |
 | **iPhone / iPad Safari** | Share → **Add to Home Screen** |
 
-Installed mode opens in a standalone window (no browser chrome). The multiword
-door URL is still your key — install from a page under your door so the app
-starts there.
+Install from a page under *your* key so the app opens your notes.
 
-**Offline:** the shell and recently loaded pages/notes can open from cache.
-Writing notes and new attachments need a network connection to the door
-(no offline write queue in v0.1).
+**Offline:** pages you already opened may work without a connection. Saving notes
+and new attachments need the network.
 
-## Open your notes (sign in)
+## Open your notes
 
-There is no account. Your **key** is four words (also the path in your notes URL).
+No account. Your **key** is four words — it’s also the link to your notes.
 
 | Situation | What to do |
 |-----------|------------|
-| **First open (no key yet)** | Open the site → **Create and open notes** (suggested key, or type your own) |
-| **This computer** (key already set) | Open `http://localhost:4180/` → **Open my notes** |
-| **Link from the terminal** | Open the full URL it printed — you’re in |
-| **Phone / another device** | Open the site → enter your key → **Open notes** |
-| **Create a new key anytime** | Sign-in page → **Create a new key** (`/setup`) — same pack, old links stop working |
-| **Return visit** | Bookmark after first open; key is remembered for prefilling |
-| **Share your link** | On home, tap the four-word key → popup with QR code + **Share** (or copies the link) |
+| **First time** | Open the site → **Create and open notes** (suggested key, or type your own) |
+| **This computer** (already set up) | Open the site → **Open my notes** |
+| **Phone / another device** | Enter your key → **Open notes** |
+| **New key** | Sign-in → **Create a new key** — keeps notes; old links stop working |
+| **Return visit** | Bookmark after first open (key is remembered for prefilling) |
+| **Share** | On home, tap your four-word key → QR + **Share** |
 
-Wrong key → try again (the app won’t tell strangers whether a pack exists).
+Wrong key → try again.
 
-If the host pins `DOOR=` in the environment, the key is fixed there (setup can’t override it).
+## Optional passphrase (encrypt notes)
 
-## Optional encryption (pack passphrase)
-
-Separate from the multiword door — same idea as cowyo’s page password.
-Details: [ADR 0012](./adr/0012-client-side-note-encryption.md), [PROTOCOL §3.1](../PROTOCOL.md).
+Extra lock on note text (separate from your four-word key). Details:
+[ADR 0012](./adr/0012-client-side-note-encryption.md), [PROTOCOL §3.1](../PROTOCOL.md).
 
 | Action | What happens |
 |--------|----------------|

@@ -143,16 +143,16 @@ async function ensureDoor() {
  */
 async function setDoor(phrase) {
   if (DOOR_OPEN) {
-    throw new Error("door is open (DOOR_OPEN); this server has no key");
+    throw new Error("this site is open without a key — nothing to create");
   }
   if (DOOR_FROM_ENV) {
     throw new Error(
-      "this server’s key is fixed by the DOOR environment variable — change DOOR there, then redeploy"
+      "a fixed key is set by whoever hosts this site — ask them for the link, or to change it"
     );
   }
   const p = normalizeDoorPhrase(phrase);
   if (!isValidDoorPhrase(p)) {
-    throw new Error("use 3–8 short words (letters/numbers), e.g. quiet-river-lantern-notes");
+    throw new Error("use 3–8 short words, e.g. quiet-river-lantern-notes");
   }
   await mkdir(PACK_DIR, { recursive: true });
   await writeFile(DOOR_FILE, p + "\n", { mode: 0o600 });
@@ -3903,7 +3903,7 @@ function siteFooterHtml({ install = false } = {}) {
     install
       ? `<button type="button" class="pwa-install ui" title="Install as an app">Install app</button>`
       : "",
-    `<span class="muted">no account · notes on disk</span>`,
+    `<span class="muted">no account · just your key</span>`,
   ].filter(Boolean);
   return `<footer class="site-foot ui">${bits.join("")}</footer>`;
 }
@@ -3932,8 +3932,8 @@ function renderOffline() {
     "Offline · keyverse",
     `<div class="login offline-page">
       <h1>You’re offline</h1>
-      <p class="lead">keyverse can’t reach the pack right now.</p>
-      <p class="muted">Recently opened pages and notes may still be available from the cache. Reconnect and try again.</p>
+      <p class="lead">Can’t reach your notes right now.</p>
+      <p class="muted">Pages you opened recently may still work offline. Reconnect and try again.</p>
       <p style="margin-top:1.25rem"><button type="button" class="login-btn" onclick="location.reload()">Try again</button></p>
       <p class="muted" style="margin-top:1rem"><a class="underline" href="/">Home</a></p>
     </div>`,
@@ -4036,21 +4036,18 @@ function cryptoBarHtml({ locked = false } = {}) {
   </script>`;
 }
 
-/**
- * Create or replace multiword key in the browser.
- * Always available (not gated on localStorage / isLocalClient / existing door).
- */
+/** Create or replace the notes key (always available from sign-in). */
 function renderSetupDoor({ error = "", suggested = "", replacing = false } = {}) {
   const suggestion = suggested || "quiet-river-lantern-notes";
   const replacingNote = replacing
-    ? `<p class="login-error" role="status">A key already exists. Creating a new one <strong>replaces</strong> it — same notes, old links stop working.</p>`
+    ? `<p class="login-error" role="status">You already have a key. A new one keeps your notes but <strong>old links stop working</strong> — bookmark the new one.</p>`
     : "";
   const envPinned = DOOR_FROM_ENV
-    ? `<p class="login-error" role="alert">This server’s key is fixed by the <code>DOOR</code> environment variable. Change it there and redeploy — the form below can’t override it.</p>`
+    ? `<p class="login-error" role="alert">This site’s key is fixed by whoever hosts it. Ask them for the link (you can’t change it here).</p>`
     : "";
   const body = `
     <h1>keyverse</h1>
-    <p class="lead">${replacing ? "Create a new notes key." : "Create your notes key."} There is no account.</p>
+    <p class="lead">${replacing ? "Choose a new key for your notes." : "Choose a key for your notes."} No account needed.</p>
     ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
     ${envPinned}
     ${replacingNote}
@@ -4062,17 +4059,15 @@ function renderSetupDoor({ error = "", suggested = "", replacing = false } = {})
         autocomplete="off" autocapitalize="off" spellcheck="false"
         required autofocus ${DOOR_FROM_ENV ? "disabled" : ""}>
       <button type="submit" class="login-btn" name="intent" value="claim"
-        ${DOOR_FROM_ENV ? "disabled" : ""}>${replacing ? "Replace key and open" : "Create and open notes"}</button>
+        ${DOOR_FROM_ENV ? "disabled" : ""}>${replacing ? "Use this key and open" : "Create and open notes"}</button>
       <button type="submit" class="login-btn login-btn-secondary" name="intent" value="generate"
-        formnovalidate ${DOOR_FROM_ENV ? "disabled" : ""}>Generate another key</button>
+        formnovalidate ${DOOR_FROM_ENV ? "disabled" : ""}>Suggest another key</button>
     </form>
-    <p class="muted" style="margin-top:1rem"><a href="/">← Back to sign in</a></p>
-    <details class="login-more" open>
-      <summary>How this works</summary>
-      <p>The key is the path in your notes URL (e.g. <code>…/quiet-river-lantern-notes/</code>).
-        Bookmark it after you open. Anyone with the link can read and write this pack —
-        treat the key like a password.</p>
-      <p>You can create a new key anytime from sign-in. That rotates access to the <em>same</em> pack.</p>
+    <p class="muted" style="margin-top:1rem"><a href="/">← Back</a></p>
+    <details class="login-more">
+      <summary>How keys work</summary>
+      <p>Your key is four words that open your notes — like a password, but also the link
+        (e.g. <code>…/quiet-river-lantern-notes/</code>). Bookmark it. Anyone with the link can open the same notes.</p>
     </details>
     ${siteFooterHtml({ install: false })}`;
 
@@ -4098,9 +4093,8 @@ function renderSetupDoor({ error = "", suggested = "", replacing = false } = {})
 }
 
 /**
- * Sign-in at bare `/` when a door already exists.
- * Local: one solid button. Remote: key field + one button.
- * “Create a new key” is always available (not gated on browser/local state).
+ * Sign-in when a key already exists.
+ * Local: one-tap open. Remote: enter key. Always offer create a new key.
  */
 function renderEnterDoor({ error = "", local = false } = {}) {
   if (doorNeedsSetup()) {
@@ -4110,7 +4104,7 @@ function renderEnterDoor({ error = "", local = false } = {}) {
   const showLocal = local && !!DOOR;
   const createKeyLink = `<p class="muted" style="margin-top:1.1rem">
       <a href="/setup">Create a new key</a>
-      <span style="opacity:.55"> — same pack, new link</span>
+      <span style="opacity:.55"> — keeps your notes; old links stop working</span>
     </p>`;
 
   const keyForm = (opts = {}) => {
@@ -4127,10 +4121,9 @@ function renderEnterDoor({ error = "", local = false } = {}) {
 
   let body;
   if (showLocal) {
-    // One primary action. Key form only if they open “Use a different key”.
     body = `
       <h1>keyverse</h1>
-      <p class="lead">Scripture notes on this machine.</p>
+      <p class="lead">Your scripture notes on this device.</p>
       ${error ? `<p class="login-error" role="alert">${esc(error)}</p>` : ""}
       <a class="login-btn" href="${esc(openHref)}">Open my notes</a>
       <details class="login-more"${error ? " open" : ""}>
@@ -4147,13 +4140,11 @@ function renderEnterDoor({ error = "", local = false } = {}) {
       ${createKeyLink}
       <div class="ios-install-hint" id="ios-install-hint">
         <strong>Install on this device:</strong> Share → <strong>Add to Home Screen</strong>.
-        Opens like an app; your key stays in the URL.
       </div>
       <details class="login-more">
         <summary>Don’t have a key?</summary>
-        <p><a href="/setup">Create a new key</a> in the browser — no account.
-          That becomes your notes URL. Bookmark it.</p>
-        <p>If someone else already set up this server, ask them for their link instead.</p>
+        <p><a href="/setup">Create a new key</a> — four words, no account. Bookmark the page after you open.</p>
+        <p>Opening someone else’s notes? Ask them for their link.</p>
       </details>
       ${siteFooterHtml({ install: true })}`;
   }
@@ -6347,11 +6338,12 @@ const server = http.createServer(async (req, res) => {
       if (routed.needDoor) {
         return html(res, 200, renderEnterDoor({ local: isLocalClient(req) }));
       }
-      // wrong key: do not confirm whether a pack exists
+      // wrong key: do not confirm whether notes exist
       return html(res, 404, page("keyverse", `<div class="login">
         <h1>keyverse</h1>
-        <p class="lead">Nothing here.</p>
-        <p class="muted"><a href="/">Sign in</a></p>
+        <p class="lead">That link didn’t open anything.</p>
+        <p class="muted"><a href="/">Try your key again</a>
+          · <a href="/setup">Create a new key</a></p>
       </div>`));
     }
     p = routed.path;
