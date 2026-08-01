@@ -317,17 +317,24 @@ defmodule Keyverse.Note do
   end
 
   def write_attachment_blob!(pack_dir, bin) when is_binary(bin) do
-    Keyverse.Pack.Writer.call(pack_dir, fn -> write_attachment_blob_locked!(pack_dir, bin) end)
+    Keyverse.Pack.Writer.call(pack_dir, fn -> write_attachment_blob_locked(pack_dir, bin) end)
   end
 
-  defp write_attachment_blob_locked!(pack_dir, bin) when is_binary(bin) do
+  defp write_attachment_blob_locked(pack_dir, bin) when is_binary(bin) do
     sha = :crypto.hash(:sha256, bin) |> Base.encode16(case: :lower)
-    dir = Pack.attach_dir(pack_dir)
-    File.mkdir_p!(dir)
-    path = Path.join(dir, sha)
 
-    unless File.exists?(path), do: File.write!(path, bin)
-    sha
+    case Keyverse.PackQuota.check_add_blob(pack_dir, sha, byte_size(bin)) do
+      :ok ->
+        dir = Pack.attach_dir(pack_dir)
+        File.mkdir_p!(dir)
+        path = Path.join(dir, sha)
+        unless File.exists?(path), do: File.write!(path, bin)
+        {:ok, sha}
+
+      {:error, reason, usage} ->
+        Keyverse.Metrics.record(:quota_reject, 0, %{error: true})
+        {:error, reason, usage}
+    end
   end
 
   @doc "Append attachment metadata on a note (writer-serialized)."

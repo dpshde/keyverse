@@ -9,6 +9,9 @@ config :keyverse,
   max_attach_bytes: String.to_integer(System.get_env("MAX_ATTACH_BYTES") || "#{50 * 1024 * 1024}"),
   max_attach_per_note: String.to_integer(System.get_env("MAX_ATTACH_PER_NOTE") || "80"),
   max_import_bytes: String.to_integer(System.get_env("MAX_IMPORT_BYTES") || "#{200 * 1024 * 1024}"),
+  max_pack_attach_bytes:
+    String.to_integer(System.get_env("MAX_PACK_ATTACH_BYTES") || "#{1 * 1024 * 1024 * 1024}"),
+  max_pack_attach_count: String.to_integer(System.get_env("MAX_PACK_ATTACH_COUNT") || "2000"),
   cors_origin: System.get_env("CORS_ORIGIN"),
   fathom_site: System.get_env("FATHOM_SITE") || "EMYGRIAR"
 

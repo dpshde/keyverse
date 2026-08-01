@@ -186,6 +186,31 @@ If these keep the host healthy, invest in product over another rewrite.
 | Max throughput / constrained metal | **Rust** host |
 | Need scale *now* without rewrite | **Shard processes** + proxy sticky by `{door}` |
 
+## Medium-traffic posture (current Elixir door)
+
+Built for a **spike of real users** without instant disk death — not for
+consumer-scale DAU.
+
+| Control | Default | Env |
+|---------|---------|-----|
+| File size | 50 MB | `MAX_ATTACH_BYTES` |
+| Attachments / note | 80 | `MAX_ATTACH_PER_NOTE` |
+| **Pack attach bytes** | **1 GB** | `MAX_PACK_ATTACH_BYTES` |
+| **Pack attach count** | **2000** | `MAX_PACK_ATTACH_COUNT` |
+| Import zip | 200 MB | `MAX_IMPORT_BYTES` |
+| Attach rate / door | 60 / min | (code default) |
+| Note PUT / door | 180 / min | |
+| Import / door | 6 / hour | |
+| Setup (create door) / IP | 20 / hour | |
+| Global writes | 600 / min | |
+
+Responses: **429** + `Retry-After` when rate limited; **507** + `quota` when pack storage full.  
+`GET /{door}/api/pack` includes `quota`. `/health` metrics include `rate_limited_count`, `quota_reject_count`, `limits`.
+
+**Capacity intent:** dozens–low hundreds of light users; text-first packs scale further; media-heavy packs hit the 1 GB/door budget before the 5 GB volume does.
+
+If traffic stays high: raise volume, lower per-pack budgets, add blob storage, sticky multi-replica (see below).
+
 ## Multi-replica on Railway (or any shared volume)
 
 **Current production:** one replica, one volume (`PACK_DIR=/data`).

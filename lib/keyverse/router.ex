@@ -2,7 +2,7 @@ defmodule Keyverse.Router do
   @moduledoc "HTTP multipack door — Plug router."
   use Plug.Router
 
-  alias Keyverse.{Attach, Config, Door, Html, Note, Pack, PackTransfer, Scope}
+  alias Keyverse.{Attach, Config, Door, Html, Note, Pack, PackQuota, PackTransfer, RateLimit, Scope}
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
@@ -120,21 +120,27 @@ defmodule Keyverse.Router do
     if Config.door_open?() do
       redirect(conn, "/")
     else
-      params = conn.body_params || %{}
-      intent = params["intent"] || "claim"
+      case enforce_rates(conn, [{:setup_ip, Config.rate_setup()}]) do
+        {:halt, conn} ->
+          conn
 
-      if intent == "generate" do
-        html(conn, 200, Html.render_setup(suggested: Door.generate()))
-      else
-        case Pack.create(params["door"]) do
-          {:ok, claimed} ->
-            redirect(conn, "/#{claimed}/")
+        :ok ->
+          params = conn.body_params || %{}
+          intent = params["intent"] || "claim"
 
-          {:error, reason} ->
-            suggested = Door.normalize(params["door"])
-            suggested = if suggested == "", do: Door.generate(), else: suggested
-            html(conn, 400, Html.render_setup(error: to_string(reason), suggested: suggested))
-        end
+          if intent == "generate" do
+            html(conn, 200, Html.render_setup(suggested: Door.generate()))
+          else
+            case Pack.create(params["door"]) do
+              {:ok, claimed} ->
+                redirect(conn, "/#{claimed}/")
+
+              {:error, reason} ->
+                suggested = Door.normalize(params["door"])
+                suggested = if suggested == "", do: Door.generate(), else: suggested
+                html(conn, 400, Html.render_setup(error: to_string(reason), suggested: suggested))
+            end
+          end
       end
     end
   end
@@ -323,7 +329,9 @@ defmodule Keyverse.Router do
         end
 
       {"GET", "/api/pack"} ->
-        send_json(conn, 200, PackTransfer.manifest(pack_dir))
+        man = PackTransfer.manifest(pack_dir)
+        quota = PackQuota.usage(pack_dir)
+        send_json(conn, 200, Map.put(man, :quota, quota))
 
       {"GET", "/api/pack/export"} ->
         t0 = System.monotonic_time(:microsecond)
@@ -515,50 +523,18 @@ defmodule Keyverse.Router do
 
   defp handle_api_note(conn, pack_dir, "PUT", slug) do
     t0 = System.monotonic_time(:microsecond)
+    door = pack_door(pack_dir)
 
     result =
-      case Scope.parse(slug) do
-        nil ->
-          send_json(conn, 400, %{error: "invalid passage address"})
+      case enforce_rates(conn, [
+             {:global_write, Config.rate_global_write()},
+             {{:put, door}, Config.rate_put_note()}
+           ]) do
+        {:halt, conn} ->
+          conn
 
-        scope ->
-          ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
-
-          result =
-            if String.contains?(ct, "application/json") or is_map(conn.body_params) and conn.body_params != %{} do
-              parsed = if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
-                conn.body_params
-              else
-                {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
-                case Jason.decode(body) do
-                  {:ok, p} -> p
-                  _ -> %{}
-                end
-              end
-
-              case parsed do
-                %{"encrypted" => true, "cipher" => cipher} ->
-                  Note.put_note(pack_dir, scope, %{encrypted: true, cipher: cipher})
-
-                %{} = p when map_size(p) == 0 ->
-                  {:error, "invalid json"}
-
-                parsed ->
-                  Note.put_note(pack_dir, scope, parsed)
-              end
-            else
-              {:ok, body, conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
-              _ = conn
-              blocks = Note.parse_interchange_text(body)
-              Note.put_note(pack_dir, scope, %{"blocks" => blocks})
-            end
-
-          case result do
-            {:deleted, true} -> send_json(conn, 200, %{deleted: true})
-            {:ok, note} -> send_json(conn, 200, note)
-            note when is_map(note) -> send_json(conn, 200, note)
-            {:error, msg} -> send_json(conn, 400, %{error: msg})
-          end
+        :ok ->
+          do_handle_api_note_put(conn, pack_dir, slug)
       end
 
     err = is_struct(result, Plug.Conn) and result.status >= 400
@@ -570,8 +546,76 @@ defmodule Keyverse.Router do
     send_json(conn, 405, %{error: "method not allowed"})
   end
 
+  defp do_handle_api_note_put(conn, pack_dir, slug) do
+    case Scope.parse(slug) do
+      nil ->
+        send_json(conn, 400, %{error: "invalid passage address"})
+
+      scope ->
+        ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
+
+        result =
+          if String.contains?(ct, "application/json") or
+               (is_map(conn.body_params) and conn.body_params != %{}) do
+            parsed =
+              if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
+                conn.body_params
+              else
+                {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+
+                case Jason.decode(body) do
+                  {:ok, p} -> p
+                  _ -> %{}
+                end
+              end
+
+            case parsed do
+              %{"encrypted" => true, "cipher" => cipher} ->
+                Note.put_note(pack_dir, scope, %{encrypted: true, cipher: cipher})
+
+              %{} = p when map_size(p) == 0 ->
+                {:error, "invalid json"}
+
+              parsed ->
+                Note.put_note(pack_dir, scope, parsed)
+            end
+          else
+            {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+            blocks = Note.parse_interchange_text(body)
+            Note.put_note(pack_dir, scope, %{"blocks" => blocks})
+          end
+
+        case result do
+          {:deleted, true} -> send_json(conn, 200, %{deleted: true})
+          {:ok, note} -> send_json(conn, 200, note)
+          note when is_map(note) -> send_json(conn, 200, note)
+          {:error, msg} -> send_json(conn, 400, %{error: msg})
+        end
+    end
+  end
+
   defp handle_pack_import(conn, pack_dir) do
     t0 = System.monotonic_time(:microsecond)
+    door = pack_door(pack_dir)
+
+    result =
+      case enforce_rates(conn, [
+             {:global_write, Config.rate_global_write()},
+             {{:import, door}, Config.rate_import()}
+           ]) do
+        {:halt, conn} ->
+          conn
+
+        :ok ->
+          do_handle_pack_import(conn, pack_dir)
+      end
+
+    err = is_struct(result, Plug.Conn) and result.status >= 400
+    Keyverse.Metrics.record(:http_import, (System.monotonic_time(:microsecond) - t0) / 1000, %{error: err})
+    result
+  end
+
+  defp do_handle_pack_import(conn, pack_dir) do
     conn = Plug.Conn.fetch_query_params(conn)
     mode = if conn.query_params["mode"] == "replace", do: :replace, else: :merge
 
@@ -619,69 +663,74 @@ defmodule Keyverse.Router do
           end
       end
 
-    result =
-      cond do
-        match?({:too_large, _}, zip_bin) ->
-          send_json(conn, 413, %{
-            error: "import too large (max #{Config.max_import_bytes()} bytes)",
-            max_bytes: Config.max_import_bytes()
-          })
+    cond do
+      match?({:too_large, _}, zip_bin) ->
+        send_json(conn, 413, %{
+          error: "import too large (max #{Config.max_import_bytes()} bytes)",
+          max_bytes: Config.max_import_bytes()
+        })
 
-        is_nil(zip_bin) or zip_bin == "" ->
-          send_json(conn, 400, %{error: "missing pack zip (multipart field pack or raw body)"})
+      is_nil(zip_bin) or zip_bin == "" ->
+        send_json(conn, 400, %{error: "missing pack zip (multipart field pack or raw body)"})
 
-        true ->
-          case PackTransfer.import_zip(pack_dir, zip_bin, mode: mode, validate: true) do
-            {:ok, info} ->
-              send_json(conn, 200, %{
-                ok: true,
-                mode: info.mode,
-                files: info.files,
-                manifest: PackTransfer.manifest(pack_dir)
-              })
+      true ->
+        case PackTransfer.import_zip(pack_dir, zip_bin, mode: mode, validate: true) do
+          {:ok, info} ->
+            send_json(conn, 200, %{
+              ok: true,
+              mode: info.mode,
+              files: info.files,
+              manifest: PackTransfer.manifest(pack_dir)
+            })
 
-            {:error, {:conformance_failed, report}} ->
-              send_json(conn, 422, %{
-                ok: false,
-                error: "conformance_failed",
-                errors: report.errors
-              })
+          {:error, {:conformance_failed, report}} ->
+            send_json(conn, 422, %{
+              ok: false,
+              error: "conformance_failed",
+              errors: report.errors
+            })
 
-            {:error, reason} ->
-              send_json(conn, 400, %{ok: false, error: to_string(reason)})
-          end
-      end
-
-    err = is_struct(result, Plug.Conn) and result.status >= 400
-    Keyverse.Metrics.record(:http_import, (System.monotonic_time(:microsecond) - t0) / 1000, %{error: err})
-    result
+          {:error, reason} ->
+            send_json(conn, 400, %{ok: false, error: to_string(reason)})
+        end
+    end
   end
 
   defp handle_api_attach(conn, pack_dir, "POST", slug) do
     t0 = System.monotonic_time(:microsecond)
+    door = pack_door(pack_dir)
 
     result =
-      case Scope.parse(slug) do
-        nil ->
-          send_json(conn, 400, %{error: "invalid passage address"})
+      case enforce_rates(conn, [
+             {:global_write, Config.rate_global_write()},
+             {{:attach, door}, Config.rate_attach()}
+           ]) do
+        {:halt, conn} ->
+          conn
 
-        scope ->
-          ct =
-            conn
-            |> get_req_header("content-type")
-            |> List.first()
-            |> to_string()
-            |> String.downcase()
+        :ok ->
+          case Scope.parse(slug) do
+            nil ->
+              send_json(conn, 400, %{error: "invalid passage address"})
 
-          existing = Note.read(pack_dir, scope.slug)
-          existing_atts = (existing && existing["attachments"]) || []
+            scope ->
+              ct =
+                conn
+                |> get_req_header("content-type")
+                |> List.first()
+                |> to_string()
+                |> String.downcase()
 
-          case Attach.check_count(existing_atts) do
-            {:error, msg} ->
-              send_json(conn, 400, %{error: msg, max: Attach.max_per_note()})
+              existing = Note.read(pack_dir, scope.slug)
+              existing_atts = (existing && existing["attachments"]) || []
 
-            :ok ->
-              do_attach_post(conn, pack_dir, scope, existing, ct)
+              case Attach.check_count(existing_atts) do
+                {:error, msg} ->
+                  send_json(conn, 400, %{error: msg, max: Attach.max_per_note()})
+
+                :ok ->
+                  do_attach_post(conn, pack_dir, scope, existing, ct)
+              end
           end
       end
 
@@ -750,22 +799,30 @@ defmodule Keyverse.Router do
               |> Attach.sanitize_filename()
 
             mime = Attach.sanitize_mime(ct)
-            sha = Note.write_attachment_blob!(pack_dir, body)
 
-            att = %{
-              "id" => Note.new_att_id(),
-              "kind" => "file",
-              "name" => filename,
-              "mime" => mime,
-              "sha256" => sha,
-              "bytes" => byte_size(body),
-              "created_at" => Note.iso_now()
-            }
+            case Note.write_attachment_blob!(pack_dir, body) do
+              {:ok, sha} ->
+                att = %{
+                  "id" => Note.new_att_id(),
+                  "kind" => "file",
+                  "name" => filename,
+                  "mime" => mime,
+                  "sha256" => sha,
+                  "bytes" => byte_size(body),
+                  "created_at" => Note.iso_now()
+                }
 
-            if existing && Note.encrypted?(existing) do
-              send_json(conn, 200, %{encrypted: true, attachment: att})
-            else
-              attach_to_note(conn, pack_dir, scope, existing, att)
+                if existing && Note.encrypted?(existing) do
+                  send_json(conn, 200, %{encrypted: true, attachment: att})
+                else
+                  attach_to_note(conn, pack_dir, scope, existing, att)
+                end
+
+              {:error, reason, usage} ->
+                send_json(conn, Keyverse.PackQuota.http_status(reason), %{
+                  error: Keyverse.PackQuota.error_message(reason, usage),
+                  quota: usage
+                })
             end
 
           {:error, reason} ->
@@ -895,6 +952,15 @@ defmodule Keyverse.Router do
       max_attach_bytes: Config.max_attach_bytes(),
       max_attach_per_note: Config.max_attach_per_note(),
       max_import_bytes: Config.max_import_bytes(),
+      max_pack_attach_bytes: Config.max_pack_attach_bytes(),
+      max_pack_attach_count: Config.max_pack_attach_count(),
+      rate_limits: %{
+        attach_per_min: elem(Config.rate_attach(), 0),
+        put_per_min: elem(Config.rate_put_note(), 0),
+        import_per_hour: elem(Config.rate_import(), 0),
+        setup_per_hour: elem(Config.rate_setup(), 0),
+        global_write_per_min: elem(Config.rate_global_write(), 0)
+      },
       features: %{
         notes: true,
         attachments: true,
@@ -906,6 +972,8 @@ defmodule Keyverse.Router do
         pack_export: true,
         pack_import: true,
         pack_writers: true,
+        pack_quota: true,
+        rate_limit: true,
         metrics: true,
         pwa: true,
         local_fs_mount_ro: true,
@@ -944,6 +1012,8 @@ defmodule Keyverse.Router do
       },
       scaling: %{
         pack_write_queue: "per-pack GenServer",
+        pack_attach_quota: "MAX_PACK_ATTACH_BYTES / MAX_PACK_ATTACH_COUNT",
+        rate_limits: "door + global write budgets (ETS)",
         replicas: "single-writer per pack; sticky door routing required for multi-replica",
         see: "docs/SCALING.md"
       },
@@ -997,6 +1067,65 @@ defmodule Keyverse.Router do
   defp normalize_path(p) do
     p = if String.starts_with?(p, "/"), do: p, else: "/" <> p
     if p != "/" and String.ends_with?(p, "/"), do: String.trim_trailing(p, "/"), else: p
+  end
+
+  defp pack_door(pack_dir), do: pack_dir |> Path.expand() |> Path.basename()
+
+  defp client_ip_key(conn) do
+    # Prefer edge-provided client IP when present (Railway/proxy).
+    xf =
+      conn
+      |> get_req_header("x-forwarded-for")
+      |> List.first()
+      |> case do
+        nil -> nil
+        s -> s |> String.split(",") |> List.first() |> to_string() |> String.trim()
+      end
+
+    cond do
+      is_binary(xf) and xf != "" -> xf
+      true ->
+        case conn.remote_ip do
+          tup when is_tuple(tup) -> tup |> :inet.ntoa() |> to_string()
+          _ -> "unknown"
+        end
+    end
+  end
+
+  # checks is a list of {bucket_key | {:setup_ip, ...} special, {limit, window_ms}}
+  defp enforce_rates(conn, checks) when is_list(checks) do
+    Enum.reduce_while(checks, :ok, fn {bucket, {limit, window}}, :ok ->
+      key =
+        case bucket do
+          :setup_ip -> "setup:" <> client_ip_key(conn)
+          :global_write -> "global:write"
+          other -> "k:" <> inspect(other)
+        end
+
+      case RateLimit.check(key, limit, window) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, :rate_limited, ms} ->
+          retry_s = max(1, div(ms + 999, 1000))
+
+          conn =
+            conn
+            |> put_resp_header("retry-after", Integer.to_string(retry_s))
+            |> put_resp_header("cache-control", "no-store")
+            |> send_json(429, %{
+              error: "rate limited",
+              retry_after_ms: ms,
+              retry_after_s: retry_s
+            })
+
+          {:halt, {:halt, conn}}
+      end
+    end)
+    |> case do
+      :ok -> :ok
+      {:halt, conn} -> {:halt, conn}
+    end
   end
 
   defp html(conn, code, body) do

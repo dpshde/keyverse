@@ -25,7 +25,9 @@ defmodule Keyverse.Metrics do
     :bsb_ets_hit,
     :bsb_disk_hit,
     :http_text,
-    :http_read_bundle
+    :http_read_bundle,
+    :rate_limited,
+    :quota_reject
   ]
 
   # --- public API ----------------------------------------------------------
@@ -129,7 +131,10 @@ defmodule Keyverse.Metrics do
     put = snap.ops[:http_put_note] || %{}
     get = snap.ops[:http_get_note] || %{}
     bsb = snap.ops[:bsb_get] || %{}
+    rate = snap.ops[:rate_limited] || %{}
+    quota = snap.ops[:quota_reject] || %{}
     bsb_stats = Keyverse.TextCache.stats()
+    rl = Keyverse.RateLimit.stats()
 
     %{
       uptime_ms: snap.uptime_ms,
@@ -142,7 +147,15 @@ defmodule Keyverse.Metrics do
       bsb_get_p95_ms: get_in(bsb, [:latency_ms, :p95]),
       bsb_get_count: bsb[:count] || 0,
       bsb_ets: bsb_stats.ets_entries,
-      bsb_pack: bsb_stats.pack_loaded
+      bsb_pack: bsb_stats.pack_loaded,
+      rate_limited_count: rate[:count] || 0,
+      quota_reject_count: quota[:count] || 0,
+      rate_limit_keys: rl.keys,
+      limits: %{
+        max_attach_bytes: Keyverse.Config.max_attach_bytes(),
+        max_pack_attach_bytes: Keyverse.Config.max_pack_attach_bytes(),
+        max_pack_attach_count: Keyverse.Config.max_pack_attach_count()
+      }
     }
   end
 

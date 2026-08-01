@@ -213,6 +213,8 @@ Keep `PACK_DIR` outside the git checkout so deploys never wipe notes.
 - [ ] Upload size limited (`client_max_body_size` / `MAX_ATTACH_BYTES`)
 - [ ] BSB pack present in release (`priv/bsb/chapters.json.gz`); no outbound needed for reader text
 - [ ] One writer process per pack
+- [ ] Pack attach quotas set (`MAX_PACK_ATTACH_BYTES`, `MAX_PACK_ATTACH_COUNT`)
+- [ ] Watch `/health` for `rate_limited_count` / `quota_reject_count` under load
 - [ ] Users always get `https://host/{door}/…` links — never bare `/`
 
 ## What this binary still does not provide

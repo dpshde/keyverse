@@ -39,6 +39,20 @@ defmodule Keyverse.Config do
   def max_import_bytes,
     do: Application.get_env(:keyverse, :max_import_bytes, 200 * 1024 * 1024)
 
+  # Per-pack budgets (shared volume protection)
+  def max_pack_attach_bytes,
+    do: Application.get_env(:keyverse, :max_pack_attach_bytes, 1 * 1024 * 1024 * 1024)
+
+  def max_pack_attach_count,
+    do: Application.get_env(:keyverse, :max_pack_attach_count, 2_000)
+
+  # Rate limits: {limit, window_ms}
+  def rate_attach, do: Application.get_env(:keyverse, :rate_attach, {60, 60_000})
+  def rate_import, do: Application.get_env(:keyverse, :rate_import, {6, 3_600_000})
+  def rate_put_note, do: Application.get_env(:keyverse, :rate_put_note, {180, 60_000})
+  def rate_setup, do: Application.get_env(:keyverse, :rate_setup, {20, 3_600_000})
+  def rate_global_write, do: Application.get_env(:keyverse, :rate_global_write, {600, 60_000})
+
   def cors_origin, do: Application.get_env(:keyverse, :cors_origin)
 
   def fathom_site do
