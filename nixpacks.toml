@@ -1,4 +1,3 @@
-# Railpack/Nixpacks build for the multipack door (release + foreground).
 [phases.setup]
 nixPkgs = ["elixir", "erlang"]
 
@@ -16,4 +15,4 @@ cmds = [
 ]
 
 [start]
-cmd = "/app/_build/prod/rel/keyverse/bin/keyverse foreground"
+cmd = "/app/_build/prod/rel/keyverse/bin/keyverse start"

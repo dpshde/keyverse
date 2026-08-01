@@ -250,13 +250,14 @@ Do **not** set `DOOR_OPEN` in production.
 
 [`railway.json`](../railway.json) uses **RAILPACK** (builds a Mix **release**).
 
-Start must be the release in the **foreground** (not `mix run`, not `bin/keyverse start`):
+Start the Mix **release** (Railpack builds it under `_build/prod/rel/keyverse`):
 
 ```text
-/app/_build/prod/rel/keyverse/bin/keyverse foreground
+/app/_build/prod/rel/keyverse/bin/keyverse start
 ```
 
-`mix run` fails in the deploy image (no full Mix tree). `start` daemonizes and the healthcheck never sees a listening process.
+Do **not** use `mix run` in the deploy image (Mix tree is not shipped). Current Elixir
+releases run `start` with `--no-halt` (stays in the foreground for containers).
 
 Healthcheck: `GET /health` (expects `"host":"elixir"`).
 

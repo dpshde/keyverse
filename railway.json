@@ -4,7 +4,7 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "/app/_build/prod/rel/keyverse/bin/keyverse foreground",
+    "startCommand": "/app/_build/prod/rel/keyverse/bin/keyverse start",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
