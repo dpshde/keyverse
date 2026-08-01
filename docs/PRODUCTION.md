@@ -96,9 +96,8 @@ WorkingDirectory=/opt/keyverse
 Environment=HOST=127.0.0.1
 Environment=PORT=4180
 Environment=PACK_DIR=/var/lib/keyverse/packs
-WorkingDirectory=/opt/keyverse
-ExecStart=/usr/bin/mix run --no-halt
 Environment=MIX_ENV=prod
+ExecStart=/usr/bin/mix run --no-halt
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
