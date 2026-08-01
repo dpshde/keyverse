@@ -4,7 +4,7 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "MIX_ENV=prod mix deps.get && MIX_ENV=prod mix compile && MIX_ENV=prod mix run --no-halt",
+    "startCommand": "MIX_ENV=prod mix run --no-halt",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",

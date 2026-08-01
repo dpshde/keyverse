@@ -1,9 +1,13 @@
-# Railway / Nixpacks: build and run the Elixir multipack door.
+# Used when Railpack/Nixpacks builds from mix.exs (no Dockerfile).
 [phases.setup]
 nixPkgs = ["elixir", "erlang"]
 
 [phases.install]
-cmds = ["mix local.hex --force", "mix local.rebar --force", "MIX_ENV=prod mix deps.get"]
+cmds = [
+  "mix local.hex --force",
+  "mix local.rebar --force",
+  "MIX_ENV=prod mix deps.get --only prod"
+]
 
 [phases.build]
 cmds = ["MIX_ENV=prod mix compile"]

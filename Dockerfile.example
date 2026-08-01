@@ -1,0 +1,43 @@
+# Optional multi-stage image (self-host / non-Railway).
+# Railway production uses RAILPACK (no root Dockerfile) — see railway.json.
+#
+# Build: docker build -f Dockerfile.example -t keyverse .
+# Run:   docker run --rm -p 4180:4180 -v keyverse-data:/data -e PACK_DIR=/data keyverse
+
+FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20250113-slim AS build
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    build-essential git ca-certificates \
+  && update-ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV MIX_ENV=prod
+
+RUN mix local.hex --force && mix local.rebar --force
+
+COPY mix.exs mix.lock ./
+RUN mix deps.get --only prod
+
+COPY config config
+COPY lib lib
+COPY priv priv
+COPY words-door.txt words-door.txt
+RUN mix compile
+
+FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20250113-slim
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    libstdc++6 openssl ca-certificates ncurses-bin \
+  && update-ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV MIX_ENV=prod HOST=0.0.0.0 PORT=4180 PACK_DIR=/data
+
+COPY --from=build /app /app
+COPY --from=build /root/.mix /root/.mix
+COPY --from=build /root/.hex /root/.hex
+
+EXPOSE 4180
+CMD ["mix", "run", "--no-halt"]

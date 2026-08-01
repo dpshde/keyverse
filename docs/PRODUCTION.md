@@ -150,10 +150,11 @@ server {
 
 ## Docker
 
-See root [`Dockerfile`](../Dockerfile) (Elixir multipack door).
+Optional image: root [`Dockerfile.example`](../Dockerfile.example) (Elixir multipack door).
+Railway production uses **RAILPACK** (no root `Dockerfile`) so Hex installs cleanly on their builders.
 
 ```sh
-docker build -t keyverse .
+docker build -f Dockerfile.example -t keyverse .
 docker run --rm -p 4180:4180 \
   -v /var/lib/keyverse/packs:/data \
   -e PACK_DIR=/data \
@@ -247,11 +248,13 @@ The public demo:
 
 Do **not** set `DOOR_OPEN` in production.
 
-[`railway.json`](../railway.json) starts the **Elixir** door:
+[`railway.json`](../railway.json) uses **RAILPACK** + start:
 
 ```text
-MIX_ENV=prod mix deps.get && MIX_ENV=prod mix compile && MIX_ENV=prod mix run --no-halt
+MIX_ENV=prod mix run --no-halt
 ```
+
+(Deps/compile run in the Railpack/Nixpacks build phase.)
 
 Healthcheck: `GET /health` (expects `"host":"elixir"`).
 
