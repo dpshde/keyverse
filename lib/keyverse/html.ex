@@ -625,26 +625,24 @@ defmodule Keyverse.Html do
     """
   end
 
-  def render_read(pack_dir, scope, base) do
+  @doc """
+  Build reader payload for SSR and `GET /api/read/:slug`.
+  Returns `{:ok, map}` or `{:error, reason}`.
+  """
+  def build_read_bundle(pack_dir, scope, base) do
     book = scope.parsed.book
     chapter = scope.parsed.chapter
     chapter_scope = Scope.parse("#{book}.#{chapter}")
     display = if chapter_scope, do: Scope.display(chapter_scope), else: Scope.display(scope)
 
-    # Overlap BSB resolve (ETS/disk/upstream) with note listing — biggest SSR win on cold miss.
     text_task = Task.async(fn -> Keyverse.TextCache.get_chapter(book, chapter) end)
-    notes_task = Task.async(fn -> Note.list(pack_dir) end)
-    text_result = Task.await(text_task, 45_000)
-    notes = Task.await(notes_task, 30_000)
+    notes_task = Task.async(fn -> Note.list_for_chapter(pack_dir, book, chapter) end)
+    text_result = Task.await(text_task, 15_000)
+    notes = Task.await(notes_task, 15_000)
 
     case text_result do
       {:error, reason} ->
-        body = """
-        <p>Could not fetch text (#{esc(to_string(reason))}).
-          <a href="#{esc(base)}/note/#{esc(scope.slug)}">Open note editor</a>.</p>
-        """
-
-        page("keyverse", body, base: base)
+        {:error, reason}
 
       {:ok, text} ->
         hl =
@@ -778,31 +776,90 @@ defmodule Keyverse.Html do
 
         chapter_note_html =
           if chapter_note do
-            ~s(<div class="chapter-note">#{reader_note_html(chapter_scope, chapter_note, base, false)}</div>)
+            ~s(<div class="chapter-note" id="chapter-note">#{reader_note_html(chapter_scope, chapter_note, base, false)}</div>)
           else
-            ""
+            ~s(<div class="chapter-note" id="chapter-note" hidden></div>)
           end
 
+        prev = Scope.neighbor_chapter(chapter_scope || scope, -1)
+        next = Scope.neighbor_chapter(chapter_scope || scope, 1)
+
         meta = %{
-          slug: scope.slug,
+          slug: (chapter_scope || scope).slug,
           display: display,
           book: book,
           chapter: chapter,
-          kind: scope.kind
+          kind: scope.kind,
+          hl_slug: scope.slug,
+          prev_slug: if(prev, do: prev.slug, else: nil),
+          next_slug: if(next, do: next.slug, else: nil),
+          chapter_note_slug: if(chapter_scope, do: chapter_scope.slug, else: nil)
         }
 
+        {:ok,
+         %{
+           meta: meta,
+           seed: seed,
+           text: %{
+             "translation" => text["translation"] || "BSB",
+             "book" => book,
+             "chapter" => chapter,
+             "verses" => text["verses"] || []
+           },
+           html: %{
+             chapter_note: chapter_note_html,
+             verses: rows
+           }
+         }}
+    end
+  end
+
+  def render_read(pack_dir, scope, base) do
+    case build_read_bundle(pack_dir, scope, base) do
+      {:error, reason} ->
         body = """
-        <header class="ui">
+        <p>Could not load text (#{esc(to_string(reason))}).
+          <a href="#{esc(base)}/note/#{esc(scope.slug)}">Open note editor</a>.</p>
+        """
+
+        page("keyverse", body, base: base)
+
+      {:ok, bundle} ->
+        meta = bundle.meta
+        display = meta.display
+
+        prev_btn =
+          if meta.prev_slug do
+            ~s(<button type="button" class="muted text-btn reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter">← prev</button>)
+          else
+            ~s(<span class="muted reader-nav-disabled" aria-hidden="true">← prev</span>)
+          end
+
+        next_btn =
+          if meta.next_slug do
+            ~s(<button type="button" class="muted text-btn reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter">next →</button>)
+          else
+            ~s(<span class="muted reader-nav-disabled" aria-hidden="true">next →</span>)
+          end
+
+        body = """
+        <header class="ui reader-head">
           <a href="#{esc(base)}/" class="muted">&larr;</a>
-          <h1>#{esc(display)}</h1>
-          <button type="button" class="muted text-btn" id="expand-notes"
-            aria-pressed="false" aria-label="Expand all verse notes">expand notes</button>
-          <a class="muted" href="#{esc(base)}/note/#{esc(chapter_scope.slug)}">chapter note</a>
+          <h1 id="reader-title">#{esc(display)}</h1>
+          <div class="reader-head-actions">
+            #{prev_btn}
+            #{next_btn}
+            <button type="button" class="muted text-btn" id="expand-notes"
+              aria-pressed="false" aria-label="Expand all verse notes">expand notes</button>
+            <a class="muted" id="chapter-note-link" href="#{esc(base)}/note/#{esc(meta.chapter_note_slug || scope.slug)}">chapter note</a>
+          </div>
         </header>
-        #{chapter_note_html}
-        #{rows}
+        <div id="reader-root" data-slug="#{esc(meta.slug)}">
+          #{bundle.html.chapter_note}
+          <div id="reader-verses">#{bundle.html.verses}</div>
+        </div>
         <script type="application/json" id="page-meta">#{Jason.encode!(meta)}</script>
-        <script type="application/json" id="verse-seeds">#{Jason.encode!(seed)}</script>
+        <script type="application/json" id="verse-seeds">#{Jason.encode!(bundle.seed)}</script>
         <script src="/outliner.js"></script>
         <script src="/reader-page.js"></script>
         """

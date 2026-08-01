@@ -23,7 +23,9 @@ defmodule Keyverse.Metrics do
     :bsb_get,
     :bsb_pack_load,
     :bsb_ets_hit,
-    :bsb_disk_hit
+    :bsb_disk_hit,
+    :http_text,
+    :http_read_bundle
   ]
 
   # --- public API ----------------------------------------------------------

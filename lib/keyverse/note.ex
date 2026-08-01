@@ -38,23 +38,48 @@ defmodule Keyverse.Note do
       {:ok, files} ->
         files
         |> Enum.filter(&String.ends_with?(&1, ".json"))
-        |> Enum.map(fn f ->
-          case File.read(Path.join(dir, f)) do
-            {:ok, body} ->
-              case Jason.decode(body) do
-                {:ok, note} -> hydrate(note)
-                _ -> nil
-              end
-
-            _ ->
-              nil
-          end
-        end)
+        |> Enum.map(&read_file_note(dir, &1))
         |> Enum.reject(&is_nil/1)
         |> Enum.sort_by(fn n -> n["updated_at"] || "" end, :desc)
 
       _ ->
         []
+    end
+  end
+
+  @doc """
+  Notes whose slug is this chapter or a verse/range inside it.
+  Uses filename prefix (no full-pack JSON parse of other books).
+  """
+  def list_for_chapter(pack_dir, book, chapter) when is_binary(book) and is_integer(chapter) do
+    dir = Pack.notes_dir(pack_dir)
+    prefix = "#{String.downcase(book)}.#{chapter}"
+
+    case File.ls(dir) do
+      {:ok, files} ->
+        files
+        |> Enum.filter(fn f ->
+          String.ends_with?(f, ".json") and
+            (f == prefix <> ".json" or String.starts_with?(f, prefix <> "."))
+        end)
+        |> Enum.map(&read_file_note(dir, &1))
+        |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp read_file_note(dir, f) do
+    case File.read(Path.join(dir, f)) do
+      {:ok, body} ->
+        case Jason.decode(body) do
+          {:ok, note} -> hydrate(note)
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

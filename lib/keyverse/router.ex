@@ -287,6 +287,25 @@ defmodule Keyverse.Router do
         Keyverse.Metrics.record(:http_list_notes, (System.monotonic_time(:microsecond) - t0) / 1000)
         send_json(conn, 200, notes)
 
+      {method, path} ->
+        cond do
+          # Immutable BSB chapter JSON (public-domain pack in ETS)
+          text_api = Regex.run(~r|^/api/text/bsb/([A-Za-z0-9]+)/(\d+)$|, path) ->
+            handle_api_text(conn, method, Enum.at(text_api, 1), Enum.at(text_api, 2))
+
+          # Full reader bundle for SPA chapter swaps
+          read_api = Regex.run(~r|^/api/read/([a-z0-9.\-]+)$|i, path) ->
+            handle_api_read(conn, pack_dir, base, method, Enum.at(read_api, 1))
+
+          true ->
+            serve_pack_rest(conn, pack_dir, door, base, method, path)
+        end
+    end
+  end
+
+  # Keep the rest of pack routes in a helper so the text/read APIs can match first.
+  defp serve_pack_rest(conn, pack_dir, door, base, method, path) do
+    case {method, path} do
       {"GET", "/api/share-qr"} ->
         if Config.door_open?() or door == "" do
           send_resp(conn, 404, "no door")
@@ -364,6 +383,73 @@ defmodule Keyverse.Router do
         end
     end
   end
+
+  defp handle_api_text(conn, "GET", book, chapter_s) do
+    t0 = System.monotonic_time(:microsecond)
+    book = String.upcase(book)
+
+    result =
+      case Integer.parse(chapter_s) do
+        {ch, ""} when ch > 0 ->
+          case Keyverse.TextCache.get_chapter(book, ch) do
+            {:ok, doc} ->
+              body = Jason.encode!(doc)
+              etag = ~s("#{Base.encode16(:crypto.hash(:sha256, body), case: :lower) |> binary_part(0, 16)}")
+
+              conn
+              |> put_resp_content_type("application/json")
+              |> put_resp_header("cache-control", "public, max-age=31536000, immutable")
+              |> put_resp_header("etag", etag)
+              |> put_resp_header("x-keyverse-text", "bsb-pack")
+              |> send_resp(200, body <> "\n")
+
+            {:error, reason} ->
+              send_json(conn, 404, %{error: to_string(reason), book: book, chapter: ch})
+          end
+
+        _ ->
+          send_json(conn, 400, %{error: "invalid chapter"})
+      end
+
+    Keyverse.Metrics.record(:http_text, (System.monotonic_time(:microsecond) - t0) / 1000)
+    result
+  end
+
+  defp handle_api_text(conn, _, _, _), do: send_json(conn, 405, %{error: "method not allowed"})
+
+  defp handle_api_read(conn, pack_dir, base, "GET", slug) do
+    t0 = System.monotonic_time(:microsecond)
+
+    result =
+      case Scope.parse(slug) do
+        nil ->
+          send_json(conn, 400, %{error: "invalid passage address"})
+
+        scope ->
+          # Normalize to chapter scope for navigation bundle
+          ch_scope = Scope.parse("#{scope.parsed.book}.#{scope.parsed.chapter}") || scope
+
+          case Html.build_read_bundle(pack_dir, scope, base) do
+            {:ok, bundle} ->
+              send_json(conn, 200, %{
+                ok: true,
+                meta: bundle.meta,
+                seed: bundle.seed,
+                text: bundle.text,
+                html: bundle.html,
+                canonical_slug: ch_scope.slug
+              })
+
+            {:error, reason} ->
+              send_json(conn, 404, %{ok: false, error: to_string(reason)})
+          end
+      end
+
+    Keyverse.Metrics.record(:http_read_bundle, (System.monotonic_time(:microsecond) - t0) / 1000)
+    result
+  end
+
+  defp handle_api_read(conn, _, _, _, _), do: send_json(conn, 405, %{error: "method not allowed"})
 
   defp handle_note_page(conn, pack_dir, base, slug) do
     case Scope.parse(slug) do
@@ -761,6 +847,8 @@ defmodule Keyverse.Router do
         "GET /api/notes",
         "GET /api/resolve?q=",
         "GET /api/suggest?q=&limit=",
+        "GET /api/text/bsb/<book>/<chapter>",
+        "GET /api/read/<slug>",
         "GET /api/note/<slug>",
         "GET /api/note/<slug>?raw",
         "PUT /api/note/<slug>",

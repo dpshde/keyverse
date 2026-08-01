@@ -116,8 +116,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // GET API: cache immutable BSB text; network-first for other APIs
   if (isApi(url)) {
-    // GET API: network-first so offline can still open recently viewed notes/lists
+    if (/\/api\/text\/bsb\//.test(url.pathname)) {
+      event.respondWith(cacheFirst(req));
+      return;
+    }
     event.respondWith(networkFirst(req, { fallbackOffline: false }));
     return;
   }

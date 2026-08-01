@@ -408,6 +408,34 @@ defmodule Keyverse.Scope do
 
   def book_order(osis_book), do: Map.get(@osis_to_order, osis_book)
 
+  @doc "Number of chapters in a book (OSIS code), or nil if unknown."
+  def chapter_count(osis_book) when is_binary(osis_book) do
+    osis = String.upcase(osis_book)
+
+    @books
+    |> Enum.find_value(fn {_, o, _, chs} -> if o == osis, do: chs end)
+  end
+
+  def chapter_count(_), do: nil
+
+  @doc """
+  Neighbor chapter scope within the canon for prev/next navigation.
+  Stays inside the same book (no book boundary hop in v1).
+  """
+  def neighbor_chapter(%__MODULE__{} = scope, delta) when delta in [-1, 1] do
+    book = scope.parsed.book
+    ch = scope.parsed.chapter
+    max_ch = chapter_count(book) || ch
+    next = ch + delta
+
+    cond do
+      next < 1 or next > max_ch -> nil
+      true -> parse("#{book}.#{next}")
+    end
+  end
+
+  def neighbor_chapter(_, _), do: nil
+
   def autocomplete(q, limit \\ 8) do
     q = q |> to_string() |> String.trim()
     limit = limit |> max(1) |> min(20)

@@ -42,6 +42,30 @@
   .site-foot a:hover { color: inherit; opacity: 1;
     text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
   .login .site-foot { justify-content: center; border-top: 0; margin-top: 2rem; padding-top: 0; }
+  /* Reader chapter chrome */
+  .reader-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .35rem .75rem;
+    margin: 0 0 .75rem;
+  }
+  .reader-head h1 {
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 1.25rem;
+  }
+  .reader-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .35rem .65rem;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .86rem;
+  }
+  .reader-nav-disabled { opacity: .35; user-select: none; }
+  #reader-root[aria-busy="true"] { opacity: .55; transition: opacity .12s ease; }
   /* Home: title left, multiword key right */
   .home-head {
     display: flex;
