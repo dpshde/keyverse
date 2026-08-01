@@ -126,6 +126,14 @@ defmodule Keyverse.RouterTest do
     assert conn.resp_body =~ ~s(id="note-tree")
     assert conn.resp_body =~ "nt-node"
     assert conn.resp_body =~ "home-tree.js"
+    # no extractor banner leaking into HTML body/head as visible text
+    refute conn.resp_body =~ "extract_client_js"
+    refute conn.resp_body =~ "hand-fix escapes"
+    # original ref-search: no Go button / Passage label
+    refute conn.resp_body =~ ~s(class="ref-go")
+    refute conn.resp_body =~ ">Passage<"
+    assert conn.resp_body =~ ~s(id="ref-search")
+    assert conn.resp_body =~ ~s(id="ref-input")
 
     conn = conn(:get, "/setup") |> Router.call([])
     assert conn.status == 200
