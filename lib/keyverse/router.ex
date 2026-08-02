@@ -61,6 +61,10 @@ defmodule Keyverse.Router do
     send_static(conn, "pwa-boot.js", "application/javascript", "public, max-age=3600")
   end
 
+  get "/platform.js" do
+    send_static(conn, "platform.js", "application/javascript", "public, max-age=3600")
+  end
+
   get "/editor-page.js" do
     send_static(conn, "editor-page.js", "application/javascript", "public, max-age=3600")
   end

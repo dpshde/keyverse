@@ -19,3 +19,7 @@ deps/
 .e2e-packs/
 artifacts/
 
+# Tauri native shell
+src-tauri/target/
+src-tauri/gen/
+

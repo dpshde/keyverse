@@ -20,6 +20,7 @@ A **cowyo-class** capture door over on-disk scripture note packs.
 | **Access** | Multiword URL is the key — cowyo-style |
 | **Encryption** | Optional client-side passphrase (browser AES-GCM) |
 | **PWA** | Manifest + service worker |
+| **Native (Tauri v2)** | Same UI in iOS/Android/desktop shells — [MOBILE_NATIVE.md](./docs/MOBILE_NATIVE.md) |
 
 ## Quick start (Elixir)
 
@@ -91,6 +92,8 @@ See [docs/API.md](docs/API.md) and [PROTOCOL.md](PROTOCOL.md).
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | Deploy guidance |
 | [docs/SCALING.md](docs/SCALING.md) | Why BEAM for multipack host |
 | [docs/USAGE.md](docs/USAGE.md) | Day-to-day UI |
+| [docs/MOBILE_NATIVE.md](docs/MOBILE_NATIVE.md) | Tauri v2 iOS/Android shell |
+| [mobile/README.md](mobile/README.md) | Native dev commands |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |
 
 ## Project layout

@@ -1,0 +1,6 @@
+# Generated / local-only under the native shell
+src-tauri/target/
+src-tauri/gen/
+*.xcuserstate
+.idea/
+local.properties

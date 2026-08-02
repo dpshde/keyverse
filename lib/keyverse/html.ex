@@ -21,6 +21,7 @@ defmodule Keyverse.Html do
     <link rel="manifest" href="#{esc(man_path)}">
     <link rel="stylesheet" href="/app.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css" crossorigin="anonymous">
+    <script src="/platform.js"></script>
     <script>window.BASE=#{Jason.encode!(base)};var BASE=window.BASE;</script>
     <script src="/crypto.js"></script>
     <script>if(window.VP_CRYPTO)VP_CRYPTO.ingestHash();</script>
