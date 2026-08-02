@@ -1248,6 +1248,18 @@
       padding: .55rem .35rem;
       font-size: .82rem;
       text-align: center;
+      /* iOS: avoid 300ms delay / lost clicks after keyboard */
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    /* Keep nest bar above home indicator; sticky alone loses to keyboard */
+    .outliner-shell {
+      padding-bottom: .25rem;
+    }
+    .outliner-shell > .otoolbar {
+      position: sticky;
+      bottom: env(safe-area-inset-bottom, 0px);
     }
     .otool-btn + .otool-btn {
       border-left: 1px solid color-mix(in srgb, currentColor 10%, transparent);

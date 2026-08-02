@@ -574,6 +574,15 @@ function mountOutliner(host, opts) {
 
   function applyIndent(delta) {
     syncFromDom();
+    // Prefer the focused row; fall back to last activeId
+    const ae = document.activeElement;
+    if (ae && host.contains(ae)) {
+      const row = ae.closest && ae.closest(".oblock");
+      if (row && row.dataset.id) activeId = row.dataset.id;
+    }
+    if (!selected && indexOfId(activeId) < 0 && blocks.length) {
+      activeId = blocks[0].id;
+    }
     pushHistory();
     if (selected) {
       const roots = selectionRoots();
@@ -588,6 +597,11 @@ function mountOutliner(host, opts) {
       return;
     }
     const i = activeIndex();
+    if (i < 0 || !blocks[i]) {
+      undoStack.pop();
+      refreshToolbar();
+      return;
+    }
     const focusEl = document.activeElement;
     const caret = (focusEl && focusEl.classList && focusEl.classList.contains("otext"))
       ? caretOffset(focusEl) : endOf({ textContent: blocks[i] ? blocks[i].text : "" });
@@ -769,25 +783,53 @@ function mountOutliner(host, opts) {
     setNodeSelection(blocks[vis[0]].id, blocks[vis[vis.length - 1]].id);
   }
 
-  // toolbar
-  toolbar.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".otool-btn")) e.preventDefault();
-  });
-  toolbar.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-act]");
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    const act = btn.dataset.act;
+  // toolbar — act on pointerdown. iOS Safari often suppresses the subsequent
+  // click when we preventDefault (needed to keep the caret / keyboard).
+  let toolbarArmed = false;
+  function runToolbarAct(act) {
+    if (!act) return;
+    // Capture row before any focus thrash
+    const ae = document.activeElement;
+    if (ae && host.contains(ae)) {
+      const row = ae.closest && ae.closest(".oblock");
+      if (row && row.dataset.id) activeId = row.dataset.id;
+    }
     if (act === "indent") applyIndent(1);
     else if (act === "outdent") applyIndent(-1);
     else if (act === "collapse") {
       syncFromDom();
       const i = activeIndex();
-      if (toggleCollapsed(i)) {
+      if (i >= 0 && toggleCollapsed(i)) {
         render(blocks[i].id, null);
         scheduleSave();
+      } else {
+        refreshToolbar();
       }
     }
+  }
+  toolbar.addEventListener("pointerdown", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toolbarArmed = true;
+    runToolbarAct(btn.dataset.act);
+  });
+  toolbar.addEventListener("pointerup", () => {
+    // leave a tick so focusout blurTimer sees toolbar interaction
+    setTimeout(() => { toolbarArmed = false; }, 80);
+  });
+  toolbar.addEventListener("pointercancel", () => {
+    toolbarArmed = false;
+  });
+  toolbar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    e.preventDefault();
+    // Already handled on pointerdown (mobile + most desktop)
+    if (toolbarArmed) return;
+    if (btn.disabled) return;
+    runToolbarAct(btn.dataset.act);
   });
 
   host.addEventListener("click", (e) => {
@@ -838,13 +880,17 @@ function mountOutliner(host, opts) {
     if (next && (host.contains(next) || toolbar.contains(next))) return;
     // Defer: Enter/Tab destroy the node then focus a new one in the same turn.
     // relatedTarget is often null even when we are about to focus another row.
+    // Also skip while pressing nest/unnest (buttons don't take focus on iOS).
     if (blurTimer) clearTimeout(blurTimer);
     blurTimer = setTimeout(function () {
       blurTimer = null;
       if (rebuilding || !alive) return;
+      if (toolbarArmed) return;
       if (host.contains(document.activeElement)) return;
       if (toolbar.contains(document.activeElement)) return;
       syncFromDom();
+      // Keep last-focused id for toolbar, but leave edit chrome (view mode)
+      // when the keyboard is dismissed without an open toolbar press.
       const id = activeId;
       activeId = null;
       render(null);
