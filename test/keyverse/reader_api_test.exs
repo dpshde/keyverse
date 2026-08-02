@@ -11,6 +11,7 @@ defmodule Keyverse.ReaderApiTest do
     File.mkdir_p!(root)
     Application.put_env(:keyverse, :packs_root, root)
     Application.put_env(:keyverse, :door_open, false)
+    Keyverse.DoorIndex.reload!()
     on_exit(fn -> File.rm_rf!(root) end)
 
     {:ok, door} = Keyverse.Pack.create("calm-river-stone-path")
@@ -40,7 +41,7 @@ defmodule Keyverse.ReaderApiTest do
       "updated_at" => "2026-01-01T00:00:00Z"
     }
 
-    Keyverse.Note.write!(Path.join(Application.get_env(:keyverse, :packs_root), door), note)
+    Keyverse.Note.write!(Keyverse.Pack.path_for(door), note)
 
     conn = conn(:get, "/#{door}/api/read/jhn.3") |> Router.call([])
     assert conn.status == 200
@@ -54,8 +55,8 @@ defmodule Keyverse.ReaderApiTest do
     assert body["seed"]["jhn.3.16"]
   end
 
-  test "chapter-scoped note list ignores other books", %{door: door, root: root} do
-    pack = Path.join(root, door)
+  test "chapter-scoped note list ignores other books", %{door: door} do
+    pack = Keyverse.Pack.path_for(door)
 
     Keyverse.Note.write!(pack, %{
       "id" => "a",

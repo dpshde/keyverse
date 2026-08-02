@@ -1,91 +1,129 @@
 defmodule Keyverse.Pack do
-  @moduledoc "Multipack filesystem: create/open pack directories under PACK_DIR."
+  @moduledoc """
+  Multipack filesystem under PACK_DIR.
 
-  alias Keyverse.{Config, Door}
+  New packs use opaque ids (`p_<hex>`) on disk. Multiword keys resolve through
+  `Keyverse.DoorIndex`. Legacy multipacks that used the multiword path as the
+  directory name still open until rotated.
+  """
 
-  def path_for(phrase) do
-    p = Door.normalize(phrase)
+  alias Keyverse.{Config, Door, DoorIndex}
+
+  def dir_for_id(pack_id) when is_binary(pack_id) do
+    id = pack_id |> String.trim() |> String.downcase()
 
     cond do
-      p == "" -> nil
-      String.contains?(p, ["..", "/", "\\"]) -> nil
-      true -> Path.join(Config.packs_root(), p)
+      id == "" -> nil
+      String.contains?(id, ["..", "/", "\\"]) -> nil
+      true -> Path.join(Config.packs_root(), id)
+    end
+  end
+
+  @doc "Resolve multiword (or legacy) door to pack directory. Prefer DoorIndex.resolve/1."
+  def path_for(phrase) do
+    case DoorIndex.resolve(phrase) do
+      {:ok, %{pack_dir: dir}} -> dir
+      :error -> nil
     end
   end
 
   def open_path, do: Path.join(Config.packs_root(), "_open")
 
-  def exists?(phrase) do
-    case path_for(phrase) do
-      nil -> false
-      dir -> pack_directory?(dir)
-    end
-  end
+  def exists?(phrase), do: DoorIndex.exists?(phrase)
 
-  def pack_directory?(dir) do
+  def pack_directory?(dir) when is_binary(dir) do
     File.dir?(Path.join(dir, "notes")) or File.exists?(Path.join(dir, "protocol.json"))
   end
 
-  def ensure_dirs!(dir) do
+  def pack_directory?(_), do: false
+
+  def ensure_dirs!(dir, opts \\ []) do
     File.mkdir_p!(Path.join(dir, "notes"))
     File.mkdir_p!(Path.join(dir, "attachments"))
     File.mkdir_p!(Path.join(Config.packs_root(), "_cache/text/bsb"))
     protocol = Path.join(dir, "protocol.json")
+    pack_id = Keyword.get(opts, :pack_id)
 
-    unless File.exists?(protocol) do
-      body =
-        Jason.encode!(
-          %{
-            protocol: Config.protocol_name(),
-            version: Config.protocol_version(),
-            schemas: "schemas/"
-          },
-          pretty: true
-        )
+    meta = %{
+      "protocol" => Config.protocol_name(),
+      "version" => Config.protocol_version(),
+      "schemas" => "schemas/"
+    }
 
-      File.write!(protocol, body <> "\n")
+    meta =
+      if is_binary(pack_id) and pack_id != "" do
+        Map.put(meta, "pack_id", pack_id)
+      else
+        meta
+      end
+
+    cond do
+      not File.exists?(protocol) ->
+        File.write!(protocol, Jason.encode!(meta, pretty: true) <> "\n")
+
+      is_binary(pack_id) and pack_id != "" ->
+        case File.read(protocol) do
+          {:ok, raw} ->
+            case Jason.decode(raw) do
+              {:ok, map} when is_map(map) ->
+                if map["pack_id"] == pack_id do
+                  :ok
+                else
+                  File.write!(
+                    protocol,
+                    Jason.encode!(Map.put(map, "pack_id", pack_id), pretty: true) <> "\n"
+                  )
+                end
+
+              _ ->
+                :ok
+            end
+
+          _ ->
+            :ok
+        end
+
+      true ->
+        :ok
     end
 
     :ok
   end
 
-  def create(phrase) do
-    if Config.door_open?() do
-      {:error, "this site is open without a key — nothing to create"}
-    else
-      p = Door.normalize(phrase)
+  def create(phrase), do: DoorIndex.create(phrase)
 
-      cond do
-        not Door.valid?(p) ->
-          {:error, "use 3–8 short words, e.g. quiet-river-lantern-notes"}
+  def list_doors, do: DoorIndex.list_phrases()
 
-        exists?(p) ->
-          {:error, "that key already has notes — open it from the sign-in page"}
-
-        true ->
-          dir = path_for(p)
-          File.mkdir_p!(Config.packs_root())
-          ensure_dirs!(dir)
-          File.write!(Path.join(dir, "door"), p <> "\n")
-          {:ok, p}
-      end
-    end
-  end
-
-  def list_doors do
+  @doc "Legacy multipack dirs named with multiword phrases (pre opaque id)."
+  def list_legacy_doors do
     root = Config.packs_root()
 
     case File.ls(root) do
       {:ok, entries} ->
         entries
         |> Enum.filter(fn name ->
-          not String.starts_with?(name, "_") and Door.valid?(name) and
-            pack_directory?(Path.join(root, name))
+          not String.starts_with?(name, "_") and not DoorIndex.pack_id_name?(name) and
+            Door.valid?(name) and pack_directory?(Path.join(root, name))
         end)
         |> Enum.sort()
 
       _ ->
         []
+    end
+  end
+
+  def read_pack_id(pack_dir) when is_binary(pack_dir) do
+    protocol = Path.join(pack_dir, "protocol.json")
+
+    case File.read(protocol) do
+      {:ok, raw} ->
+        case Jason.decode(raw) do
+          {:ok, %{"pack_id" => id}} when is_binary(id) and id != "" -> id
+          _ -> Path.basename(pack_dir)
+        end
+
+      _ ->
+        Path.basename(pack_dir)
     end
   end
 

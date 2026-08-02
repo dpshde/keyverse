@@ -17,6 +17,7 @@ defmodule Keyverse.MediumTrafficTest do
     Application.put_env(:keyverse, :rate_global_write, {10_000, 60_000})
     Application.put_env(:keyverse, :max_attach_bytes, 10_000)
     Keyverse.RateLimit.reset!()
+    Keyverse.DoorIndex.reload!()
 
     on_exit(fn ->
       File.rm_rf!(root)
@@ -30,7 +31,7 @@ defmodule Keyverse.MediumTrafficTest do
 
     {:ok, door} = Keyverse.Pack.create(Keyverse.Door.generate())
     Keyverse.RateLimit.reset!()
-    {:ok, door: door, pack: Path.join(root, door)}
+    {:ok, door: door, pack: Keyverse.Pack.path_for(door)}
   end
 
   test "pack quota blocks new blobs over byte budget", %{door: door, pack: pack} do

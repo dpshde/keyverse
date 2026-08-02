@@ -10,6 +10,7 @@ defmodule Keyverse.MetricsTest do
     File.mkdir_p!(root)
     Application.put_env(:keyverse, :packs_root, root)
     Application.put_env(:keyverse, :door_open, false)
+    Keyverse.DoorIndex.reload!()
     on_exit(fn -> File.rm_rf!(root) end)
     :ok
   end

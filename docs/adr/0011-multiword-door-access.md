@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (updated 2026-08-01: opaque pack_id + rotatable binding)
 
 ## Context
 
@@ -12,28 +12,29 @@ answer was: a random multiword path *is* the secret — no login form, no email.
 
 ## Decision
 
-1. Each pack is identified by a **door phrase**: four lowercase words joined by
-   hyphens (e.g. `quiet-river-lantern`). On a multipack host the phrase is the
-   pack directory name under `PACK_DIR` (`packs/{phrase}/`).
-2. All app and API routes for that pack live under `/{door}/…`. Knowing the full
-   URL is access to **that** pack only. Creating a new key (`/setup`) creates a
-   new empty pack; it does not rotate access on an existing pack.
-3. Root `/` without a door offers enter-key and create-key.
-4. Unknown / wrong door → generic 404 (do not confirm whether a pack exists).
+1. **Human access** is a **door phrase**: 3–8 lowercase words joined by hyphens
+   (e.g. `quiet-river-lantern-notes`). Routes live under `/{door}/…`. Knowing
+   the full URL is access to **that** pack only.
+2. **System identity** is an opaque **`pack_id`** (`p_<hex>`). On disk the pack
+   is `PACK_DIR/<pack_id>/` (notes, attachments, `protocol.json` with `pack_id`).
+3. **Binding** maps multiword → `{pack_id, role}` under `PACK_DIR/_doors/`
+   (hashed key files + ETS cache). Create writes a write binding; **rotate**
+   (`POST /api/door/rotate`) issues a new multiword, revokes the old one, keeps
+   the same pack directory.
+4. Root `/` without a door offers enter-key and create-key. Wrong door → generic
+   404 (do not distinguish unknown vs revoked beyond “didn’t work” on enter).
 5. `DOOR_OPEN=1` disables the prefix for trusted local demos only (one shared pack).
+6. Legacy packs that used the multiword string as the directory name still open
+   until rotated (first rotate promotes them to an opaque id).
 
-Passage addresses (OSIS) remain the note identity inside a pack; the door is
-pack identity + access, not confidentiality of note content once someone has
-the URL or disk access. For that, see optional client-side encryption (ADR 0012).
+Passage addresses (OSIS) remain the note identity inside a pack. The door is
+host access, not confidentiality of note content (see ADR 0012).
 
 ## Consequences
 
-- **Easier:** “login” = bookmark or share one multiword URL; many users/packs on
-  one host without accounts; fits frictionlessness > portability.
-- **Harder:** lose the URL → lose easy access (backup the pack dir name); all
-  links and API clients must include the door prefix (`window.BASE`); door
-  holders still see plaintext notes unless a pack passphrase is also in use;
-  anyone can create empty packs via `/setup` (operator may rate-limit later).
-- **Implication:** reverse-proxy auth is still optional extra; the door is the
-  default personal *pack identity* model, not a substitute for encryption when
-  the host or co-holders must not read content.
+- **Easier:** memorable URLs; rotation without moving note data; pack backups
+  stable under `pack_id`; protocol layering (ADR 0014) stays clean.
+- **Harder:** lose the multiword → use export/backup or operator restore of
+  `_doors` binding; all clients still use door prefix (`window.BASE`).
+- **Implication:** reverse-proxy auth remains optional; multiword is UX +
+  capability, not the on-disk folder name for new packs.

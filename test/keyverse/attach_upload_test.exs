@@ -13,6 +13,7 @@ defmodule Keyverse.AttachUploadTest do
     Application.put_env(:keyverse, :door_open, false)
     Application.put_env(:keyverse, :max_attach_bytes, 1024)
     Application.put_env(:keyverse, :max_attach_per_note, 3)
+    Keyverse.DoorIndex.reload!()
     on_exit(fn ->
       File.rm_rf!(root)
       Application.put_env(:keyverse, :max_attach_bytes, 50 * 1024 * 1024)
@@ -20,7 +21,7 @@ defmodule Keyverse.AttachUploadTest do
     end)
 
     {:ok, door} = Keyverse.Pack.create("calm-river-stone-path")
-    pack = Path.join(root, door)
+    pack = Keyverse.Pack.path_for(door)
     {:ok, door: door, pack: pack}
   end
 
@@ -39,7 +40,7 @@ defmodule Keyverse.AttachUploadTest do
     assert att["name"] == "evil.png"
     assert att["mime"] == "image/png"
     assert att["bytes"] == 64
-    assert File.exists?(Path.join([Application.get_env(:keyverse, :packs_root), door, "attachments", att["sha256"]]))
+    assert File.exists?(Path.join([Keyverse.Pack.path_for(door), "attachments", att["sha256"]]))
 
     # fetch blob
     conn2 = conn(:get, "/#{door}/api/attachments/#{att["sha256"]}") |> Router.call([])

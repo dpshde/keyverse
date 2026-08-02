@@ -2,7 +2,19 @@ defmodule Keyverse.Router do
   @moduledoc "HTTP multipack door — Plug router."
   use Plug.Router
 
-  alias Keyverse.{Attach, Config, Door, Html, Note, Pack, PackQuota, PackTransfer, RateLimit, Scope}
+  alias Keyverse.{
+    Attach,
+    Config,
+    Door,
+    DoorIndex,
+    Html,
+    Note,
+    Pack,
+    PackQuota,
+    PackTransfer,
+    RateLimit,
+    Scope
+  }
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
@@ -186,19 +198,28 @@ defmodule Keyverse.Router do
         else
           phrase = Door.normalize(head)
 
-          if not Door.valid?(phrase) or not Pack.exists?(phrase) do
-            html(conn, 404, Html.render_dead_link())
-          else
-            rest =
-              case parts do
-                [_] -> "/"
-                _ -> "/" <> Enum.join(tl(parts), "/")
-              end
+          case DoorIndex.resolve(phrase) do
+            {:ok, %{pack_dir: pack_dir, pack_id: pack_id, role: role, phrase: phrase}} ->
+              rest =
+                case parts do
+                  [_] -> "/"
+                  _ -> "/" <> Enum.join(tl(parts), "/")
+                end
 
-            pack_dir = Pack.path_for(phrase)
-            Pack.ensure_dirs!(pack_dir)
-            base = "/#{phrase}"
-            serve_pack(%{conn | request_path: rest, path_info: tl(conn.path_info)}, rest, pack_dir, base, phrase)
+              Pack.ensure_dirs!(pack_dir, pack_id: pack_id)
+              base = "/#{phrase}"
+
+              serve_pack(
+                %{conn | request_path: rest, path_info: tl(conn.path_info)},
+                rest,
+                pack_dir,
+                base,
+                phrase,
+                %{pack_id: pack_id, role: role}
+              )
+
+            :error ->
+              html(conn, 404, Html.render_dead_link())
           end
         end
     end
@@ -228,11 +249,14 @@ defmodule Keyverse.Router do
     conn.query_params
   end
 
-  defp serve_pack(conn, path, pack_dir, base, door \\ "")
+  defp serve_pack(conn, path, pack_dir, base, door \\ "", access \\ %{})
 
-  defp serve_pack(conn, path, pack_dir, base, door) do
+  defp serve_pack(conn, path, pack_dir, base, door, access) do
     conn = Plug.Conn.fetch_query_params(conn)
     path = normalize_path(path)
+
+    access =
+      Map.merge(%{role: "write", pack_id: Pack.read_pack_id(pack_dir)}, access || %{})
 
     # CORS for API
     conn =
@@ -245,11 +269,11 @@ defmodule Keyverse.Router do
     if conn.method == "OPTIONS" and String.starts_with?(path, "/api") do
       send_resp(conn, 204, "")
     else
-      route_pack(conn, path, pack_dir, base, door)
+      route_pack(conn, path, pack_dir, base, door, access)
     end
   end
 
-  defp route_pack(conn, path, pack_dir, base, door) do
+  defp route_pack(conn, path, pack_dir, base, door, access) do
     case {conn.method, path} do
       {"GET", "/"} ->
         html(conn, 200, Html.render_index(pack_dir, door, base))
@@ -261,7 +285,34 @@ defmodule Keyverse.Router do
         send_json(conn, 200, Html.web_manifest(if(base == "", do: "/", else: base <> "/")))
 
       {"GET", "/api/protocol"} ->
-        send_json(conn, 200, protocol_info(door))
+        send_json(conn, 200, protocol_info(door, access))
+
+      {"GET", "/api/door"} ->
+        send_json(conn, 200, %{
+          ok: true,
+          door: door,
+          pack_id: access[:pack_id] || access["pack_id"],
+          role: access[:role] || access["role"] || "write"
+        })
+
+      {"POST", "/api/door/rotate"} ->
+        require_write(conn, access, fn ->
+          pack_id = access[:pack_id] || access["pack_id"] || Pack.read_pack_id(pack_dir)
+
+          case DoorIndex.rotate(pack_id, door) do
+            {:ok, %{door: new_door, pack_id: pid}} ->
+              send_json(conn, 200, %{
+                ok: true,
+                door: new_door,
+                pack_id: pid,
+                message: "key rotated — update bookmarks to the new URL",
+                url_path: "/#{new_door}/"
+              })
+
+            {:error, reason} ->
+              send_json(conn, 400, %{ok: false, error: to_string(reason)})
+          end
+        end)
 
       {"GET", "/api/resolve"} ->
         q = conn.query_params["q"] || ""
@@ -297,22 +348,22 @@ defmodule Keyverse.Router do
 
       {method, path} ->
         cond do
-          # Immutable BSB chapter JSON (public-domain pack in ETS)
           text_api = Regex.run(~r|^/api/text/bsb/([A-Za-z0-9]+)/(\d+)$|, path) ->
             handle_api_text(conn, method, Enum.at(text_api, 1), Enum.at(text_api, 2))
 
-          # Full reader bundle for SPA chapter swaps
           read_api = Regex.run(~r|^/api/read/([a-z0-9.\-]+)$|i, path) ->
             handle_api_read(conn, pack_dir, base, method, Enum.at(read_api, 1))
 
           true ->
-            serve_pack_rest(conn, pack_dir, door, base, method, path)
+            serve_pack_rest(conn, pack_dir, door, base, method, path, access)
         end
     end
   end
 
   # Keep the rest of pack routes in a helper so the text/read APIs can match first.
-  defp serve_pack_rest(conn, pack_dir, door, base, method, path) do
+  defp serve_pack_rest(conn, pack_dir, door, base, method, path, access) do
+    write? = write_role?(access)
+
     case {method, path} do
       {"GET", "/api/share-qr"} ->
         if Config.door_open?() or door == "" do
@@ -352,7 +403,7 @@ defmodule Keyverse.Router do
         end
 
       {"POST", "/api/pack/import"} ->
-        handle_pack_import(conn, pack_dir)
+        require_write(conn, access, fn -> handle_pack_import(conn, pack_dir) end)
 
       {"GET", "/go"} ->
         case Scope.parse(conn.query_params["q"] || "") do
@@ -377,13 +428,25 @@ defmodule Keyverse.Router do
             handle_read_page(conn, pack_dir, base, Enum.at(read_page, 1))
 
           api_note = Regex.run(~r|^/api/note/([a-z0-9.\-]+)$|i, path) ->
-            handle_api_note(conn, pack_dir, method, Enum.at(api_note, 1))
+            if method in ["PUT", "POST", "DELETE", "PATCH"] and not write? do
+              forbid_write(conn)
+            else
+              handle_api_note(conn, pack_dir, method, Enum.at(api_note, 1))
+            end
 
           api_att = Regex.run(~r|^/api/note/([a-z0-9.\-]+)/attachments$|i, path) ->
-            handle_api_attach(conn, pack_dir, method, Enum.at(api_att, 1))
+            if method in ["PUT", "POST", "DELETE", "PATCH"] and not write? do
+              forbid_write(conn)
+            else
+              handle_api_attach(conn, pack_dir, method, Enum.at(api_att, 1))
+            end
 
           api_del = Regex.run(~r|^/api/note/([a-z0-9.\-]+)/attachments/([^/]+)$|i, path) ->
-            handle_api_detach(conn, pack_dir, method, Enum.at(api_del, 1), Enum.at(api_del, 2))
+            if method in ["PUT", "POST", "DELETE", "PATCH"] and not write? do
+              forbid_write(conn)
+            else
+              handle_api_detach(conn, pack_dir, method, Enum.at(api_del, 1), Enum.at(api_del, 2))
+            end
 
           api_blob = Regex.run(~r|^/api/attachments/([a-f0-9]{64})$|i, path) ->
             handle_api_blob(conn, pack_dir, Enum.at(api_blob, 1))
@@ -939,7 +1002,10 @@ defmodule Keyverse.Router do
     end
   end
 
-  defp protocol_info(door) do
+  defp protocol_info(door, access) do
+    pack_id = access[:pack_id] || access["pack_id"]
+    role = access[:role] || access["role"] || "write"
+
     %{
       protocol: Config.protocol_name(),
       version: Config.protocol_version(),
@@ -947,6 +1013,8 @@ defmodule Keyverse.Router do
       multipack: not Config.door_open?(),
       door: not Config.door_open?() and door != "",
       door_phrase: if(door == "", do: nil, else: door),
+      pack_id: pack_id,
+      role: role,
       door_open: Config.door_open?(),
       cors: not cors_disabled?(),
       max_attach_bytes: Config.max_attach_bytes(),
@@ -974,6 +1042,8 @@ defmodule Keyverse.Router do
         pack_writers: true,
         pack_quota: true,
         rate_limit: true,
+        door_rotate: true,
+        opaque_pack_id: true,
         metrics: true,
         pwa: true,
         local_fs_mount_ro: true,
@@ -981,6 +1051,8 @@ defmodule Keyverse.Router do
       },
       endpoints: [
         "GET /api/protocol",
+        "GET /api/door",
+        "POST /api/door/rotate",
         "GET /api/notes",
         "GET /api/resolve?q=",
         "GET /api/suggest?q=&limit=",
@@ -1005,7 +1077,8 @@ defmodule Keyverse.Router do
       ],
       ownership: %{
         user_owned_pack: true,
-        source_of_truth: "filesystem pack directory",
+        source_of_truth: "filesystem pack directory (opaque pack_id)",
+        access: "multiword door binding (rotatable)",
         export: "GET /api/pack/export",
         import: "POST /api/pack/import?mode=merge|replace",
         local_mount: "GET /local (browser directory / OPFS, read-only)"
@@ -1069,7 +1142,22 @@ defmodule Keyverse.Router do
     if p != "/" and String.ends_with?(p, "/"), do: String.trim_trailing(p, "/"), else: p
   end
 
-  defp pack_door(pack_dir), do: pack_dir |> Path.expand() |> Path.basename()
+  defp pack_door(pack_dir), do: Pack.read_pack_id(pack_dir)
+
+  defp write_role?(access) when is_map(access) do
+    role = access[:role] || access["role"] || "write"
+    to_string(role) == "write"
+  end
+
+  defp write_role?(_), do: true
+
+  defp require_write(conn, access, fun) when is_function(fun, 0) do
+    if write_role?(access), do: fun.(), else: forbid_write(conn)
+  end
+
+  defp forbid_write(conn) do
+    send_json(conn, 403, %{error: "read-only key", message: "this key cannot change the pack"})
+  end
 
   defp client_ip_key(conn) do
     # Prefer edge-provided client IP when present (Railway/proxy).

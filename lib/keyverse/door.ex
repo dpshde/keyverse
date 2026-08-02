@@ -24,6 +24,8 @@ defmodule Keyverse.Door do
                "robots.txt",
                "_cache",
                "_open",
+               "local",
+               "p",
                "packs"
              ])
 

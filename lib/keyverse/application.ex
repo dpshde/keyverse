@@ -12,6 +12,7 @@ defmodule Keyverse.Application do
         {DynamicSupervisor, name: Keyverse.Pack.WriterSupervisor, strategy: :one_for_one},
         Keyverse.Metrics,
         Keyverse.RateLimit,
+        Keyverse.DoorIndex,
         Keyverse.TextCache
       ] ++
         if Application.get_env(:keyverse, :start_server, true) do
