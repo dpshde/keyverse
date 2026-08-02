@@ -1621,16 +1621,24 @@
   .oblock .ochev::before { content: "\25BE"; }
   .oblock.collapsed .ochev::before { content: "\25B8"; }
   .obullet {
-    width: var(--note-gutter); height: var(--row-h);
-    display: flex; align-items: center; justify-content: center;
-    user-select: none; cursor: grab; touch-action: none;
+    width: var(--note-gutter);
+    height: calc(1em * 1.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: start;
+    user-select: none;
+    cursor: grab;
+    touch-action: none;
   }
   .obullet:active { cursor: grabbing; }
   .obullet::before {
     content: "";
-    width: var(--bullet); height: var(--bullet);
+    width: var(--bullet);
+    height: var(--bullet);
     border-radius: 999px;
     background: color-mix(in srgb, currentColor 28%, transparent);
+    transform: translateY(-0.06em);
   }
   .oblock.collapsed.has-kids .obullet::before {
     box-shadow: 0 0 0 1.5px color-mix(in srgb, currentColor 34%, transparent);
@@ -1639,7 +1647,7 @@
   .otext {
     min-width: 0; min-height: var(--row-h); padding: 0; outline: none;
     white-space: pre-wrap; word-break: break-word; font: inherit;
-    line-height: var(--row-h);
+    line-height: 1.45;
     /* 16px minimum prevents iOS focus-zoom */
     font-size: max(1em, 16px);
   }
@@ -2023,10 +2031,13 @@
       opacity: .75;
     }
     .obullet {
+      /* Keep a tall hit target, but pin the glyph to the first line box */
       min-height: var(--tap);
+      height: auto;
       display: inline-flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
+      padding-top: calc((1em * 1.45 - var(--bullet)) / 2);
     }
     .outline, .outliner {
       --row-h: 1.85em;
@@ -2034,8 +2045,16 @@
     }
     .otext {
       min-height: 1.85em;
-      padding-top: .2rem;
+      padding-top: 0;
       padding-bottom: .2rem;
+      line-height: 1.45;
+    }
+    .oline .odot {
+      height: calc(1em * 1.45);
+    }
+    .oline .otxt {
+      line-height: 1.45;
+      padding: 0;
     }
 
     /* Attachments */
