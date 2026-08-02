@@ -976,22 +976,29 @@
    * Fill is painted on ::after (not the box background) with an opaque Canvas mix
    * so edges never double-stack transparency (that looked like dark seam bars).
    * ::before stays free for the has-notes left rail.
-   * --sel-x is the single horizontal inset for scripture AND the passage note.
+   *
+   * Horizontal inset lives on .vtext / .vnotes — NOT on .verse padding — so the
+   * note tray can be full-bleed without negative margins. (iOS clips negative
+   * margin children when the parent uses overflow:hidden.)
    */
   .verse.sel {
     --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
     --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
     --sel-x: .75rem;
     --sel-y: .36rem;
-    --sel-radius: .45rem;
+    --sel-radius: .55rem;
     background: transparent;
-    padding: var(--sel-y) var(--sel-x);
+    padding: var(--sel-y) 0;
     margin: 0;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     position: relative;
     isolation: isolate; /* keep z-index:-1 ::after inside this verse */
+  }
+  .verse.sel .vtext {
+    padding-left: var(--sel-x);
+    padding-right: var(--sel-x);
   }
   /* Continuous selection fill */
   .verse.sel::after {
@@ -1033,23 +1040,38 @@
     margin-top: 0;
   }
   /*
-   * Note open on end verse: keep the *outer* bottom curve on .sel-hi and clip
-   * children to it — never zero the radius under a rounded tray (square shows through).
+   * Note tray open: one card. Top radius stays on ::after; bottom radius moves
+   * to .vnotes. No overflow:hidden (clips tray on iOS) and no negative margins.
    */
   .verse.sel.sel-hi.notes-open,
   .verse.sel.sel-hi.editing {
     padding-bottom: 0;
-    overflow: hidden;
+    overflow: visible;
   }
-  /* full-bleed within the card: cancel --sel-x, then re-apply so note text matches verse text */
+  .verse.sel.sel-hi.notes-open::after,
+  .verse.sel.sel-hi.editing::after {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .verse.sel.sel-lo.sel-hi.notes-open::after,
+  .verse.sel.sel-lo.sel-hi.editing::after {
+    border-radius: var(--sel-radius) var(--sel-radius) 0 0;
+  }
   .verse.sel .vnotes {
     background-color: var(--sel-fill);
-    margin: .28rem calc(-1 * var(--sel-x)) 0;
+    margin: .22rem 0 0;
     padding: .5rem var(--sel-x) .55rem;
     border-top: 1px solid var(--sel-edge);
-    border-radius: 0; /* curve lives on .sel-hi only */
+    border-radius: 0;
     box-shadow: none;
     position: relative;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .verse.sel.sel-hi.notes-open .vnotes,
+  .verse.sel.sel-hi.editing .vnotes {
+    border-radius: 0 0 var(--sel-radius) var(--sel-radius);
+    padding-bottom: .6rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }
@@ -1120,7 +1142,23 @@
   }
   .verse:not(.sel).notes-open .vnotes,
   .verse:not(.sel).editing .vnotes {
-    margin-left: .35rem;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  /* Fold / expand-all (no multi-select): quiet unified card */
+  .verse.notes-open:not(.sel):not(.editing),
+  .verse.editing:not(.sel) {
+    --open-fill: color-mix(in srgb, currentColor 6%, Canvas);
+    --open-radius: .55rem;
+    background: var(--open-fill);
+    border-radius: var(--open-radius);
+    padding-bottom: .2rem;
+  }
+  .verse.notes-open:not(.sel) .vnotes,
+  .verse.editing:not(.sel) .vnotes {
+    margin-top: .28rem;
+    padding: .4rem 0 .3rem;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, Canvas);
   }
   /* Only show trays that actually host a note (range cover mids stay closed). */
   .verse.notes-open .vnotes:has(.note),
@@ -1132,6 +1170,18 @@
     margin: 0 !important;
     padding: 0 !important;
     border: 0 !important;
+  }
+
+  /* Reader tray outline: drop empty fold column — bullet + text only */
+  .vnotes .outline {
+    --chev-w: 0px;
+    --note-gutter: 1rem;
+  }
+  .vnotes .oline .ochev {
+    display: none !important;
+  }
+  .vnotes .oline {
+    grid-template-columns: var(--note-gutter) minmax(0, 1fr);
   }
 
   /* plain note block in reader (no per-note collapse) */
