@@ -751,12 +751,26 @@
   #status { margin-left: auto; font-size: .8rem; color: color-mix(in srgb, currentColor 45%, transparent); }
   h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
        font-family: -apple-system, system-ui, sans-serif; }
-  /* Home list — branching tree: folder cards + nested kids on a rail */
+  /*
+   * Home list — flat tree (no cards).
+   *
+   * Layout gutters (shared by row + kids rail so branches line up):
+   *   --nt-chev-w  chevron box width
+   *   --nt-rail-x  center of chevron = vertical stem x
+   *   --nt-indent  distance from stem to child content
+   *
+   *   ▾ Title
+   *   │
+   *   ├── child
+   *   └── child
+   */
   .note-tree {
     margin-top: .15rem;
-    --nt-indent: 1.35rem;
-    --nt-rail: color-mix(in srgb, currentColor 16%, transparent);
-    --nt-card-pad-x: .7rem;
+    --nt-chev-w: 1.35rem;
+    --nt-rail-x: calc(var(--nt-chev-w) / 2);
+    --nt-indent: 1.15rem;
+    --nt-twig-y: 1.15rem; /* mid-row hit for horizontal branch */
+    --nt-rail: color-mix(in srgb, currentColor 18%, transparent);
   }
   .nt-node {
     position: relative;
@@ -765,54 +779,48 @@
     display: flex;
     align-items: stretch;
     gap: 0;
-    padding: .55rem 0;
+    padding: .5rem 0;
     color: inherit;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  }
-  /* Leaf notes under a folder: sit on the branch rail, not full-bleed */
-  .nt-kids > .nt-node > .note-row {
-    border-bottom-color: color-mix(in srgb, currentColor 8%, transparent);
-    padding: .55rem .15rem .55rem .15rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 9%, transparent);
+    background: transparent;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    border-top: 0;
     margin: 0;
-    border-radius: .35rem;
   }
-  .nt-kids > .nt-node > .note-row:hover {
-    background: color-mix(in srgb, currentColor 4.5%, transparent);
-    margin: 0;
-    padding-left: .15rem;
-    padding-right: .15rem;
-    border-radius: .45rem;
-  }
-  /* Top-level leaf (no parent folder) keeps full width row */
-  .note-tree > .nt-node > .note-row:not(.has-kids):hover {
+  .note-row:hover {
     background: color-mix(in srgb, currentColor 4%, transparent);
     margin: 0 -.35rem;
     padding-left: .35rem;
     padding-right: .35rem;
     border-radius: .35rem;
   }
-  /* Folder / chapter = one tappable card */
+  /* Folders/chapters: no card chrome — just a slightly roomier row */
   .note-row.has-kids,
   .note-row.is-folder,
   .note-row.is-chapter.has-kids {
     border-bottom-color: transparent;
-    margin: .45rem 0 .05rem;
-    padding: .65rem var(--nt-card-pad-x);
-    border-radius: .75rem;
-    background: color-mix(in srgb, currentColor 5%, transparent);
-    border: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+    margin: .35rem 0 0;
+    padding: .45rem 0 .2rem;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
   }
   .note-row.has-kids:hover,
   .note-row.is-folder:hover,
   .note-row.is-chapter.has-kids:hover {
-    margin: .45rem 0 .05rem;
-    padding: .65rem var(--nt-card-pad-x);
-    background: color-mix(in srgb, currentColor 7.5%, transparent);
-    border-color: color-mix(in srgb, currentColor 12%, transparent);
+    margin: .35rem -.35rem 0;
+    padding: .45rem .35rem .2rem;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    border-radius: .4rem;
+    border: 0;
   }
-  /* Nested folder cards (depth ≥ 1) — slightly tighter */
-  .nt-kids > .nt-node > .note-row.has-kids {
-    margin-top: .3rem;
+  .nt-kids > .nt-node > .note-row {
+    border-bottom-color: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .nt-kids > .nt-node > .note-row:hover {
+    background: color-mix(in srgb, currentColor 4%, transparent);
   }
   .note-row .nt-main {
     flex: 1 1 auto;
@@ -826,11 +834,8 @@
   .note-row .nt-top {
     display: flex;
     align-items: center;
-    gap: .35rem;
+    gap: .4rem;
     min-width: 0;
-  }
-  .note-row.has-kids .nt-top {
-    gap: .45rem;
   }
   .note-row .nt-top .ref {
     flex: 1 1 auto;
@@ -847,10 +852,10 @@
     margin-left: auto;
   }
   .note-row .nt-time { font-size: .8rem; margin-left: .2rem; white-space: nowrap; }
-  .note-row .nt-ex { margin-top: .15rem; }
+  .note-row .nt-ex { margin-top: .12rem; }
   .note-row.has-kids .nt-ex {
-    margin-top: .2rem;
-    margin-left: calc(1.35rem + .45rem); /* align under title, past chevron */
+    margin-top: .1rem;
+    margin-left: calc(var(--nt-chev-w) + .4rem); /* under title, past chevron + gap */
   }
   .note-row.is-folder .ref,
   .note-row.is-chapter .ref { font-weight: 600; }
@@ -863,22 +868,22 @@
   }
   .nt-act:hover { opacity: .9; background: color-mix(in srgb, currentColor 8%, transparent); }
   .nt-act svg { display: block; }
-  /* Chevron lives in the title row — part of the folder card */
+  /* Chevron — plain disclosure, no card/chip chrome */
   .nt-chev {
     flex: 0 0 auto;
-    width: 1.35rem;
-    height: 1.35rem;
+    width: var(--nt-chev-w);
+    height: var(--nt-chev-w);
     margin: 0;
     padding: 0;
     border: 0;
     background: transparent;
     color: inherit;
     cursor: pointer;
-    border-radius: .35rem;
+    border-radius: .3rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    opacity: .55;
+    opacity: .5;
     font-size: .72rem;
     line-height: 1;
     transition: transform .14s ease, opacity .12s ease, background .12s ease;
@@ -904,49 +909,41 @@
   }
   .nt-node.is-collapsed > .nt-kids { display: none; }
 
-  /*
-   * Branching kids rail — sits under the folder card, aligned to the chevron.
-   *   ┌ card ▾ Title ─┐
-   *   └───────────────┘
-   *      │
-   *      ├── child
-   *      └── child
-   */
+  /* Kids rail — stem under chevron center, twigs into each child */
   .nt-kids {
     display: block;
     position: relative;
-    margin: 0 0 .55rem;
-    /* Align rail under chevron inside card pad */
-    padding: .05rem 0 .15rem calc(var(--nt-card-pad-x) + 0.55rem);
-    margin-left: 0;
+    margin: 0 0 .45rem;
+    padding: 0 0 .05rem 0;
   }
   .nt-kids > .nt-node {
     position: relative;
-    padding-left: var(--nt-indent);
+    /* content starts at stem + indent */
+    padding-left: calc(var(--nt-rail-x) + var(--nt-indent));
   }
-  /* Vertical stem */
+  /* Vertical stem (full height; last child clipped) */
   .nt-kids > .nt-node::after {
     content: "";
     position: absolute;
-    left: 0.55rem;
+    left: var(--nt-rail-x);
     top: 0;
     bottom: 0;
     width: 0;
     border-left: 1.5px solid var(--nt-rail);
     pointer-events: none;
   }
-  /* Last child: stem only up to the twig */
+  /* Last child: stem stops at the twig */
   .nt-kids > .nt-node:last-child::after {
     bottom: auto;
-    height: 1.2rem;
+    height: var(--nt-twig-y);
   }
   /* Horizontal twig into the row */
   .nt-kids > .nt-node::before {
     content: "";
     position: absolute;
-    left: 0.55rem;
-    top: 1.2rem;
-    width: calc(var(--nt-indent) - 0.45rem);
+    left: var(--nt-rail-x);
+    top: var(--nt-twig-y);
+    width: var(--nt-indent);
     border-top: 1.5px solid var(--nt-rail);
     pointer-events: none;
   }
@@ -1843,24 +1840,33 @@
     }
     .note-row {
       min-height: var(--tap-comfy);
-      padding-top: .75rem;
-      padding-bottom: .75rem;
+      padding-top: .7rem;
+      padding-bottom: .7rem;
       gap: .25rem;
     }
     .note-row.has-kids,
     .note-row.is-folder,
     .note-row.is-chapter.has-kids {
-      padding: .7rem .75rem;
-      margin: .4rem 0 .05rem;
-      border-radius: .85rem;
+      /* still no cards on mobile — just comfy vertical padding */
+      padding: .55rem 0 .25rem;
+      margin: .3rem 0 0;
+      border-radius: 0;
+      background: transparent;
+      border: 0;
     }
-    .nt-kids {
-      --nt-indent: 1.5rem;
-      --nt-card-pad-x: .75rem;
-      padding-left: calc(var(--nt-card-pad-x) + 0.55rem);
+    .note-row.has-kids:hover,
+    .note-row.is-folder:hover,
+    .note-row.is-chapter.has-kids:hover {
+      margin: .3rem -.35rem 0;
+      padding: .55rem .35rem .25rem;
+      border-radius: .4rem;
     }
-    .nt-kids > .nt-node {
-      padding-left: var(--nt-indent);
+    .note-tree {
+      /* keep stem under chevron center when chevron grows to --tap */
+      --nt-chev-w: var(--tap);
+      --nt-rail-x: calc(var(--nt-chev-w) / 2);
+      --nt-indent: 1.25rem;
+      --nt-twig-y: 1.35rem;
     }
     .nt-kids > .nt-node > .note-row {
       min-height: var(--tap-comfy);
@@ -1874,23 +1880,24 @@
       justify-content: center;
       padding: .1rem 0;
     }
-    /* Folder chevron — sized with the title, not a stray rail control */
+    /* Folder chevron — tap-sized, no chip fill */
     .nt-chev {
-      width: var(--tap) !important;
-      height: var(--tap) !important;
-      min-width: var(--tap);
-      min-height: var(--tap);
-      margin: -.35rem 0 -.35rem -.35rem;
+      width: var(--nt-chev-w) !important;
+      height: var(--nt-chev-w) !important;
+      min-width: var(--nt-chev-w);
+      min-height: var(--nt-chev-w);
+      margin: 0;
       font-size: .95rem;
-      opacity: .75;
-      border-radius: .55rem;
+      opacity: .65;
+      border-radius: .45rem;
+      background: transparent;
     }
     .note-row.has-kids .nt-ex {
-      margin-left: calc(var(--tap) - .35rem + .45rem);
+      margin-left: calc(var(--nt-chev-w) + .4rem);
     }
     .note-row.has-kids .nt-top {
       min-height: var(--tap);
-      gap: .35rem;
+      gap: .4rem;
     }
     .note-row.has-kids .ref {
       font-size: 1.06rem;
