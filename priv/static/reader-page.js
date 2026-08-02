@@ -1025,17 +1025,59 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         if (!dock) return;
         // Desktop row stays visible; only fixed mobile glass bar auto-hides.
         const mq = window.matchMedia("(max-width: 640px)");
-        let lastY = window.scrollY || 0;
+        let lastY = readScrollY();
         let hidden = false;
         let ticking = false;
-        const DELTA = 8;
-        const TOP_SHOW = 24;
+        const DELTA = 10;
+        const TOP_SHOW = 32;
+        const GAP = 10; // px above visual viewport bottom / home indicator
+
+        function readScrollY() {
+          return (
+            window.scrollY ||
+            window.pageYOffset ||
+            document.documentElement.scrollTop ||
+            document.body.scrollTop ||
+            0
+          );
+        }
+
+        /** Pin to the *visible* bottom (iOS Safari toolbars / dynamic viewport). */
+        function pinToVisualBottom() {
+          if (!mq.matches) {
+            dock.style.bottom = "";
+            return;
+          }
+          if (hidden) return; // is-hidden owns bottom via CSS
+          const vv = window.visualViewport;
+          let inset = GAP;
+          if (vv) {
+            // Distance from layout viewport bottom to visual viewport bottom
+            const layoutBottomGap = Math.max(
+              0,
+              window.innerHeight - (vv.height + vv.offsetTop)
+            );
+            inset = layoutBottomGap + GAP;
+          }
+          // Never underlap the home indicator
+          const safe =
+            (window.CSS && CSS.supports("top: env(safe-area-inset-bottom)")
+              ? 0
+              : 0) || 0;
+          // Prefer env via CSS calc when no visualViewport offset
+          if (!vv || (vv.offsetTop === 0 && Math.abs(window.innerHeight - vv.height) < 2)) {
+            dock.style.bottom = "";
+          } else {
+            dock.style.bottom = Math.round(inset + safe) + "px";
+          }
+        }
 
         function setHidden(next) {
           if (hidden === next) return;
           hidden = next;
           dock.classList.toggle("is-hidden", hidden);
           dock.setAttribute("aria-hidden", hidden ? "true" : "false");
+          if (!hidden) pinToVisualBottom();
         }
 
         function show() {
@@ -1045,16 +1087,18 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         function onScroll() {
           if (!mq.matches) {
             show();
-            lastY = window.scrollY || 0;
+            dock.style.bottom = "";
+            lastY = readScrollY();
             return;
           }
+          pinToVisualBottom();
           // Keep bar while editing a note tray (outline dock stacked above).
           if (editors.size || document.querySelector(".note.editing")) {
             show();
-            lastY = window.scrollY || 0;
+            lastY = readScrollY();
             return;
           }
-          const y = window.scrollY || 0;
+          const y = readScrollY();
           const dy = y - lastY;
           if (y <= TOP_SHOW) {
             show();
@@ -1066,44 +1110,77 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           lastY = y;
         }
 
-        window.addEventListener(
-          "scroll",
-          () => {
-            if (ticking) return;
-            ticking = true;
-            requestAnimationFrame(() => {
-              ticking = false;
-              onScroll();
-            });
-          },
-          { passive: true }
-        );
+        function onScrollTick() {
+          if (ticking) return;
+          ticking = true;
+          requestAnimationFrame(() => {
+            ticking = false;
+            onScroll();
+          });
+        }
 
-        // Touch edge: slight upward drag near bottom can reveal even if dy is small
+        window.addEventListener("scroll", onScrollTick, { passive: true, capture: true });
+        document.addEventListener("scroll", onScrollTick, { passive: true, capture: true });
+
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener("resize", () => {
+            pinToVisualBottom();
+          }, { passive: true });
+          window.visualViewport.addEventListener("scroll", () => {
+            pinToVisualBottom();
+          }, { passive: true });
+        }
+
+        // Touch: finger drag down → reveal (scroll-up gesture)
         let touchStartY = null;
+        let touchStartScroll = 0;
         window.addEventListener(
           "touchstart",
           (e) => {
             if (!e.touches || !e.touches[0]) return;
             touchStartY = e.touches[0].clientY;
+            touchStartScroll = readScrollY();
+          },
+          { passive: true }
+        );
+        window.addEventListener(
+          "touchmove",
+          (e) => {
+            if (touchStartY == null || !e.touches || !e.touches[0]) return;
+            if (!mq.matches) return;
+            const y = e.touches[0].clientY;
+            const fingerDy = y - touchStartY;
+            const scrollNow = readScrollY();
+            // Scrolling content up (reading further) → hide
+            if (scrollNow - touchStartScroll > DELTA || fingerDy < -DELTA) {
+              if (!(editors.size || document.querySelector(".note.editing"))) {
+                if (scrollNow > TOP_SHOW) setHidden(true);
+              }
+            }
+            // Scrolling back / finger pull down → show
+            if (scrollNow - touchStartScroll < -DELTA || fingerDy > DELTA) {
+              show();
+            }
           },
           { passive: true }
         );
         window.addEventListener(
           "touchend",
-          (e) => {
-            if (touchStartY == null || !e.changedTouches || !e.changedTouches[0]) return;
-            const dy = e.changedTouches[0].clientY - touchStartY;
+          () => {
             touchStartY = null;
-            if (!mq.matches) return;
-            // finger drag down (content often moves up) → show
-            if (dy > 28) show();
           },
           { passive: true }
         );
 
         mq.addEventListener?.("change", () => {
-          if (!mq.matches) show();
+          if (!mq.matches) {
+            show();
+            dock.style.bottom = "";
+          } else {
+            pinToVisualBottom();
+          }
         });
+
+        pinToVisualBottom();
       }
     
