@@ -1,70 +1,57 @@
 # keyverse mobile (React Native / Expo)
 
-**Product client** with full door HTTP + pack protocol parity to the web mirror.
+**Local-first product client.** Scripture + notes work offline. Cloud is an optional multiword mirror.
 
-Web (`priv/static` + Elixir) remains the anywhere-access mirror. Mobile leads UX.
+## Defaults
 
-## Feature parity matrix
+| Concern | Default |
+|---------|---------|
+| Notes / attachments | **On-device pack** (`documentDirectory/keyverse/pack/`) |
+| Scripture | **Bundled BSB + KJV** (`assets/text/*/chapters.json.gz`) |
+| Cloud | **Off** until Settings toggle |
+| Cloud on | Claims multiword door, **doubles local → host** (+ pull) |
 
-| Feature | Web | Mobile |
-|---------|-----|--------|
-| Multiword door open | ✓ | ✓ |
-| Create pack (`POST /setup`) | ✓ | ✓ |
-| Protocol discovery | ✓ | ✓ |
-| Resolve / suggest passages | ✓ | ✓ |
-| Notes list | ✓ | ✓ book→chapter tree |
-| VBV reader + chapter text | ✓ | ✓ |
-| Verse / range / chapter notes | ✓ | ✓ |
-| Range select (long-press) | ✓ | ✓ |
-| Expand-all notes in reader | ✓ | ✓ |
-| Outliner nest/unnest/fold | ✓ | ✓ |
-| Autosave | ✓ | ✓ debounced |
-| File attachments | ✓ | ✓ |
-| URL link attachments | ✓ | ✓ |
-| Inline markdown + links | ✓ | ✓ |
-| Client encryption (AES-GCM) | ✓ | ✓ |
-| Pack passphrase session | ✓ | ✓ |
-| Pack export zip | ✓ | ✓ share sheet |
-| Pack import merge/replace | ✓ | ✓ |
-| Door rotate | ✓ | ✓ |
-| Share QR + copy URL | ✓ | ✓ |
-| Local FS mount RO | ✓ Chromium | n/a (host API) |
-| PWA / service worker | ✓ | n/a (native app) |
+## Bundled text
+
+- **BSB** — same pack as server `priv/bsb` (public domain)
+- **KJV** — `priv/kjv` + `mobile/assets/text/kjv` (public domain)
+
+Rebuild KJV: `python3 scripts/build-kjv-pack.py /path/to/kjv.txt priv/kjv`
+
+## Cloud toggle
+
+1. Settings → Enable cloud sync  
+2. Host claims a **four-word door**  
+3. All local notes + file bytes push; remote notes pull  
+4. Further saves: write local first, then `mirrorNoteIfCloud`  
+5. Share door URL / QR when cloud is on  
+
+Local is never deleted when cloud turns off.
 
 ## Screens
 
 | Route | Role |
 |-------|------|
-| `/` | Open door **or** create pack |
-| `/home` | Tree notes, suggest, passphrase, nav |
-| `/read/[slug]` | VBV reader, ranges, chapter note, expand |
-| `/note/[slug]` | Outliner + attachments + encrypt/autosave |
-| `/pack` | Manifest, export/import, rotate, endpoints |
-| `/share` | Door URL, copy, system share, QR |
+| `/home` | Local notes tree, offline resolve/suggest, passphrase |
+| `/read/[slug]` | VBV reader from bundled BSB/KJV + local outlines |
+| `/note/[slug]` | Outliner + local attachments + encrypt |
+| `/settings` | Translation · cloud toggle · sync |
+| `/share` | Door URL when cloud enabled |
 
 ## Run
 
 ```sh
-cd mobile
-npm install
-npm start
-npm run ios      # macOS
-npm run android
+cd mobile && npm install && npm start
 ```
-
-Default host: production Railway. Enter the same multiword door as web.
 
 ## Layout
 
 ```
 mobile/
-  app/                 expo-router screens
-  src/api/             full HTTP client
-  src/lib/crypto.ts    PBKDF2 + AES-GCM (§3.1)
-  src/lib/noteTree.ts  home tree
-  src/lib/inlineMarkdown.tsx
-  src/components/      Outliner, AttachmentList
-  src/context/         door + passphrase session
+  assets/text/bsb|kjv/   bundled chapters.json.gz
+  assets/words-door.txt  multiword door lexicon
+  src/lib/textBundle.ts  gunzip + chapter get
+  src/lib/localPack.ts   local SoT
+  src/lib/cloudSync.ts   door claim + double
+  src/lib/resolveLocal.ts
 ```
-
-See [docs/adr/0018-react-native-mobile-client.md](../docs/adr/0018-react-native-mobile-client.md).

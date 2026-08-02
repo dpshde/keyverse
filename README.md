@@ -7,8 +7,8 @@ A **cowyo-class** capture door over on-disk scripture note packs.
 **Host:** Elixir/OTP (Bandit + Plug). Packs remain plain JSON directories.
 
 **Clients:**
-- **Mobile (product)** — Expo React Native in [`mobile/`](./mobile/) (screens, VBV reader, outliner, attachments + links)
-- **Web (mirror)** — `priv/static` + door HTML for anywhere access
+- **Mobile (product)** — Expo React Native in [`mobile/`](./mobile/): local-first pack, bundled BSB+KJV, optional cloud multiword mirror
+- **Web (mirror)** — `priv/static` + door HTML for anywhere access when cloud is on
 
 ## What you get
 

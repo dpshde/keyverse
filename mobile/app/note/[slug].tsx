@@ -14,15 +14,18 @@ import {
 } from "react-native";
 import { useSession } from "@/src/context/SessionContext";
 import type { Attachment, Block, Note } from "@/src/api/types";
-import { hydrateBlocks, isBlankNote } from "@/src/api/client";
+import { hydrateBlocks } from "@/src/api/client";
 import { Outliner } from "@/src/components/Outliner";
-import { AttachmentList } from "@/src/components/AttachmentList";
+import { LocalAttachmentList } from "@/src/components/LocalAttachmentList";
 import { decryptPayload, encryptPayload } from "@/src/lib/crypto";
+import * as Local from "@/src/lib/localPack";
+import { mirrorNoteIfCloud } from "@/src/lib/cloudSync";
+import { isBlankNote } from "@/src/api/client";
 
 export default function NoteScreen() {
   const { slug: raw } = useLocalSearchParams<{ slug: string }>();
   const slug = decodeURIComponent(String(raw || ""));
-  const { client, passphrase, hasPassphrase } = useSession();
+  const { passphrase, hasPassphrase, cloudEnabled } = useSession();
   const router = useRouter();
   const navigation = useNavigation();
   const [busy, setBusy] = useState(true);
@@ -40,11 +43,18 @@ export default function NoteScreen() {
   attsRef.current = attachments;
 
   const load = useCallback(async () => {
-    if (!client || !slug) return;
+    if (!slug) return;
     setBusy(true);
     try {
-      try {
-        const note = await client.getNote(slug);
+      const note = await Local.getNote(slug);
+      if (!note) {
+        setBlocks(Local.emptyBlocks());
+        setAttachments([]);
+        setLocked(false);
+        setWantEncrypt(hasPassphrase);
+        setStatus("New note · local");
+        setNoteMeta(null);
+      } else {
         setNoteMeta(note);
         if (note.encrypted && note.cipher) {
           if (!passphrase) {
@@ -55,11 +65,13 @@ export default function NoteScreen() {
           } else {
             try {
               const plain = await decryptPayload(note.cipher, passphrase);
-              setBlocks(plain.blocks.length ? plain.blocks : [{ id: `b_${Date.now()}`, indent: 0, text: "" }]);
+              setBlocks(
+                plain.blocks.length ? plain.blocks : Local.emptyBlocks()
+              );
               setAttachments(plain.attachments || []);
               setLocked(false);
               setWantEncrypt(true);
-              setStatus("Unlocked");
+              setStatus("Unlocked · local");
             } catch {
               setLocked(true);
               setStatus("Wrong passphrase");
@@ -70,43 +82,27 @@ export default function NoteScreen() {
           setWantEncrypt(false);
           setBlocks(hydrateBlocks(note));
           setAttachments((note.attachments || []) as Attachment[]);
-          setStatus("Loaded");
+          setStatus("Loaded · local");
         }
-      } catch (e: unknown) {
-        const msg = String(e);
-        if (msg.includes("404") || msg.includes("no note")) {
-          setBlocks([{ id: `b_${Date.now()}`, indent: 0, text: "" }]);
-          setAttachments([]);
-          setLocked(false);
-          setWantEncrypt(hasPassphrase);
-          setStatus("New note");
-        } else throw e;
       }
     } catch (e) {
       setStatus(String(e));
     } finally {
       setBusy(false);
     }
-  }, [client, slug, passphrase, hasPassphrase]);
+  }, [slug, passphrase, hasPassphrase]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const save = useCallback(async () => {
-    if (!client || locked) return;
+    if (locked) return;
     setSaving(true);
     try {
       const b = blocksRef.current;
       const a = attsRef.current;
-      if (isBlankNote(b, a) && !wantEncrypt) {
-        const res = await client.putNote(slug, { blocks: b, attachments: a });
-        if ("deleted" in res && res.deleted) {
-          setStatus("Deleted");
-          router.back();
-          return;
-        }
-      }
+      let res: Note | { deleted: true; slug: string };
       if (wantEncrypt) {
         if (!passphrase) {
           Alert.alert("Passphrase required", "Set a pack passphrase on Home first.");
@@ -114,21 +110,27 @@ export default function NoteScreen() {
           return;
         }
         const cipher = await encryptPayload({ blocks: b, attachments: a }, passphrase);
-        const res = await client.putNote(slug, { encrypted: true, cipher });
-        setNoteMeta(res as Note);
-        setStatus("Saved · encrypted");
+        res = await Local.putNote(slug, { encrypted: true, cipher });
       } else {
-        const res = await client.putNote(slug, { blocks: b, attachments: a });
-        if ("deleted" in res && res.deleted) {
-          setStatus("Deleted");
-          router.back();
-          return;
-        }
-        const note = res as Note;
-        setNoteMeta(note);
+        res = await Local.putNote(slug, { blocks: b, attachments: a });
+      }
+      if ("deleted" in res && res.deleted) {
+        setStatus("Deleted");
+        if (cloudEnabled) mirrorNoteIfCloud(slug).catch(() => {});
+        router.back();
+        return;
+      }
+      const note = res as Note;
+      setNoteMeta(note);
+      if (!note.encrypted) {
         setBlocks(hydrateBlocks(note));
         setAttachments((note.attachments || []) as Attachment[]);
-        setStatus("Saved");
+      }
+      setStatus(cloudEnabled ? "Saved · local + syncing…" : "Saved · local");
+      if (cloudEnabled) {
+        mirrorNoteIfCloud(slug)
+          .then(() => setStatus("Saved · local + cloud"))
+          .catch(() => setStatus("Saved · local (cloud sync failed)"));
       }
     } catch (e) {
       Alert.alert("Save failed", String(e));
@@ -136,13 +138,11 @@ export default function NoteScreen() {
     } finally {
       setSaving(false);
     }
-  }, [client, locked, wantEncrypt, passphrase, slug, router]);
+  }, [locked, wantEncrypt, passphrase, slug, router, cloudEnabled]);
 
   const scheduleSave = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      save();
-    }, 900);
+    timer.current = setTimeout(() => save(), 900);
   }, [save]);
 
   useLayoutEffect(() => {
@@ -158,13 +158,6 @@ export default function NoteScreen() {
     });
   }, [navigation, noteMeta, slug, save, saving, locked]);
 
-  if (!client) {
-    return (
-      <View style={styles.center}>
-        <Text>Open a door first.</Text>
-      </View>
-    );
-  }
   if (busy) {
     return (
       <View style={styles.center}>
@@ -184,23 +177,13 @@ export default function NoteScreen() {
         <Text style={styles.status}>{status}</Text>
 
         {locked ? (
-          <Text style={styles.warn}>
-            Sealed note. Set the correct pack passphrase on Home, then reopen.
-          </Text>
+          <Text style={styles.warn}>Sealed note. Set the correct passphrase on Home.</Text>
         ) : (
           <>
             <View style={styles.encryptRow}>
               <Text style={styles.encryptLbl}>Encrypt on save</Text>
-              <Switch
-                value={wantEncrypt}
-                onValueChange={setWantEncrypt}
-                disabled={!hasPassphrase && !wantEncrypt}
-              />
+              <Switch value={wantEncrypt} onValueChange={setWantEncrypt} />
             </View>
-            {!hasPassphrase && wantEncrypt ? (
-              <Text style={styles.warn}>Set a passphrase on Home to encrypt.</Text>
-            ) : null}
-
             <Outliner
               blocks={blocks}
               onChange={setBlocks}
@@ -208,16 +191,12 @@ export default function NoteScreen() {
               honorCollapse
               onDirty={scheduleSave}
             />
-            <AttachmentList
+            <LocalAttachmentList
               slug={slug}
               attachments={attachments}
-              client={client}
               onChange={(atts) => {
                 setAttachments(atts);
                 scheduleSave();
-              }}
-              onNoteFromServer={(n) => {
-                if (n.attachments) setAttachments(n.attachments as Attachment[]);
               }}
             />
             <View style={styles.footer}>
@@ -249,14 +228,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     color: "#664",
     lineHeight: 20,
-    marginBottom: 8,
   },
   encryptRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 12,
-    paddingVertical: 4,
   },
   encryptLbl: { fontSize: 15, fontWeight: "600", color: "#333" },
   footer: { marginTop: 24, gap: 10 },

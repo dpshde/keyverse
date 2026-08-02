@@ -7,55 +7,67 @@ import React, {
   useState,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { KeyverseClient, type SessionConfig } from "../api/client";
+import { KeyverseClient } from "../api/client";
 import type { ProtocolInfo } from "../api/types";
+import * as Local from "../lib/localPack";
+import type { TranslationId } from "../lib/textBundle";
+import { preloadTexts } from "../lib/textBundle";
+import * as Cloud from "../lib/cloudSync";
 
-const KEY = "kv.session.v1";
-const PW_PREFIX = "kv.pw.";
+const PW_KEY = "kv.local.pw";
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
 
 type Ctx = {
   ready: boolean;
-  host: string;
-  door: string;
+  /** Always true — local pack is the default workspace */
+  localMode: true;
+  translation: TranslationId;
+  setTranslation: (t: TranslationId) => Promise<void>;
+  cloudEnabled: boolean;
+  cloudDoor: string;
+  cloudHost: string;
+  lastSyncAt?: string;
   client: KeyverseClient | null;
   protocol: ProtocolInfo | null;
   passphrase: string;
   hasPassphrase: boolean;
-  setSession: (host: string, door: string) => Promise<void>;
-  clearSession: () => Promise<void>;
   setPassphrase: (pw: string) => Promise<void>;
   clearPassphrase: () => Promise<void>;
+  enableCloud: (host?: string) => Promise<Cloud.SyncResult>;
+  disableCloud: () => Promise<void>;
+  syncCloud: () => Promise<Cloud.SyncResult>;
   refreshProtocol: () => Promise<ProtocolInfo | null>;
+  /** @deprecated use local-first; kept for pack screen host display */
+  host: string;
+  door: string;
 };
 
 const SessionContext = createContext<Ctx | null>(null);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [host, setHost] = useState(DEFAULT_HOST);
-  const [door, setDoor] = useState("");
+  const [meta, setMetaState] = useState<Local.LocalMeta | null>(null);
   const [protocol, setProtocol] = useState<ProtocolInfo | null>(null);
   const [passphrase, setPw] = useState("");
 
+  const cloudEnabled = !!meta?.cloud?.enabled && !!meta.cloud.door;
+  const cloudDoor = meta?.cloud?.door || "";
+  const cloudHost = meta?.cloud?.host || DEFAULT_HOST;
+  const translation = (meta?.translation || "BSB") as TranslationId;
+
   const client = useMemo(() => {
-    if (!door) return null;
-    return new KeyverseClient({ host, door });
-  }, [host, door]);
+    if (!cloudEnabled || !cloudDoor) return null;
+    return new KeyverseClient({ host: cloudHost, door: cloudDoor });
+  }, [cloudEnabled, cloudDoor, cloudHost]);
 
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(KEY);
-        if (raw) {
-          const s = JSON.parse(raw) as SessionConfig;
-          if (s.host) setHost(s.host);
-          if (s.door) setDoor(s.door);
-          if (s.door) {
-            const pw = await AsyncStorage.getItem(PW_PREFIX + s.door);
-            if (pw) setPw(pw);
-          }
-        }
+        const m = await Local.getMeta();
+        setMetaState(m);
+        const pw = await AsyncStorage.getItem(PW_KEY);
+        if (pw) setPw(pw);
+        preloadTexts(["BSB", "KJV"]).catch(() => {});
       } finally {
         setReady(true);
       }
@@ -63,7 +75,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshProtocol = useCallback(async () => {
-    if (!client || !door) {
+    if (!client) {
       setProtocol(null);
       return null;
     }
@@ -75,66 +87,74 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setProtocol(null);
       return null;
     }
-  }, [client, door]);
+  }, [client]);
 
   useEffect(() => {
-    if (ready && door) refreshProtocol();
-  }, [ready, door, host, refreshProtocol]);
+    if (ready && cloudEnabled) refreshProtocol();
+  }, [ready, cloudEnabled, refreshProtocol]);
 
-  const setSession = useCallback(async (h: string, d: string) => {
-    const hostN = (h || DEFAULT_HOST).replace(/\/+$/, "");
-    const doorN = d.trim().toLowerCase().replace(/\s+/g, "-");
-    setHost(hostN);
-    setDoor(doorN);
-    await AsyncStorage.setItem(KEY, JSON.stringify({ host: hostN, door: doorN }));
-    const pw = await AsyncStorage.getItem(PW_PREFIX + doorN);
-    setPw(pw || "");
-    const c = new KeyverseClient({ host: hostN, door: doorN });
-    try {
-      const p = await c.protocol();
-      setProtocol(p);
-    } catch (e) {
-      setProtocol(null);
-      throw e;
-    }
+  const setTranslation = useCallback(async (t: TranslationId) => {
+    const m = await Local.setMeta({ translation: t });
+    setMetaState(m);
   }, []);
 
-  const clearSession = useCallback(async () => {
-    setDoor("");
-    setProtocol(null);
-    setPw("");
-    await AsyncStorage.removeItem(KEY);
+  const setPassphrase = useCallback(async (pw: string) => {
+    setPw(pw);
+    if (pw) await AsyncStorage.setItem(PW_KEY, pw);
+    else await AsyncStorage.removeItem(PW_KEY);
   }, []);
-
-  const setPassphrase = useCallback(
-    async (pw: string) => {
-      setPw(pw);
-      if (door) {
-        if (pw) await AsyncStorage.setItem(PW_PREFIX + door, pw);
-        else await AsyncStorage.removeItem(PW_PREFIX + door);
-      }
-    },
-    [door]
-  );
 
   const clearPassphrase = useCallback(async () => {
     setPw("");
-    if (door) await AsyncStorage.removeItem(PW_PREFIX + door);
-  }, [door]);
+    await AsyncStorage.removeItem(PW_KEY);
+  }, []);
+
+  const enableCloud = useCallback(async (host?: string) => {
+    const res = await Cloud.enableCloudAndSync(host || DEFAULT_HOST);
+    const m = await Local.getMeta();
+    setMetaState(m);
+    try {
+      const c = new KeyverseClient({ host: res.host, door: res.door });
+      setProtocol(await c.protocol());
+    } catch {
+      /* ok */
+    }
+    return res;
+  }, []);
+
+  const disableCloud = useCallback(async () => {
+    await Cloud.disableCloudKeepLocal();
+    setMetaState(await Local.getMeta());
+    setProtocol(null);
+  }, []);
+
+  const syncCloud = useCallback(async () => {
+    const res = await Cloud.syncNow();
+    setMetaState(await Local.getMeta());
+    return res;
+  }, []);
 
   const value: Ctx = {
     ready,
-    host,
-    door,
-    client: door ? client : null,
+    localMode: true,
+    translation,
+    setTranslation,
+    cloudEnabled,
+    cloudDoor,
+    cloudHost,
+    lastSyncAt: meta?.cloud?.last_sync_at,
+    client,
     protocol,
     passphrase,
     hasPassphrase: !!passphrase,
-    setSession,
-    clearSession,
     setPassphrase,
     clearPassphrase,
+    enableCloud,
+    disableCloud,
+    syncCloud,
     refreshProtocol,
+    host: cloudHost,
+    door: cloudDoor,
   };
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

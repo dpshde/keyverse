@@ -14,11 +14,19 @@ import { useSession } from "@/src/context/SessionContext";
 import type { Note, SuggestItem } from "@/src/api/types";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
 import { buildNoteTree, type TreeFolder, type TreeLeaf, type TreeNode } from "@/src/lib/noteTree";
+import * as Local from "@/src/lib/localPack";
+import { resolveLocal, suggestLocal } from "@/src/lib/resolveLocal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function HomeScreen() {
-  const { client, door, protocol, clearSession, hasPassphrase, setPassphrase, clearPassphrase } =
-    useSession();
+  const {
+    cloudEnabled,
+    cloudDoor,
+    translation,
+    hasPassphrase,
+    setPassphrase,
+    clearPassphrase,
+  } = useSession();
   const router = useRouter();
   const [notes, setNotes] = useState<Note[]>([]);
   const [q, setQ] = useState("");
@@ -28,15 +36,14 @@ export default function HomeScreen() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [pw, setPw] = useState("");
 
-  const foldKey = `kv.fold.${door}`;
+  const foldKey = "kv.fold.local";
 
   const load = useCallback(async () => {
-    if (!client) return;
     setBusy(true);
     setErr(null);
     try {
       const [list, foldRaw] = await Promise.all([
-        client.listNotes(),
+        Local.listNotes(),
         AsyncStorage.getItem(foldKey),
       ]);
       setNotes(list);
@@ -46,37 +53,25 @@ export default function HomeScreen() {
     } finally {
       setBusy(false);
     }
-  }, [client, foldKey]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
-    if (!client || q.trim().length < 2) {
+    if (q.trim().length < 1) {
       setSuggestions([]);
       return;
     }
-    const t = setTimeout(() => {
-      client.suggest(q.trim()).then(setSuggestions).catch(() => setSuggestions([]));
-    }, 200);
+    const t = setTimeout(() => setSuggestions(suggestLocal(q.trim())), 120);
     return () => clearTimeout(t);
-  }, [q, client]);
+  }, [q]);
 
   const tree = useMemo(() => buildNoteTree(notes), [notes]);
-
   const flat = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
 
   const toggle = async (id: string) => {
-    const next = { ...collapsed, [id]: !collapsed[id] };
-    if (!next[id]) delete next[id];
-    // store collapsed=true when folded
-    const store: Record<string, number> = {};
-    for (const [k, v] of Object.entries(next)) if (v) store[k] = 1;
-    // collapsed map: id -> true means collapsed
-    const map: Record<string, boolean> = {};
-    for (const k of Object.keys(store)) map[k] = true;
-    // fix: toggle means if currently collapsed, expand
     const was = !!collapsed[id];
     const map2 = { ...collapsed };
     if (was) delete map2[id];
@@ -86,43 +81,26 @@ export default function HomeScreen() {
   };
 
   const openPassage = async (query?: string) => {
-    if (!client) return;
     const qq = (query ?? q).trim();
     if (!qq) return;
-    try {
-      const r = await client.resolve(qq);
-      if (!r.ok || !r.scope) {
-        setErr(r.error || "invalid passage");
-        return;
-      }
-      setSuggestions([]);
-      setQ("");
-      router.push(`/read/${encodeURIComponent(r.scope.slug)}`);
-    } catch (e) {
-      setErr(String(e));
+    const r = resolveLocal(qq);
+    if (!r.ok || !r.scope) {
+      setErr(r.error || "invalid passage");
+      return;
     }
+    setSuggestions([]);
+    setQ("");
+    router.push(`/read/${encodeURIComponent(r.scope.slug)}`);
   };
-
-  if (!client) {
-    return (
-      <View style={styles.center}>
-        <Text>No door open.</Text>
-        <Pressable onPress={() => router.replace("/")}>
-          <Text style={styles.link}>Enter door</Text>
-        </Pressable>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.root}>
       <View style={styles.top}>
         <Text style={styles.door} numberOfLines={1}>
-          {door}
+          Local pack{cloudEnabled ? ` · cloud ${cloudDoor}` : " · offline"}
         </Text>
         <Text style={styles.meta}>
-          {protocol?.version ? `protocol ${protocol.version}` : "…"} · {notes.length} notes
-          {hasPassphrase ? " · 🔒" : ""}
+          {translation} · {notes.length} notes{hasPassphrase ? " · 🔒" : ""}
         </Text>
         <View style={styles.searchRow}>
           <TextInput
@@ -158,7 +136,7 @@ export default function HomeScreen() {
             style={styles.pw}
             value={pw}
             onChangeText={setPw}
-            placeholder="Pack passphrase (optional)"
+            placeholder="Passphrase (optional encrypt)"
             placeholderTextColor="#999"
             secureTextEntry
             autoCapitalize="none"
@@ -180,19 +158,11 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.navRow}>
-          <Pressable onPress={() => router.push("/pack")}>
-            <Text style={styles.link}>Pack</Text>
+          <Pressable onPress={() => router.push("/settings")}>
+            <Text style={styles.link}>Settings · cloud</Text>
           </Pressable>
           <Pressable onPress={() => router.push("/share")}>
             <Text style={styles.link}>Share</Text>
-          </Pressable>
-          <Pressable
-            onPress={async () => {
-              await clearSession();
-              router.replace("/");
-            }}
-          >
-            <Text style={styles.link}>Switch door</Text>
           </Pressable>
         </View>
         {err ? <Text style={styles.err}>{err}</Text> : null}
@@ -206,13 +176,20 @@ export default function HomeScreen() {
           keyExtractor={(item) => item.key}
           refreshControl={<RefreshControl refreshing={busy} onRefresh={load} />}
           contentContainerStyle={{ padding: 12, paddingBottom: 48 }}
-          ListEmptyComponent={<Text style={styles.empty}>No notes yet — open a passage.</Text>}
+          ListEmptyComponent={
+            <Text style={styles.empty}>
+              Notes stay on this device. Search a passage to read ({translation}) and capture.
+            </Text>
+          }
           renderItem={({ item }) => {
             if (item.kind === "folder") {
               const f = item.node as TreeFolder;
               const isCol = !!collapsed[f.id];
               return (
-                <Pressable style={[styles.folder, { marginLeft: item.depth * 12 }]} onPress={() => toggle(f.id)}>
+                <Pressable
+                  style={[styles.folder, { marginLeft: item.depth * 12 }]}
+                  onPress={() => toggle(f.id)}
+                >
                   <Text style={styles.folderChev}>{isCol ? "▸" : "▾"}</Text>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.folderTitle}>{f.label}</Text>
@@ -268,7 +245,6 @@ function flattenTree(
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#faf9f7" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
   top: {
     paddingHorizontal: 16,
     paddingTop: 8,
@@ -305,7 +281,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.12)",
     overflow: "hidden",
   },
-  sug: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.06)" },
+  sug: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(0,0,0,0.06)",
+  },
   sugTxt: { fontSize: 15, color: "#222" },
   pwRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   pw: {
@@ -322,7 +303,7 @@ const styles = StyleSheet.create({
   navRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
   link: { color: "#336", fontWeight: "600", fontSize: 13 },
   err: { color: "#a33", fontSize: 13 },
-  empty: { textAlign: "center", color: "#888", marginTop: 40 },
+  empty: { textAlign: "center", color: "#888", marginTop: 40, paddingHorizontal: 24, lineHeight: 20 },
   folder: {
     flexDirection: "row",
     alignItems: "center",

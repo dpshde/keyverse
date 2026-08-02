@@ -1,0 +1,1 @@
+source=/tmp/kjv.txt\nsource_bytes=4379666\nsource_sha256=83b337b72af091f72a71d6ce462c3c9de18e85506b82a4e15c2f06e0c003370e\nverses=31102\nchapters=1189\npack_sha256=0e180553107f8506e730553f4f38feb6aeaa1ffd20373e76b7a2b35e9ec07ef2\n

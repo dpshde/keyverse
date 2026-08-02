@@ -5,43 +5,40 @@ import { useSession } from "@/src/context/SessionContext";
 import { doorBase } from "@/src/api/client";
 
 export default function ShareScreen() {
-  const { client, host, door } = useSession();
+  const { cloudEnabled, cloudHost, cloudDoor, client } = useSession();
+
   const url = useMemo(() => {
-    if (!client) return "";
-    return doorBase({ host, door }) + "/";
-  }, [client, host, door]);
+    if (!cloudEnabled || !cloudDoor) return "";
+    return doorBase({ host: cloudHost, door: cloudDoor }) + "/";
+  }, [cloudEnabled, cloudHost, cloudDoor]);
 
-  const qr = client ? client.shareQrUrl(host) : "";
+  const qr = client && cloudEnabled ? client.shareQrUrl(cloudHost) : "";
 
-  if (!client) {
+  if (!cloudEnabled) {
     return (
-      <View style={styles.center}>
-        <Text>No door</Text>
+      <View style={styles.root}>
+        <Text style={styles.h}>Share</Text>
+        <Text style={styles.hint}>
+          Cloud is off. Notes live only on this device. Turn on cloud in Settings to get a multiword
+          door URL you can share or open on the web mirror.
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={styles.root}>
-      <Text style={styles.h}>Share door</Text>
+      <Text style={styles.h}>Share cloud door</Text>
       <Text style={styles.hint}>
-        Anyone with this URL can read and write the pack. Treat it like a password.
+        Anyone with this URL can read and write the mirrored pack. Treat it like a password.
       </Text>
       <Text style={styles.url} selectable>
         {url}
       </Text>
-      <Pressable
-        style={styles.btn}
-        onPress={async () => {
-          await Clipboard.setStringAsync(url);
-        }}
-      >
+      <Pressable style={styles.btn} onPress={async () => Clipboard.setStringAsync(url)}>
         <Text style={styles.btnTxt}>Copy URL</Text>
       </Pressable>
-      <Pressable
-        style={styles.btnSecondary}
-        onPress={() => Share.share({ message: url, url })}
-      >
+      <Pressable style={styles.btnSecondary} onPress={() => Share.share({ message: url, url })}>
         <Text style={styles.btnSecondaryTxt}>System share</Text>
       </Pressable>
       {qr ? (
@@ -56,7 +53,6 @@ export default function ShareScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, padding: 16, gap: 12, backgroundColor: "#faf9f7" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
   h: { fontSize: 13, fontWeight: "700", color: "#666", textTransform: "uppercase" },
   hint: { fontSize: 14, color: "#666", lineHeight: 20 },
   url: {
@@ -65,7 +61,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     padding: 12,
     borderRadius: 10,
-    overflow: "hidden",
   },
   btn: {
     backgroundColor: "#161616",
