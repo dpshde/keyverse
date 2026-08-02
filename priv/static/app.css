@@ -45,10 +45,10 @@
   /* Reader chapter chrome */
   .reader-head {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: baseline;
-    gap: .35rem .75rem;
-    margin: 0 0 .75rem;
+    gap: .45rem .75rem;
+    margin: 0 0 .55rem;
   }
   .reader-head h1 {
     margin: 0;
@@ -56,16 +56,156 @@
     min-width: 0;
     font-size: 1.25rem;
   }
-  .reader-head-actions {
+  .reader-back { flex: 0 0 auto; }
+  /* Desktop: quiet inline tool row under title */
+  .reader-dock {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: .35rem .65rem;
+    align-items: stretch;
+    gap: .15rem .2rem;
+    margin: 0 0 1rem;
+    padding: .2rem;
     font-family: -apple-system, system-ui, sans-serif;
-    font-size: .86rem;
+    font-size: .84rem;
+  }
+  .reader-dock-item {
+    flex: 1 1 0;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: .12rem;
+    min-width: 0;
+    margin: 0;
+    padding: .4rem .3rem;
+    border: 0;
+    border-radius: .7rem;
+    background: transparent;
+    color: color-mix(in srgb, currentColor 58%, transparent);
+    font: inherit;
+    font-size: .72rem;
+    font-weight: 550;
+    letter-spacing: .01em;
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    user-select: none;
+  }
+  a.reader-dock-item { color: color-mix(in srgb, currentColor 58%, transparent); }
+  .reader-dock-item:hover:not(.is-disabled) {
+    color: inherit;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .reader-dock-item:active:not(.is-disabled) {
+    transform: scale(.97);
+  }
+  .reader-dock-item.is-disabled {
+    opacity: .28;
+    cursor: default;
+    pointer-events: none;
+  }
+  .reader-dock-item[aria-pressed="true"] {
+    color: inherit;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .reader-dock-ico {
+    display: block;
+    font-size: 1.15rem;
+    font-weight: 500;
+    line-height: 1;
+    opacity: .9;
+  }
+  .reader-dock-lbl {
+    display: block;
+    line-height: 1.1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .reader-nav-disabled { opacity: .35; user-select: none; }
   #reader-root[aria-busy="true"] { opacity: .55; transition: opacity .12s ease; }
+
+  /* Mobile: Liquid Glass floating tab bar */
+  @media (max-width: 640px) {
+    body:has(#reader-dock) {
+      padding-bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+    }
+    .reader-head {
+      margin-bottom: .85rem;
+    }
+    .reader-head h1 {
+      font-size: 1.18rem;
+    }
+    .reader-dock {
+      position: fixed;
+      z-index: 50;
+      left: 50%;
+      bottom: max(0.65rem, env(safe-area-inset-bottom, 0px));
+      transform: translateX(-50%);
+      width: min(24.5rem, calc(100vw - 1.25rem));
+      margin: 0;
+      padding: .35rem;
+      gap: 0;
+      flex-wrap: nowrap;
+      border-radius: 1.35rem;
+      border: 1px solid color-mix(in srgb, #fff 42%, color-mix(in srgb, currentColor 14%, transparent));
+      background:
+        linear-gradient(
+          165deg,
+          color-mix(in srgb, Canvas 72%, transparent) 0%,
+          color-mix(in srgb, Canvas 48%, transparent) 100%
+        );
+      box-shadow:
+        0 1px 0 color-mix(in srgb, #fff 55%, transparent) inset,
+        0 -1px 0 color-mix(in srgb, currentColor 6%, transparent) inset,
+        0 10px 40px color-mix(in srgb, #000 16%, transparent),
+        0 2px 10px color-mix(in srgb, #000 8%, transparent);
+      backdrop-filter: blur(28px) saturate(1.75);
+      -webkit-backdrop-filter: blur(28px) saturate(1.75);
+    }
+    @supports (background: color-mix(in srgb, Canvas 50%, transparent)) {
+      .reader-dock {
+        background: color-mix(in srgb, Canvas 52%, transparent);
+      }
+    }
+    @media (prefers-color-scheme: dark) {
+      .reader-dock {
+        border-color: color-mix(in srgb, #fff 12%, transparent);
+        background: color-mix(in srgb, Canvas 42%, transparent);
+        box-shadow:
+          0 1px 0 color-mix(in srgb, #fff 10%, transparent) inset,
+          0 12px 40px color-mix(in srgb, #000 45%, transparent),
+          0 2px 12px color-mix(in srgb, #000 30%, transparent);
+      }
+    }
+    .reader-dock-item {
+      flex: 1 1 0;
+      min-height: 3.15rem;
+      padding: .42rem .2rem .38rem;
+      border-radius: 1.05rem;
+      font-size: .68rem;
+      font-weight: 600;
+      letter-spacing: .02em;
+      color: color-mix(in srgb, currentColor 72%, transparent);
+    }
+    .reader-dock-item:hover:not(.is-disabled) {
+      background: color-mix(in srgb, currentColor 8%, transparent);
+    }
+    .reader-dock-item[aria-pressed="true"] {
+      background: color-mix(in srgb, currentColor 12%, transparent);
+      color: inherit;
+    }
+    .reader-dock-ico {
+      font-size: 1.28rem;
+      margin-bottom: .08rem;
+    }
+  }
+
+  @media (pointer: coarse) and (min-width: 641px) {
+    .reader-dock-item { min-height: 2.6rem; }
+  }
   /* Home: title left, multiword key right */
   .home-head {
     display: flex;

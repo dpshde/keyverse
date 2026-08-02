@@ -781,7 +781,11 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         btn.hidden = false;
         const open = allNotesExpanded();
-        btn.textContent = open ? "collapse notes" : "expand notes";
+        const expandLbl = btn.getAttribute("data-label-expand") || "Notes";
+        const collapseLbl = btn.getAttribute("data-label-collapse") || "Fold";
+        const lbl = btn.querySelector("[data-expand-lbl]") || btn.querySelector(".reader-dock-lbl");
+        if (lbl) lbl.textContent = open ? collapseLbl : expandLbl;
+        else btn.textContent = open ? "collapse notes" : "expand notes";
         btn.setAttribute("aria-pressed", open ? "true" : "false");
         btn.setAttribute(
           "aria-label",
@@ -857,38 +861,53 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       }
 
       function updateNavButtons(meta) {
-        const head = document.querySelector(".reader-head-actions");
-        if (!head) return;
-        function navHtml(id, slug, label, aria) {
+        const dock = document.getElementById("reader-dock") || document.querySelector(".reader-dock");
+        if (!dock) return;
+        function navItem(id, slug, ico, label, aria) {
           if (slug) {
             return (
-              '<button type="button" class="muted text-btn reader-nav" id="' +
+              '<button type="button" class="reader-dock-item reader-nav" id="' +
               id +
               '" data-slug="' +
               String(slug).replace(/"/g, "") +
               '" aria-label="' +
               aria +
-              '">' +
+              '"><span class="reader-dock-ico" aria-hidden="true">' +
+              ico +
+              '</span><span class="reader-dock-lbl">' +
               label +
-              "</button>"
+              "</span></button>"
             );
           }
-          return '<span class="muted reader-nav-disabled" aria-hidden="true">' + label + "</span>";
+          return (
+            '<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico">' +
+            ico +
+            '</span><span class="reader-dock-lbl">' +
+            label +
+            "</span></span>"
+          );
         }
         const expand = document.getElementById("expand-notes");
-        const expandHtml = expand
-          ? expand.outerHTML
-          : '<button type="button" class="muted text-btn" id="expand-notes" aria-pressed="false">expand notes</button>';
+        let expandHtml =
+          '<button type="button" class="reader-dock-item" id="expand-notes" aria-pressed="false" ' +
+          'aria-label="Expand all verse notes" data-label-expand="Notes" data-label-collapse="Fold">' +
+          '<span class="reader-dock-ico" aria-hidden="true">≡</span>' +
+          '<span class="reader-dock-lbl" data-expand-lbl>Notes</span></button>';
+        if (expand) {
+          expandHtml = expand.outerHTML;
+        }
         const noteSlug = meta.chapter_note_slug || meta.slug;
-        head.innerHTML =
-          navHtml("reader-prev", meta.prev_slug, "← prev", "Previous chapter") +
-          navHtml("reader-next", meta.next_slug, "next →", "Next chapter") +
+        dock.innerHTML =
+          navItem("reader-prev", meta.prev_slug, "‹", "Prev", "Previous chapter") +
           expandHtml +
-          '<a class="muted" id="chapter-note-link" href="' +
+          '<a class="reader-dock-item" id="chapter-note-link" href="' +
           apiBase() +
           "/note/" +
           noteSlug +
-          '">chapter note</a>';
+          '" aria-label="Chapter note">' +
+          '<span class="reader-dock-ico" aria-hidden="true">✎</span>' +
+          '<span class="reader-dock-lbl">Chapter</span></a>' +
+          navItem("reader-next", meta.next_slug, "›", "Next", "Next chapter");
         document.getElementById("expand-notes")?.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -896,6 +915,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           else expandAllNotes();
         });
         wireNavButtons();
+        syncExpandNotesBtn();
       }
 
       function wireNavButtons() {

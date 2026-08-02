@@ -901,30 +901,39 @@ defmodule Keyverse.Html do
 
         prev_btn =
           if meta.prev_slug do
-            ~s(<button type="button" class="muted text-btn reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter">← prev</button>)
+            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter"><span class="reader-dock-ico" aria-hidden="true">‹</span><span class="reader-dock-lbl">Prev</span></button>)
           else
-            ~s(<span class="muted reader-nav-disabled" aria-hidden="true">← prev</span>)
+            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico">‹</span><span class="reader-dock-lbl">Prev</span></span>)
           end
 
         next_btn =
           if meta.next_slug do
-            ~s(<button type="button" class="muted text-btn reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter">next →</button>)
+            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter"><span class="reader-dock-ico" aria-hidden="true">›</span><span class="reader-dock-lbl">Next</span></button>)
           else
-            ~s(<span class="muted reader-nav-disabled" aria-hidden="true">next →</span>)
+            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico">›</span><span class="reader-dock-lbl">Next</span></span>)
           end
 
         body = """
         <header class="ui reader-head">
-          <a href="#{esc(base)}/" class="muted">&larr;</a>
+          <a href="#{esc(base)}/" class="muted reader-back" aria-label="Home">&larr;</a>
           <h1 id="reader-title">#{esc(display)}</h1>
-          <div class="reader-head-actions">
-            #{prev_btn}
-            #{next_btn}
-            <button type="button" class="muted text-btn" id="expand-notes"
-              aria-pressed="false" aria-label="Expand all verse notes">expand notes</button>
-            <a class="muted" id="chapter-note-link" href="#{esc(base)}/note/#{esc(meta.chapter_note_slug || scope.slug)}">chapter note</a>
-          </div>
         </header>
+        <nav class="reader-dock" id="reader-dock" aria-label="Chapter tools">
+          #{prev_btn}
+          <button type="button" class="reader-dock-item" id="expand-notes"
+            aria-pressed="false" aria-label="Expand all verse notes"
+            data-label-expand="Notes" data-label-collapse="Fold">
+            <span class="reader-dock-ico" aria-hidden="true">≡</span>
+            <span class="reader-dock-lbl" data-expand-lbl>Notes</span>
+          </button>
+          <a class="reader-dock-item" id="chapter-note-link"
+            href="#{esc(base)}/note/#{esc(meta.chapter_note_slug || scope.slug)}"
+            aria-label="Chapter note">
+            <span class="reader-dock-ico" aria-hidden="true">✎</span>
+            <span class="reader-dock-lbl">Chapter</span>
+          </a>
+          #{next_btn}
+        </nav>
         <div id="reader-root" data-slug="#{esc(meta.slug)}">
           #{bundle.html.chapter_note}
           <div id="reader-verses">#{bundle.html.verses}</div>
