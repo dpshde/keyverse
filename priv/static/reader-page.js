@@ -1023,164 +1023,236 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       function wireReaderDockAutoHide() {
         const dock = document.getElementById("reader-dock");
         if (!dock) return;
-        // Desktop row stays visible; only fixed mobile glass bar auto-hides.
-        const mq = window.matchMedia("(max-width: 640px)");
-        let lastY = readScrollY();
-        let hidden = false;
-        let ticking = false;
-        const DELTA = 10;
-        const TOP_SHOW = 32;
-        const GAP = 10; // px above visual viewport bottom / home indicator
 
-        function readScrollY() {
+        // Mobile glass only — desktop keeps the static row.
+        const mq = window.matchMedia("(max-width: 640px)");
+        let hidden = false;
+        let dirAcc = 0;
+        let ticking = false;
+        let touchLastY = null;
+        let touchAcc = 0;
+        let lastContentTop = null;
+        const HIDE_AFTER = 12;
+        const SHOW_AFTER = 10;
+        const GAP = 10;
+
+        function mobile() {
+          return mq.matches;
+        }
+
+        function contentEl() {
           return (
-            window.scrollY ||
-            window.pageYOffset ||
-            document.documentElement.scrollTop ||
-            document.body.scrollTop ||
-            0
+            document.getElementById("reader-verses") ||
+            document.getElementById("reader-root") ||
+            document.body
           );
         }
 
-        /** Pin to the *visible* bottom (iOS Safari toolbars / dynamic viewport). */
+        /** How far the chapter content has moved (positive = scrolled down / reading further). */
+        function contentDelta() {
+          const el = contentEl();
+          if (!el) return 0;
+          const top = el.getBoundingClientRect().top;
+          if (lastContentTop == null) {
+            lastContentTop = top;
+            return 0;
+          }
+          const dy = lastContentTop - top; // content moved up by dy → page scrolled down
+          lastContentTop = top;
+          return dy;
+        }
+
+        function nearPageTop() {
+          const el = contentEl();
+          if (!el) return true;
+          // Title / first verses near top of viewport
+          return el.getBoundingClientRect().top > 80;
+        }
+
+        function editing() {
+          return !!(editors.size || document.querySelector(".note.editing"));
+        }
+
         function pinToVisualBottom() {
-          if (!mq.matches) {
+          if (!mobile()) {
             dock.style.bottom = "";
             return;
           }
-          if (hidden) return; // is-hidden owns bottom via CSS
+          if (hidden) return;
           const vv = window.visualViewport;
-          let inset = GAP;
-          if (vv) {
-            // Distance from layout viewport bottom to visual viewport bottom
-            const layoutBottomGap = Math.max(
-              0,
-              window.innerHeight - (vv.height + vv.offsetTop)
-            );
-            inset = layoutBottomGap + GAP;
+          if (!vv) {
+            dock.style.bottom = "";
+            return;
           }
-          // Never underlap the home indicator
-          const safe =
-            (window.CSS && CSS.supports("top: env(safe-area-inset-bottom)")
-              ? 0
-              : 0) || 0;
-          // Prefer env via CSS calc when no visualViewport offset
-          if (!vv || (vv.offsetTop === 0 && Math.abs(window.innerHeight - vv.height) < 2)) {
+          const layoutBottomGap = Math.max(
+            0,
+            window.innerHeight - (vv.height + vv.offsetTop)
+          );
+          if (layoutBottomGap < 2) {
             dock.style.bottom = "";
           } else {
-            dock.style.bottom = Math.round(inset + safe) + "px";
+            dock.style.bottom = Math.round(layoutBottomGap + GAP) + "px";
           }
         }
 
         function setHidden(next) {
-          if (hidden === next) return;
+          if (!mobile()) next = false;
+          if (hidden === next) {
+            if (!next) pinToVisualBottom();
+            return;
+          }
           hidden = next;
           dock.classList.toggle("is-hidden", hidden);
           dock.setAttribute("aria-hidden", hidden ? "true" : "false");
+          dock.style.bottom = "";
           if (!hidden) pinToVisualBottom();
         }
 
         function show() {
           setHidden(false);
         }
-
-        function onScroll() {
-          if (!mq.matches) {
-            show();
-            dock.style.bottom = "";
-            lastY = readScrollY();
-            return;
-          }
-          pinToVisualBottom();
-          // Keep bar while editing a note tray (outline dock stacked above).
-          if (editors.size || document.querySelector(".note.editing")) {
-            show();
-            lastY = readScrollY();
-            return;
-          }
-          const y = readScrollY();
-          const dy = y - lastY;
-          if (y <= TOP_SHOW) {
-            show();
-          } else if (dy > DELTA) {
-            setHidden(true);
-          } else if (dy < -DELTA) {
-            show();
-          }
-          lastY = y;
+        function hide() {
+          if (!mobile() || editing()) return;
+          setHidden(true);
         }
 
-        function onScrollTick() {
+        function applyDelta(dy) {
+          if (!mobile()) {
+            show();
+            dirAcc = 0;
+            return;
+          }
+          if (editing()) {
+            show();
+            dirAcc = 0;
+            return;
+          }
+          if (nearPageTop()) {
+            show();
+            dirAcc = 0;
+            return;
+          }
+          if (Math.abs(dy) < 0.5) return;
+
+          if (dy > 0) {
+            // reading further
+            if (dirAcc < 0) dirAcc = 0;
+            dirAcc += dy;
+            if (dirAcc >= HIDE_AFTER) hide();
+          } else {
+            if (dirAcc > 0) dirAcc = 0;
+            dirAcc += dy;
+            if (dirAcc <= -SHOW_AFTER) show();
+          }
+        }
+
+        function tick() {
+          ticking = false;
+          pinToVisualBottom();
+          applyDelta(contentDelta());
+        }
+
+        function requestTick() {
           if (ticking) return;
           ticking = true;
-          requestAnimationFrame(() => {
-            ticking = false;
-            onScroll();
-          });
+          requestAnimationFrame(tick);
         }
 
-        window.addEventListener("scroll", onScrollTick, { passive: true, capture: true });
-        document.addEventListener("scroll", onScrollTick, { passive: true, capture: true });
+        window.addEventListener("scroll", requestTick, { passive: true, capture: true });
+        document.addEventListener("scroll", requestTick, { passive: true, capture: true });
+        if (document.body) {
+          document.body.addEventListener("scroll", requestTick, { passive: true });
+        }
 
         if (window.visualViewport) {
-          window.visualViewport.addEventListener("resize", () => {
-            pinToVisualBottom();
-          }, { passive: true });
-          window.visualViewport.addEventListener("scroll", () => {
-            pinToVisualBottom();
-          }, { passive: true });
+          window.visualViewport.addEventListener("scroll", requestTick, { passive: true });
+          window.visualViewport.addEventListener("resize", requestTick, { passive: true });
         }
 
-        // Touch: finger drag down → reveal (scroll-up gesture)
-        let touchStartY = null;
-        let touchStartScroll = 0;
         window.addEventListener(
           "touchstart",
           (e) => {
             if (!e.touches || !e.touches[0]) return;
-            touchStartY = e.touches[0].clientY;
-            touchStartScroll = readScrollY();
+            touchLastY = e.touches[0].clientY;
+            touchAcc = 0;
+            const el = contentEl();
+            lastContentTop = el ? el.getBoundingClientRect().top : null;
           },
-          { passive: true }
+          { passive: true, capture: true }
         );
+
         window.addEventListener(
           "touchmove",
           (e) => {
-            if (touchStartY == null || !e.touches || !e.touches[0]) return;
-            if (!mq.matches) return;
-            const y = e.touches[0].clientY;
-            const fingerDy = y - touchStartY;
-            const scrollNow = readScrollY();
-            // Scrolling content up (reading further) → hide
-            if (scrollNow - touchStartScroll > DELTA || fingerDy < -DELTA) {
-              if (!(editors.size || document.querySelector(".note.editing"))) {
-                if (scrollNow > TOP_SHOW) setHidden(true);
+            if (!mobile() || !e.touches || !e.touches[0]) return;
+            if (editing()) {
+              show();
+              touchLastY = e.touches[0].clientY;
+              return;
+            }
+
+            // 1) Finger direction (immediate, works even if scroll metrics lag)
+            if (touchLastY != null) {
+              const fingerDy = e.touches[0].clientY - touchLastY;
+              touchLastY = e.touches[0].clientY;
+              // finger up (negative) = reading further
+              if (fingerDy < -0.5) {
+                if (touchAcc > 0) touchAcc = 0;
+                touchAcc += fingerDy;
+                if (!nearPageTop() && touchAcc <= -HIDE_AFTER) hide();
+              } else if (fingerDy > 0.5) {
+                if (touchAcc < 0) touchAcc = 0;
+                touchAcc += fingerDy;
+                if (touchAcc >= SHOW_AFTER) show();
               }
             }
-            // Scrolling back / finger pull down → show
-            if (scrollNow - touchStartScroll < -DELTA || fingerDy > DELTA) {
-              show();
-            }
+
+            // 2) Actual content motion
+            applyDelta(contentDelta());
+            pinToVisualBottom();
           },
-          { passive: true }
+          { passive: true, capture: true }
         );
+
         window.addEventListener(
           "touchend",
           () => {
-            touchStartY = null;
+            touchLastY = null;
+            touchAcc = 0;
+          },
+          { passive: true, capture: true }
+        );
+        window.addEventListener(
+          "touchcancel",
+          () => {
+            touchLastY = null;
+            touchAcc = 0;
+          },
+          { passive: true, capture: true }
+        );
+
+        window.addEventListener(
+          "wheel",
+          (e) => {
+            if (!mobile()) return;
+            applyDelta(e.deltaY);
           },
           { passive: true }
         );
 
         mq.addEventListener?.("change", () => {
-          if (!mq.matches) {
+          if (!mobile()) {
             show();
             dock.style.bottom = "";
           } else {
+            const el = contentEl();
+            lastContentTop = el ? el.getBoundingClientRect().top : null;
             pinToVisualBottom();
           }
         });
 
+        const el0 = contentEl();
+        lastContentTop = el0 ? el0.getBoundingClientRect().top : null;
         pinToVisualBottom();
       }
     
