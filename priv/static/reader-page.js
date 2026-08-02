@@ -1032,8 +1032,9 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         let touchLastY = null;
         let touchAcc = 0;
         let lastContentTop = null;
-        const HIDE_AFTER = 12;
+        const HIDE_AFTER = 16;
         const SHOW_AFTER = 10;
+        const TOP_Y = 48; // scrollY lock — always show at/near top
         const GAP = 10;
 
         function mobile() {
@@ -1049,6 +1050,34 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           );
         }
 
+        function readScrollY() {
+          const vv = window.visualViewport;
+          if (vv && typeof vv.pageTop === "number") {
+            return Math.max(0, vv.pageTop);
+          }
+          return Math.max(
+            0,
+            window.scrollY ||
+              window.pageYOffset ||
+              document.documentElement.scrollTop ||
+              document.body.scrollTop ||
+              0
+          );
+        }
+
+        /** True when the user is at (or rubber-banding at) the top of the chapter. */
+        function atTop() {
+          if (readScrollY() <= TOP_Y) return true;
+          // Header sits above #reader-verses — don't require verses box to clear 80px
+          const head = document.querySelector(".reader-head");
+          if (head) {
+            const hb = head.getBoundingClientRect().bottom;
+            // Title still fully on-screen → treat as top
+            if (hb > 8) return true;
+          }
+          return false;
+        }
+
         /** How far the chapter content has moved (positive = scrolled down / reading further). */
         function contentDelta() {
           const el = contentEl();
@@ -1061,13 +1090,6 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           const dy = lastContentTop - top; // content moved up by dy → page scrolled down
           lastContentTop = top;
           return dy;
-        }
-
-        function nearPageTop() {
-          const el = contentEl();
-          if (!el) return true;
-          // Title / first verses near top of viewport
-          return el.getBoundingClientRect().top > 80;
         }
 
         function editing() {
@@ -1098,6 +1120,8 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
 
         function setHidden(next) {
           if (!mobile()) next = false;
+          // Hard lock: never hide at top (even if a bounce delta says hide)
+          if (next && atTop()) next = false;
           if (hidden === next) {
             if (!next) pinToVisualBottom();
             return;
@@ -1113,7 +1137,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           setHidden(false);
         }
         function hide() {
-          if (!mobile() || editing()) return;
+          if (!mobile() || editing() || atTop()) return;
           setHidden(true);
         }
 
@@ -1128,7 +1152,8 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
             dirAcc = 0;
             return;
           }
-          if (nearPageTop()) {
+          // Always visible at top — ignore hide-direction deltas here
+          if (atTop()) {
             show();
             dirAcc = 0;
             return;
@@ -1149,8 +1174,15 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
 
         function tick() {
           ticking = false;
+          // Re-assert top lock every frame (momentum / rubber-band)
+          if (atTop()) {
+            show();
+            dirAcc = 0;
+            touchAcc = 0;
+          } else {
+            applyDelta(contentDelta());
+          }
           pinToVisualBottom();
-          applyDelta(contentDelta());
         }
 
         function requestTick() {
@@ -1178,6 +1210,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
             touchAcc = 0;
             const el = contentEl();
             lastContentTop = el ? el.getBoundingClientRect().top : null;
+            if (atTop()) show();
           },
           { passive: true, capture: true }
         );
@@ -1192,7 +1225,19 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
               return;
             }
 
-            // 1) Finger direction (immediate, works even if scroll metrics lag)
+            // Top lock first — bounce / overscroll must not hide
+            if (atTop()) {
+              show();
+              touchAcc = 0;
+              dirAcc = 0;
+              if (touchLastY != null) touchLastY = e.touches[0].clientY;
+              const el = contentEl();
+              lastContentTop = el ? el.getBoundingClientRect().top : lastContentTop;
+              pinToVisualBottom();
+              return;
+            }
+
+            // 1) Finger direction
             if (touchLastY != null) {
               const fingerDy = e.touches[0].clientY - touchLastY;
               touchLastY = e.touches[0].clientY;
@@ -1200,7 +1245,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
               if (fingerDy < -0.5) {
                 if (touchAcc > 0) touchAcc = 0;
                 touchAcc += fingerDy;
-                if (!nearPageTop() && touchAcc <= -HIDE_AFTER) hide();
+                if (touchAcc <= -HIDE_AFTER) hide();
               } else if (fingerDy > 0.5) {
                 if (touchAcc < 0) touchAcc = 0;
                 touchAcc += fingerDy;
@@ -1215,27 +1260,25 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           { passive: true, capture: true }
         );
 
-        window.addEventListener(
-          "touchend",
-          () => {
-            touchLastY = null;
-            touchAcc = 0;
-          },
-          { passive: true, capture: true }
-        );
-        window.addEventListener(
-          "touchcancel",
-          () => {
-            touchLastY = null;
-            touchAcc = 0;
-          },
-          { passive: true, capture: true }
-        );
+        function endTouch() {
+          touchLastY = null;
+          touchAcc = 0;
+          // Settling after a fling back to top
+          if (atTop()) show();
+          requestTick();
+        }
+
+        window.addEventListener("touchend", endTouch, { passive: true, capture: true });
+        window.addEventListener("touchcancel", endTouch, { passive: true, capture: true });
 
         window.addEventListener(
           "wheel",
           (e) => {
             if (!mobile()) return;
+            if (atTop() && e.deltaY < 0) {
+              show();
+              return;
+            }
             applyDelta(e.deltaY);
           },
           { passive: true }
@@ -1248,12 +1291,14 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           } else {
             const el = contentEl();
             lastContentTop = el ? el.getBoundingClientRect().top : null;
+            if (atTop()) show();
             pinToVisualBottom();
           }
         });
 
         const el0 = contentEl();
         lastContentTop = el0 ? el0.getBoundingClientRect().top : null;
+        if (atTop()) show();
         pinToVisualBottom();
       }
     
