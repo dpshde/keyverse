@@ -456,11 +456,13 @@ defmodule Keyverse.Html do
           }
       end
 
+    # Chevron is a SIBLING of .nt-main (not nested inside it) so CSS can
+    # share one gutter column: chevron center == vertical stem x.
     chev =
       if has_kids do
         ~s(<button type="button" class="nt-chev" aria-label="Collapse" aria-expanded="true"></button>)
       else
-        ""
+        ~s(<span class="nt-chev is-leaf" aria-hidden="true"></span>)
       end
 
     row_cls =
@@ -489,7 +491,6 @@ defmodule Keyverse.Html do
 
     main_inner = """
       <span class="nt-top">
-        #{chev}
         <span class="ref">#{esc(ref)}</span>
         #{meta}
       </span>
@@ -514,6 +515,7 @@ defmodule Keyverse.Html do
     """
     <div class="nt-node" data-id="#{esc(id)}" data-depth="#{depth}">
       <div class="#{row_cls}" style="--depth:#{depth}">
+        #{chev}
         #{main}
       </div>
       #{kids_html}
