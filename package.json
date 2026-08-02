@@ -2,7 +2,7 @@
   "name": "keyverse",
   "version": "0.1.0",
   "private": true,
-  "description": "keyverse: multipack scripture note door. Primary host is Elixir (mix); server.mjs is legacy reference only. Native shells via Tauri v2 (mobile/desktop).",
+  "description": "keyverse: multipack scripture note door. Primary host is Elixir (mix); web mirror in priv/static; mobile product client in mobile/ (Expo RN).",
   "type": "module",
   "scripts": {
     "start": "mix run --no-halt",
@@ -12,23 +12,15 @@
     "legacy:node": "node server.mjs",
     "extract:client": "node scripts/extract_client_js.mjs",
     "test:e2e:local-mount": "node scripts/e2e-local-mount.mjs",
-    "icons:tauri": "python3 scripts/gen-tauri-icons.py",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
-    "tauri:ios:init": "tauri ios init",
-    "tauri:android:init": "tauri android init",
-    "tauri:ios:dev": "tauri ios dev",
-    "tauri:android:dev": "tauri android dev",
-    "tauri:ios:build": "tauri ios build",
-    "tauri:android:build": "tauri android build"
+    "mobile": "npm --prefix mobile start",
+    "mobile:ios": "npm --prefix mobile run ios",
+    "mobile:android": "npm --prefix mobile run android"
   },
   "dependencies": {
     "grab-bcv": "^0.1.7",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
     "playwright": "^1.54.2"
   }
 }

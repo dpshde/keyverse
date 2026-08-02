@@ -6,23 +6,27 @@ A **cowyo-class** capture door over on-disk scripture note packs.
 
 **Host:** Elixir/OTP (Bandit + Plug). Packs remain plain JSON directories.
 
+**Clients:**
+- **Mobile (product)** — Expo React Native in [`mobile/`](./mobile/) (screens, VBV reader, outliner, attachments + links)
+- **Web (mirror)** — `priv/static` + door HTML for anywhere access
+
 ## What you get
 
 | Idea | How it shows up |
 |------|------------------|
 | **Address = passage** | `/note/jhn.3.16` — home search with **reference autocomplete** |
-| **Open → type → saved** | Outliner (same browser UX as before). Autosave. No account. |
+| **Open → type → saved** | Outliner. Autosave on web. Explicit save on mobile. No account. |
 | **Pack is the truth** | `packs/{key}/notes/<slug>.json` — readable with the server dead |
 | **You own the data** | Export/import `.zip` (notes + attachments); no account lock-in |
 | **Local folder (RO)** | `/local` — open a pack directory in Chromium (read-only) |
 | **Multipack** | Four-word key = your pack; another key is another library |
-| **Attachments** | Files + URL refs |
+| **Attachments** | Files + URL refs (web + mobile) |
 | **Access** | Multiword URL is the key — cowyo-style |
-| **Encryption** | Optional client-side passphrase (browser AES-GCM) |
-| **PWA** | Manifest + service worker |
-| **Native (Tauri v2)** | Same UI in iOS/Android/desktop shells — [MOBILE_NATIVE.md](./docs/MOBILE_NATIVE.md) |
+| **Encryption** | Optional client-side passphrase (web AES-GCM; mobile detects sealed) |
+| **PWA** | Web mirror: manifest + service worker |
+| **Mobile app** | Full protocol client — [mobile/README.md](./mobile/README.md) |
 
-## Quick start (Elixir)
+## Quick start (Elixir / web mirror)
 
 Requirements: **Elixir 1.15+** / OTP 26+ (Homebrew: `brew install elixir`).
 
@@ -32,10 +36,17 @@ mix test
 mix keyverse.conformance   # offline pack fixtures (protocol gate)
 mix run --no-halt
 # open http://localhost:4180/setup  → create your key
-# home page: Export pack (.zip) / Import pack
-# local RO:  http://localhost:4180/local  → Open local pack…
-npm run test:e2e:local-mount   # Playwright + Chromium (OPFS fixture)
 ```
+
+## Quick start (mobile product)
+
+```sh
+cd mobile
+npm install
+npm start
+# enter host + multiword door (same pack as web)
+```
+
 | Env | Default | Meaning |
 |-----|---------|---------|
 | `PORT` | `4180` | Listen port |
@@ -46,10 +57,6 @@ npm run test:e2e:local-mount   # Playwright + Chromium (OPFS fixture)
 | `MAX_ATTACH_BYTES` | `52428800` | Max file upload size |
 | `CORS_ORIGIN` | `*` (on) | API CORS; `off` disables |
 | `FATHOM_SITE` | `EMYGRIAR` | Fathom analytics; `off` disables |
-
-```sh
-HOST=127.0.0.1 PORT=8080 PACK_DIR=/data/keyverse/packs mix run --no-halt
-```
 
 ## Sign in = your key (four words)
 
@@ -91,16 +98,16 @@ See [docs/API.md](docs/API.md) and [PROTOCOL.md](PROTOCOL.md).
 | [docs/SELF_HOST.md](docs/SELF_HOST.md) | Install, env, backup |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | Deploy guidance |
 | [docs/SCALING.md](docs/SCALING.md) | Why BEAM for multipack host |
-| [docs/USAGE.md](docs/USAGE.md) | Day-to-day UI |
-| [docs/MOBILE_NATIVE.md](docs/MOBILE_NATIVE.md) | Tauri v2 iOS/Android shell |
-| [mobile/README.md](mobile/README.md) | Native dev commands |
+| [docs/USAGE.md](docs/USAGE.md) | Day-to-day web UI |
+| [mobile/README.md](mobile/README.md) | React Native product client |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |
 
 ## Project layout
 
 ```text
 lib/keyverse/          # Elixir multipack door (OTP)
-priv/static/           # CSS/JS/PWA (browser UX — preserved)
+priv/static/           # CSS/JS/PWA (web mirror)
+mobile/                # Expo RN product client (full protocol)
 packs/                 # multipack root (runtime data)
 server.mjs             # legacy Node reference (not the primary door)
 mix.exs
@@ -120,4 +127,4 @@ mix.exs
 
 ## License / status
 
-Protocol `0.1-demo`. Elixir multipack host.
+Protocol `0.1-demo` / pack `0.2`. Elixir multipack host + Expo mobile client.

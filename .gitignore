@@ -19,7 +19,7 @@ deps/
 .e2e-packs/
 artifacts/
 
-# Tauri native shell
-src-tauri/target/
-src-tauri/gen/
-
+# Mobile (Expo)
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
