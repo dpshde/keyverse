@@ -1048,13 +1048,17 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
 
         function outlineDockEl() {
           return document.querySelector(
-            ".outliner-shell.compact.is-dock-active > .otoolbar.outline-dock"
+            ".otoolbar.outline-dock.is-reader-dock.is-dock-active"
           );
+        }
+
+        function allOutlineDocks() {
+          return document.querySelectorAll(".otoolbar.outline-dock.is-reader-dock");
         }
 
         function clearPinnedBottoms() {
           dock.style.bottom = "";
-          document.querySelectorAll(".outliner-shell.compact > .otoolbar.outline-dock").forEach((el) => {
+          allOutlineDocks().forEach((el) => {
             el.style.bottom = "";
           });
         }
@@ -1071,20 +1075,23 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
             clearPinnedBottoms();
             return;
           }
+          // Keyboard / browser chrome inset. Ignore absurd gaps (iOS scroll
+          // glitches) so the dock never parks mid-page.
           const layoutBottomGap = Math.max(
             0,
             window.innerHeight - (vv.height + vv.offsetTop)
           );
-          const bottom =
-            layoutBottomGap < 2 ? "" : Math.round(layoutBottomGap + GAP) + "px";
+          const maxGap = Math.min(window.innerHeight * 0.55, 420);
+          const usePin = layoutBottomGap >= 2 && layoutBottomGap <= maxGap;
+          const bottom = usePin ? Math.round(layoutBottomGap + GAP) + "px" : "";
           if (outlineMode) {
             dock.style.bottom = "";
             const ot = outlineDockEl();
-            document.querySelectorAll(".outliner-shell.compact > .otoolbar.outline-dock").forEach((el) => {
+            allOutlineDocks().forEach((el) => {
               el.style.bottom = el === ot ? bottom : "";
             });
           } else {
-            document.querySelectorAll(".outliner-shell.compact > .otoolbar.outline-dock").forEach((el) => {
+            allOutlineDocks().forEach((el) => {
               el.style.bottom = "";
             });
             dock.style.bottom = bottom;

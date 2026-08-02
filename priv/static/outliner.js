@@ -158,7 +158,7 @@ function mountOutliner(host, opts) {
   shell.appendChild(host);
 
   const toolbar = document.createElement("div");
-  toolbar.className = "otoolbar outline-dock";
+  toolbar.className = "otoolbar outline-dock" + (compact ? " is-reader-dock" : "");
   toolbar.setAttribute("role", "toolbar");
   toolbar.setAttribute("aria-label", compact ? "Note outline tools" : "Outline tools");
   // Compact (reader tray): Nav swaps back to the chapter dock — never stack both bars.
@@ -178,7 +178,14 @@ function mountOutliner(host, opts) {
     '<button type="button" class="otool-btn" data-act="collapse" aria-label="Collapse or expand">' +
       '<span class="otool-ico" aria-hidden="true"><i class="ph ph-caret-circle-down"></i></span>' +
       '<span class="otool-lbl">Fold</span></button>';
-  shell.appendChild(toolbar);
+  // Compact reader dock MUST live on <body>. Nesting position:fixed under
+  // .verse.sel (isolation) / note chrome makes iOS park the bar mid-scroll.
+  if (compact) {
+    toolbar.setAttribute("data-kv-dock", "outline");
+    document.body.appendChild(toolbar);
+  } else {
+    shell.appendChild(toolbar);
+  }
 
   /** Exclusive bottom dock: outline vs reader — only one visible. */
   function claimOutlineDock() {
@@ -186,7 +193,11 @@ function mountOutliner(host, opts) {
     document.querySelectorAll(".outliner-shell.compact.is-dock-active").forEach((el) => {
       if (el !== shell) el.classList.remove("is-dock-active");
     });
+    document.querySelectorAll(".otoolbar.outline-dock.is-reader-dock.is-dock-active").forEach((el) => {
+      if (el !== toolbar) el.classList.remove("is-dock-active");
+    });
     shell.classList.add("is-dock-active");
+    toolbar.classList.add("is-dock-active");
     document.body.dataset.dock = "outline";
     try {
       document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "outline" } }));
@@ -195,6 +206,7 @@ function mountOutliner(host, opts) {
   function releaseOutlineDock() {
     if (!compact) return;
     shell.classList.remove("is-dock-active");
+    toolbar.classList.remove("is-dock-active");
     if (!document.querySelector(".outliner-shell.compact.is-dock-active")) {
       document.body.dataset.dock = "reader";
       try {
@@ -1483,6 +1495,7 @@ function mountOutliner(host, opts) {
       clearTimeout(histTimer);
       if (blurTimer) clearTimeout(blurTimer);
       releaseOutlineDock();
+      if (toolbar && toolbar.parentNode) toolbar.remove();
       host.innerHTML = "";
       host.classList.remove("outliner", "compact", "page", "selecting");
       if (shell.parentNode) {
