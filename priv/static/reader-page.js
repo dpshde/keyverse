@@ -863,7 +863,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       function updateNavButtons(meta) {
         const dock = document.getElementById("reader-dock") || document.querySelector(".reader-dock");
         if (!dock) return;
-        function navItem(id, slug, ico, label, aria) {
+        function navItem(id, slug, icoClass, label, aria) {
           if (slug) {
             return (
               '<button type="button" class="reader-dock-item reader-nav" id="' +
@@ -872,17 +872,17 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
               String(slug).replace(/"/g, "") +
               '" aria-label="' +
               aria +
-              '"><span class="reader-dock-ico" aria-hidden="true">' +
-              ico +
-              '</span><span class="reader-dock-lbl">' +
+              '"><span class="reader-dock-ico" aria-hidden="true"><i class="ph ' +
+              icoClass +
+              '"></i></span><span class="reader-dock-lbl">' +
               label +
               "</span></button>"
             );
           }
           return (
-            '<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico">' +
-            ico +
-            '</span><span class="reader-dock-lbl">' +
+            '<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ' +
+            icoClass +
+            '"></i></span><span class="reader-dock-lbl">' +
             label +
             "</span></span>"
           );
@@ -891,23 +891,23 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         let expandHtml =
           '<button type="button" class="reader-dock-item" id="expand-notes" aria-pressed="false" ' +
           'aria-label="Expand all verse notes" data-label-expand="Notes" data-label-collapse="Fold">' +
-          '<span class="reader-dock-ico" aria-hidden="true">≡</span>' +
+          '<span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-list-dashes"></i></span>' +
           '<span class="reader-dock-lbl" data-expand-lbl>Notes</span></button>';
         if (expand) {
           expandHtml = expand.outerHTML;
         }
         const noteSlug = meta.chapter_note_slug || meta.slug;
         dock.innerHTML =
-          navItem("reader-prev", meta.prev_slug, "‹", "Prev", "Previous chapter") +
+          navItem("reader-prev", meta.prev_slug, "ph-caret-left", "Prev", "Previous chapter") +
           expandHtml +
           '<a class="reader-dock-item" id="chapter-note-link" href="' +
           apiBase() +
           "/note/" +
           noteSlug +
           '" aria-label="Chapter note">' +
-          '<span class="reader-dock-ico" aria-hidden="true">✎</span>' +
+          '<span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-book-open-text"></i></span>' +
           '<span class="reader-dock-lbl">Chapter</span></a>' +
-          navItem("reader-next", meta.next_slug, "›", "Next", "Next chapter");
+          navItem("reader-next", meta.next_slug, "ph-caret-right", "Next", "Next chapter");
         document.getElementById("expand-notes")?.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();

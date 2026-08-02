@@ -158,14 +158,19 @@ function mountOutliner(host, opts) {
   shell.appendChild(host);
 
   const toolbar = document.createElement("div");
-  toolbar.className = "otoolbar";
+  toolbar.className = "otoolbar outline-dock";
+  toolbar.setAttribute("role", "toolbar");
+  toolbar.setAttribute("aria-label", "Outline tools");
   toolbar.innerHTML =
     '<button type="button" class="otool-btn" data-act="outdent" aria-label="Unnest">' +
-      '<span class="otool-ico" aria-hidden="true">⇤</span>unnest</button>' +
+      '<span class="otool-ico" aria-hidden="true"><i class="ph ph-text-outdent"></i></span>' +
+      '<span class="otool-lbl">Unnest</span></button>' +
     '<button type="button" class="otool-btn" data-act="indent" aria-label="Nest">' +
-      '<span class="otool-ico" aria-hidden="true">⇥</span>nest</button>' +
+      '<span class="otool-ico" aria-hidden="true"><i class="ph ph-text-indent"></i></span>' +
+      '<span class="otool-lbl">Nest</span></button>' +
     '<button type="button" class="otool-btn" data-act="collapse" aria-label="Collapse or expand">' +
-      '<span class="otool-ico" aria-hidden="true">▾</span>fold</button>';
+      '<span class="otool-ico" aria-hidden="true"><i class="ph ph-caret-circle-down"></i></span>' +
+      '<span class="otool-lbl">Fold</span></button>';
   shell.appendChild(toolbar);
 
   const dropLine = document.createElement("div");

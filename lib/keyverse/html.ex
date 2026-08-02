@@ -20,6 +20,7 @@ defmodule Keyverse.Html do
     #{pwa_head}
     <link rel="manifest" href="#{esc(man_path)}">
     <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css" crossorigin="anonymous">
     <script>window.BASE=#{Jason.encode!(base)};var BASE=window.BASE;</script>
     <script src="/crypto.js"></script>
     <script>if(window.VP_CRYPTO)VP_CRYPTO.ingestHash();</script>
@@ -901,16 +902,16 @@ defmodule Keyverse.Html do
 
         prev_btn =
           if meta.prev_slug do
-            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter"><span class="reader-dock-ico" aria-hidden="true">‹</span><span class="reader-dock-lbl">Prev</span></button>)
+            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter"><span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-caret-left"></i></span><span class="reader-dock-lbl">Prev</span></button>)
           else
-            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico">‹</span><span class="reader-dock-lbl">Prev</span></span>)
+            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ph-caret-left"></i></span><span class="reader-dock-lbl">Prev</span></span>)
           end
 
         next_btn =
           if meta.next_slug do
-            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter"><span class="reader-dock-ico" aria-hidden="true">›</span><span class="reader-dock-lbl">Next</span></button>)
+            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter"><span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-caret-right"></i></span><span class="reader-dock-lbl">Next</span></button>)
           else
-            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico">›</span><span class="reader-dock-lbl">Next</span></span>)
+            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ph-caret-right"></i></span><span class="reader-dock-lbl">Next</span></span>)
           end
 
         body = """
@@ -923,13 +924,13 @@ defmodule Keyverse.Html do
           <button type="button" class="reader-dock-item" id="expand-notes"
             aria-pressed="false" aria-label="Expand all verse notes"
             data-label-expand="Notes" data-label-collapse="Fold">
-            <span class="reader-dock-ico" aria-hidden="true">≡</span>
+            <span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-list-dashes"></i></span>
             <span class="reader-dock-lbl" data-expand-lbl>Notes</span>
           </button>
           <a class="reader-dock-item" id="chapter-note-link"
             href="#{esc(base)}/note/#{esc(meta.chapter_note_slug || scope.slug)}"
             aria-label="Chapter note">
-            <span class="reader-dock-ico" aria-hidden="true">✎</span>
+            <span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-book-open-text"></i></span>
             <span class="reader-dock-lbl">Chapter</span>
           </a>
           #{next_btn}
