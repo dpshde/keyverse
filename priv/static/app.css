@@ -1508,15 +1508,25 @@
   .oline:not(.collapsed).has-kids .ochev::before { content: "\25BE"; }
   .oline .odot {
     box-sizing: border-box;
-    width: var(--note-gutter); height: var(--row-h);
-    display: flex; align-items: center; justify-content: center;
+    width: var(--note-gutter);
+    /* One text line box — center the dot on the first line, not the whole row */
+    height: calc(1em * 1.45);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
+    align-self: start;
   }
   .oline .odot::before {
     content: "";
-    width: var(--bullet); height: var(--bullet);
+    width: var(--bullet);
+    height: var(--bullet);
     border-radius: 999px;
     background: color-mix(in srgb, currentColor 28%, transparent);
+    /* Optical nudge: round dots read slightly low next to Latin caps */
+    transform: translateY(-0.06em);
   }
   .oline.collapsed.has-kids .odot::before {
     box-shadow: 0 0 0 1.5px color-mix(in srgb, currentColor 32%, transparent);
@@ -1525,7 +1535,9 @@
   .oline .otxt {
     display: block;
     min-height: var(--row-h);
-    padding: 0.15em 0;
+    padding: 0;
+    margin: 0;
+    line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
   }
