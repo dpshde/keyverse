@@ -956,6 +956,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           const title = document.getElementById("reader-title");
           if (title) title.textContent = META.display;
           document.title = META.display;
+          document.getElementById("reader-dock")?.classList.remove("is-hidden");
 
           const noteEl = document.getElementById("chapter-note");
           const versesEl = document.getElementById("reader-verses");
@@ -999,6 +1000,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       wireNavButtons();
       prefetchNeighbors(META);
       if (META.book && META.chapter) prefetchText(META.book, META.chapter);
+      wireReaderDockAutoHide();
 
       window.addEventListener("popstate", () => {
         const m = location.pathname.match(/\/read\/([a-z0-9.\-]+)/i);
@@ -1017,4 +1019,91 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           navigateChapter(META.next_slug, { push: true });
         }
       });
+
+      function wireReaderDockAutoHide() {
+        const dock = document.getElementById("reader-dock");
+        if (!dock) return;
+        // Desktop row stays visible; only fixed mobile glass bar auto-hides.
+        const mq = window.matchMedia("(max-width: 640px)");
+        let lastY = window.scrollY || 0;
+        let hidden = false;
+        let ticking = false;
+        const DELTA = 8;
+        const TOP_SHOW = 24;
+
+        function setHidden(next) {
+          if (hidden === next) return;
+          hidden = next;
+          dock.classList.toggle("is-hidden", hidden);
+          dock.setAttribute("aria-hidden", hidden ? "true" : "false");
+        }
+
+        function show() {
+          setHidden(false);
+        }
+
+        function onScroll() {
+          if (!mq.matches) {
+            show();
+            lastY = window.scrollY || 0;
+            return;
+          }
+          // Keep bar while editing a note tray (outline dock stacked above).
+          if (editors.size || document.querySelector(".note.editing")) {
+            show();
+            lastY = window.scrollY || 0;
+            return;
+          }
+          const y = window.scrollY || 0;
+          const dy = y - lastY;
+          if (y <= TOP_SHOW) {
+            show();
+          } else if (dy > DELTA) {
+            setHidden(true);
+          } else if (dy < -DELTA) {
+            show();
+          }
+          lastY = y;
+        }
+
+        window.addEventListener(
+          "scroll",
+          () => {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(() => {
+              ticking = false;
+              onScroll();
+            });
+          },
+          { passive: true }
+        );
+
+        // Touch edge: slight upward drag near bottom can reveal even if dy is small
+        let touchStartY = null;
+        window.addEventListener(
+          "touchstart",
+          (e) => {
+            if (!e.touches || !e.touches[0]) return;
+            touchStartY = e.touches[0].clientY;
+          },
+          { passive: true }
+        );
+        window.addEventListener(
+          "touchend",
+          (e) => {
+            if (touchStartY == null || !e.changedTouches || !e.changedTouches[0]) return;
+            const dy = e.changedTouches[0].clientY - touchStartY;
+            touchStartY = null;
+            if (!mq.matches) return;
+            // finger drag down (content often moves up) → show
+            if (dy > 28) show();
+          },
+          { passive: true }
+        );
+
+        mq.addEventListener?.("change", () => {
+          if (!mq.matches) show();
+        });
+      }
     
