@@ -18,15 +18,27 @@
 
 Rebuild KJV: `python3 scripts/build-kjv-pack.py /path/to/kjv.txt priv/kjv`
 
-## Cloud toggle
+## Pack import / export (RN)
 
-1. Settings → Enable cloud sync  
-2. Host claims a **four-word door**  
-3. All local notes + file bytes push; remote notes pull  
-4. Further saves: write local first, then `mirrorNoteIfCloud`  
-5. Share door URL / QR when cloud is on  
+Same **user-data zip** as the web door (`PackTransfer`):
 
-Local is never deleted when cloud turns off.
+```
+protocol.json
+door                 # optional
+notes/<slug>.json
+attachments/<sha256>
+```
+
+| Action | Where |
+|--------|--------|
+| Export local → zip share sheet | Settings / Pack |
+| Import zip merge | Settings / Pack |
+| Import zip replace | Settings / Pack |
+| Pull cloud `GET /api/pack/export` → local | Settings (cloud on) |
+| Push local zip → `POST /api/pack/import` | Settings (cloud on) |
+
+Implementation: `src/lib/packTransfer.ts` (fflate). Scripture bundles are never included.
+
 
 ## Screens
 

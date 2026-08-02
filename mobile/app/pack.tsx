@@ -1,6 +1,5 @@
-import { Redirect } from "expo-router";
-
-/** Pack screen folded into Settings (local-first + cloud). */
-export default function PackRedirect() {
-  return <Redirect href="/settings" />;
-}
+/**
+ * Pack ownership screen — import/export + cloud zip bridges.
+ * Same surface as Settings pack section; deep-link friendly.
+ */
+export { default } from "./settings";
