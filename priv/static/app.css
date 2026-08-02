@@ -836,6 +836,53 @@
   .note-meta { margin: .2rem 0 0; font-size: .8rem;
     color: color-mix(in srgb, currentColor 45%, transparent); }
   .note-edit { margin: .05rem 0 0; }
+
+  /* Scripture above note outline (verse / range editor) */
+  .passage-strip {
+    margin: 0 0 1rem;
+    padding: 0 0 .85rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .passage-strip-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: .75rem;
+    margin: 0 0 .45rem;
+  }
+  .passage-strip-ref {
+    font-size: .92rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+  .passage-strip-tr {
+    font-size: .72rem;
+    font-weight: 550;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .passage-strip-body {
+    font-size: 1.02rem;
+    line-height: 1.55;
+  }
+  .passage-v {
+    margin: 0 0 .35rem;
+    text-wrap: pretty;
+  }
+  .passage-v:last-child { margin-bottom: 0; }
+  .passage-vn {
+    font-size: .72em;
+    font-weight: 650;
+    margin-right: .28em;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    vertical-align: super;
+    line-height: 0;
+  }
+  @media (max-width: 640px) {
+    .passage-strip { margin-bottom: .85rem; padding-bottom: .75rem; }
+    .passage-strip-body { font-size: 1.05rem; line-height: 1.5; }
+  }
+
   /* range editor sits inside the selection surface — tighten chrome */
   .note[data-kind="range"] .note-edit .outliner-shell.compact .otoolbar {
     margin-top: .4rem;

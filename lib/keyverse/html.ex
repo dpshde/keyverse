@@ -531,6 +531,7 @@ defmodule Keyverse.Html do
     atts = if locked?, do: [], else: (note && note["attachments"]) || []
     cipher_json = if locked?, do: Jason.encode!(note["cipher"]), else: "null"
     rel = related_html(pack_dir, scope, base)
+    passage = passage_strip_html(scope)
 
     body = """
     <header class="ui">
@@ -541,6 +542,7 @@ defmodule Keyverse.Html do
     </header>
     #{crypto_bar(locked?)}
     <div id="note-main" #{if locked?, do: "hidden", else: ""}>
+    #{passage}
     <div id="editor"></div>
     <div id="att-root"></div>
     </div>
@@ -557,6 +559,7 @@ defmodule Keyverse.Html do
     <script type="application/json" id="page-meta">#{Jason.encode!(%{
       slug: scope.slug,
       display: display,
+      kind: scope.kind,
       max_attach_bytes: Config.max_attach_bytes(),
       max_attach_per_note: Config.max_attach_per_note()
     })}</script>
@@ -568,6 +571,69 @@ defmodule Keyverse.Html do
     """
 
     page(display, body, base: base)
+  end
+
+  @doc false
+  def passage_strip_html(%Scope{kind: kind, parsed: p} = scope)
+      when kind in ["verse", "range"] and is_map(p) do
+    book = p.book
+    chapter = p.chapter
+    v0 = p.verse
+    v1 = p.verse_end || v0
+
+    if is_binary(book) and is_integer(chapter) and is_integer(v0) do
+      case Keyverse.TextCache.get_chapter(book, chapter) do
+        {:ok, doc} ->
+          rows =
+            (doc["verses"] || [])
+            |> Enum.filter(fn row ->
+              v = row_verse_num(row)
+              is_integer(v) and v >= v0 and v <= v1
+            end)
+
+          if rows == [] do
+            ""
+          else
+            body =
+              Enum.map_join(rows, "\n", fn row ->
+                v = row_verse_num(row)
+                t = to_string(row["text"] || row["t"] || "")
+
+                ~s(<p class="passage-v" data-v="#{v}"><sup class="passage-vn">#{v}</sup>) <>
+                  esc(t) <> "</p>"
+              end)
+
+            """
+            <section class="passage-strip" aria-label="#{esc(Scope.display(scope))} (BSB)">
+              <div class="passage-strip-head">
+                <span class="passage-strip-ref">#{esc(Scope.display(scope))}</span>
+                <span class="passage-strip-tr muted">BSB</span>
+              </div>
+              <div class="passage-strip-body">#{body}</div>
+            </section>
+            """
+          end
+
+        _ ->
+          ""
+      end
+    else
+      ""
+    end
+  end
+
+  def passage_strip_html(_), do: ""
+
+  defp row_verse_num(row) when is_map(row) do
+    case row["v"] || row["verse"] do
+      n when is_integer(n) -> n
+      n when is_binary(n) ->
+        case Integer.parse(n) do
+          {i, _} -> i
+          :error -> nil
+        end
+      _ -> nil
+    end
   end
 
   defp related_html(pack_dir, scope, base) do
