@@ -460,7 +460,7 @@ defmodule Keyverse.Html do
       if has_kids do
         ~s(<button type="button" class="nt-chev" aria-label="Collapse" aria-expanded="true"></button>)
       else
-        ~s(<span class="nt-chev is-leaf" aria-hidden="true"></span>)
+        ""
       end
 
     row_cls =
@@ -473,16 +473,23 @@ defmodule Keyverse.Html do
       |> Enum.reject(&is_nil/1)
       |> Enum.join(" ")
 
-    meta = """
-    <span class="nt-meta">
-      <a class="nt-act nt-open" href="#{esc(note_href)}" title="Open note" aria-label="Open note">#{@nt_icon_edit}</a>
-      <a class="nt-act nt-read" href="#{esc(read_href)}" title="Read" aria-label="Read">#{@nt_icon_read}</a>
-      #{if time_iso && time_iso != "", do: ~s(<span class="muted nt-time">#{esc(Tree.rel_time(time_iso))}</span>), else: ""}
-    </span>
-    """
+    # Folders: hide per-note edit/read chrome — whole card toggles / leads with chevron+title
+    meta =
+      if has_kids do
+        ""
+      else
+        """
+        <span class="nt-meta">
+          <a class="nt-act nt-open" href="#{esc(note_href)}" title="Open note" aria-label="Open note">#{@nt_icon_edit}</a>
+          <a class="nt-act nt-read" href="#{esc(read_href)}" title="Read" aria-label="Read">#{@nt_icon_read}</a>
+          #{if time_iso && time_iso != "", do: ~s(<span class="muted nt-time">#{esc(Tree.rel_time(time_iso))}</span>), else: ""}
+        </span>
+        """
+      end
 
     main_inner = """
       <span class="nt-top">
+        #{chev}
         <span class="ref">#{esc(ref)}</span>
         #{meta}
       </span>
@@ -507,7 +514,6 @@ defmodule Keyverse.Html do
     """
     <div class="nt-node" data-id="#{esc(id)}" data-depth="#{depth}">
       <div class="#{row_cls}" style="--depth:#{depth}">
-        #{chev}
         #{main}
       </div>
       #{kids_html}

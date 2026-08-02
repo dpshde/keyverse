@@ -754,33 +754,80 @@
   /* Home list: flat by default; indent via --depth for chapter → verse folders */
   .note-tree { margin-top: .15rem; }
   .note-row {
-    display: flex; align-items: flex-start; gap: .15rem;
-    padding: .55rem 0; padding-left: calc(var(--depth, 0) * 1.15rem);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: .55rem 0;
+    padding-left: calc(var(--depth, 0) * 1.15rem);
     color: inherit;
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   }
-  .note-row:hover { background: color-mix(in srgb, currentColor 4%, transparent);
-    margin: 0 -.35rem; padding-left: calc(var(--depth, 0) * 1.15rem + .35rem);
-    padding-right: .35rem; border-radius: .25rem; }
+  .note-row:hover {
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    margin: 0 -.35rem;
+    padding-left: calc(var(--depth, 0) * 1.15rem + .35rem);
+    padding-right: .35rem;
+    border-radius: .35rem;
+  }
+  /* Folder / chapter = one tappable card */
+  .note-row.has-kids,
+  .note-row.is-folder,
+  .note-row.is-chapter.has-kids {
+    border-bottom-color: transparent;
+    margin: .35rem 0 .15rem;
+    padding: .65rem .7rem;
+    padding-left: calc(var(--depth, 0) * 1.15rem + .7rem);
+    border-radius: .75rem;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    border: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .note-row.has-kids:hover,
+  .note-row.is-folder:hover,
+  .note-row.is-chapter.has-kids:hover {
+    margin: .35rem -.1rem .15rem;
+    padding-left: calc(var(--depth, 0) * 1.15rem + .8rem);
+    padding-right: .8rem;
+    background: color-mix(in srgb, currentColor 7.5%, transparent);
+    border-color: color-mix(in srgb, currentColor 12%, transparent);
+  }
   .note-row .nt-main {
-    flex: 1 1 auto; min-width: 0; color: inherit;
-    display: block; text-align: left;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: inherit;
+    display: block;
+    text-align: left;
   }
   .note-row .nt-main.nt-fold,
   .note-row .nt-main.nt-open-read { cursor: pointer; }
   .note-row .nt-top {
-    display: flex; align-items: center; gap: .35rem; min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    min-width: 0;
+  }
+  .note-row.has-kids .nt-top {
+    gap: .45rem;
   }
   .note-row .nt-top .ref {
-    flex: 1 1 auto; min-width: 0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .note-row .nt-meta {
-    flex: 0 0 auto; display: inline-flex; align-items: center; gap: .12rem;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: .12rem;
     margin-left: auto;
   }
   .note-row .nt-time { font-size: .8rem; margin-left: .2rem; white-space: nowrap; }
-  .note-row .nt-ex { margin-top: .1rem; }
+  .note-row .nt-ex { margin-top: .15rem; }
+  .note-row.has-kids .nt-ex {
+    margin-top: .2rem;
+    margin-left: calc(1.35rem + .45rem); /* align under title, past chevron */
+  }
   .note-row.is-folder .ref,
   .note-row.is-chapter .ref { font-weight: 600; }
   .note-row.is-folder .nt-ex,
@@ -792,20 +839,52 @@
   }
   .nt-act:hover { opacity: .9; background: color-mix(in srgb, currentColor 8%, transparent); }
   .nt-act svg { display: block; }
+  /* Chevron lives in the title row — part of the folder card, not a stray rail */
   .nt-chev {
-    flex: 0 0 auto; width: 1.35rem; height: 1.35rem; margin-top: .05rem;
-    padding: 0; border: 0; background: transparent; color: inherit;
-    cursor: pointer; border-radius: .25rem;
-    display: inline-flex; align-items: center; justify-content: center;
-    opacity: .45; font-size: .7rem; line-height: 1;
-    transition: transform .12s ease, opacity .12s ease;
+    flex: 0 0 auto;
+    width: 1.35rem;
+    height: 1.35rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    border-radius: .35rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: .55;
+    font-size: .72rem;
+    line-height: 1;
+    transition: transform .14s ease, opacity .12s ease, background .12s ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
-  .nt-chev:not(.is-leaf)::before { content: "\25BE"; } /* ▾ */
-  .nt-chev.is-leaf { visibility: hidden; cursor: default; pointer-events: none; }
-  .nt-chev:not(.is-leaf):hover { opacity: .85; background: color-mix(in srgb, currentColor 6%, transparent); }
-  .nt-node.is-collapsed > .note-row .nt-chev { transform: rotate(-90deg); }
+  .nt-chev::before {
+    content: "\25BE"; /* ▾ */
+    display: block;
+    font-size: .85em;
+    line-height: 1;
+  }
+  .nt-chev:hover {
+    opacity: .95;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .nt-chev:focus-visible {
+    outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+    outline-offset: 1px;
+  }
+  .nt-node.is-collapsed > .note-row .nt-chev {
+    transform: rotate(-90deg);
+  }
   .nt-node.is-collapsed > .nt-kids { display: none; }
+  .nt-kids {
+    margin: 0 0 .15rem;
+    padding-left: .15rem;
+  }
   .ref { font-weight: 600; margin-right: .4rem; }
+  .note-row .nt-top .ref { margin-right: 0; }
   kbd {
     font-family: inherit; font-size: .8em; padding: .05rem .3rem;
     border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: .25rem;
@@ -1701,12 +1780,41 @@
       padding-bottom: .75rem;
       gap: .25rem;
     }
+    .note-row.has-kids,
+    .note-row.is-folder,
+    .note-row.is-chapter.has-kids {
+      padding: .7rem .75rem;
+      padding-left: calc(var(--depth, 0) * 1.15rem + .75rem);
+      margin: .4rem 0 .2rem;
+      border-radius: .85rem;
+    }
     .note-row .nt-main {
       min-height: var(--tap);
       display: flex;
       flex-direction: column;
       justify-content: center;
-      padding: .15rem 0;
+      padding: .1rem 0;
+    }
+    /* Folder chevron — sized with the title, not a stray rail control */
+    .nt-chev {
+      width: var(--tap) !important;
+      height: var(--tap) !important;
+      min-width: var(--tap);
+      min-height: var(--tap);
+      margin: -.35rem 0 -.35rem -.35rem;
+      font-size: .95rem;
+      opacity: .75;
+      border-radius: .55rem;
+    }
+    .note-row.has-kids .nt-ex {
+      margin-left: calc(var(--tap) - .35rem + .45rem);
+    }
+    .note-row.has-kids .nt-top {
+      min-height: var(--tap);
+      gap: .35rem;
+    }
+    .note-row.has-kids .ref {
+      font-size: 1.06rem;
     }
 
     /* Outline fold chevrons + bullets */
