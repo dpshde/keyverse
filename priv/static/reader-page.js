@@ -12,6 +12,14 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       let suppressDismissUntil = 0;
       let chapterNavBusy = false;
       const textPrefetch = new Map(); // slug -> promise
+      // Exclusive bottom dock: "reader" (chapter tools) | "outline" (nest/unnest)
+      if (!document.body.dataset.dock) document.body.dataset.dock = "reader";
+      document.addEventListener("kv:dock-mode", (e) => {
+        const mode = e && e.detail && e.detail.mode;
+        if (mode === "outline" || mode === "reader") {
+          document.body.dataset.dock = mode;
+        }
+      });
       document.querySelector(".verse.hl")?.scrollIntoView({ block: "center" });
 
       function verseNum(el) {
@@ -253,6 +261,12 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         syncAllHasNotes();
         if (!editors.size && kind === "range") clearSelection();
+        if (!editors.size) {
+          document.body.dataset.dock = "reader";
+          try {
+            document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "reader" } }));
+          } catch (e) { /* ignore */ }
+        }
         syncExpandNotesBtn();
       }
 
@@ -1096,25 +1110,48 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           return !!(editors.size || document.querySelector(".note.editing"));
         }
 
+        function outlineDockEl() {
+          return document.querySelector(
+            ".outliner-shell.compact.is-dock-active > .otoolbar.outline-dock"
+          );
+        }
+
+        function clearPinnedBottoms() {
+          dock.style.bottom = "";
+          document.querySelectorAll(".outliner-shell.compact > .otoolbar.outline-dock").forEach((el) => {
+            el.style.bottom = "";
+          });
+        }
+
         function pinToVisualBottom() {
           if (!mobile()) {
-            dock.style.bottom = "";
+            clearPinnedBottoms();
             return;
           }
-          if (hidden) return;
+          const outlineMode = document.body.dataset.dock === "outline";
+          if (!outlineMode && hidden) return;
           const vv = window.visualViewport;
           if (!vv) {
-            dock.style.bottom = "";
+            clearPinnedBottoms();
             return;
           }
           const layoutBottomGap = Math.max(
             0,
             window.innerHeight - (vv.height + vv.offsetTop)
           );
-          if (layoutBottomGap < 2) {
+          const bottom =
+            layoutBottomGap < 2 ? "" : Math.round(layoutBottomGap + GAP) + "px";
+          if (outlineMode) {
             dock.style.bottom = "";
+            const ot = outlineDockEl();
+            document.querySelectorAll(".outliner-shell.compact > .otoolbar.outline-dock").forEach((el) => {
+              el.style.bottom = el === ot ? bottom : "";
+            });
           } else {
-            dock.style.bottom = Math.round(layoutBottomGap + GAP) + "px";
+            document.querySelectorAll(".outliner-shell.compact > .otoolbar.outline-dock").forEach((el) => {
+              el.style.bottom = "";
+            });
+            dock.style.bottom = bottom;
           }
         }
 
@@ -1122,6 +1159,8 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
           if (!mobile()) next = false;
           // Hard lock: never hide at top (even if a bounce delta says hide)
           if (next && atTop()) next = false;
+          // Nest dock owns the slot — don't fight it with reader hide/show chrome
+          if (document.body.dataset.dock === "outline") next = false;
           if (hidden === next) {
             if (!next) pinToVisualBottom();
             return;
@@ -1138,6 +1177,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         function hide() {
           if (!mobile() || editing() || atTop()) return;
+          if (document.body.dataset.dock === "outline") return;
           setHidden(true);
         }
 
@@ -1287,13 +1327,27 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         mq.addEventListener?.("change", () => {
           if (!mobile()) {
             show();
-            dock.style.bottom = "";
+            clearPinnedBottoms();
           } else {
             const el = contentEl();
             lastContentTop = el ? el.getBoundingClientRect().top : null;
             if (atTop()) show();
             pinToVisualBottom();
           }
+        });
+
+        // Nest bar ↔ chapter bar exclusive swap
+        document.addEventListener("kv:dock-mode", () => {
+          if (document.body.dataset.dock === "outline") {
+            // Reader dock yields slot; keep it un-hidden for when Nav returns
+            hidden = false;
+            dock.classList.remove("is-hidden");
+            dock.setAttribute("aria-hidden", "false");
+            dock.style.bottom = "";
+          } else {
+            show();
+          }
+          pinToVisualBottom();
         });
 
         const el0 = contentEl();

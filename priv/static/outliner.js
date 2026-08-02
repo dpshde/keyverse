@@ -160,8 +160,15 @@ function mountOutliner(host, opts) {
   const toolbar = document.createElement("div");
   toolbar.className = "otoolbar outline-dock";
   toolbar.setAttribute("role", "toolbar");
-  toolbar.setAttribute("aria-label", "Outline tools");
+  toolbar.setAttribute("aria-label", compact ? "Note outline tools" : "Outline tools");
+  // Compact (reader tray): Nav swaps back to the chapter dock — never stack both bars.
+  const navBtn = compact
+    ? '<button type="button" class="otool-btn" data-act="nav" aria-label="Chapter navigation">' +
+        '<span class="otool-ico" aria-hidden="true"><i class="ph ph-compass"></i></span>' +
+        '<span class="otool-lbl">Nav</span></button>'
+    : "";
   toolbar.innerHTML =
+    navBtn +
     '<button type="button" class="otool-btn" data-act="outdent" aria-label="Unnest">' +
       '<span class="otool-ico" aria-hidden="true"><i class="ph ph-text-outdent"></i></span>' +
       '<span class="otool-lbl">Unnest</span></button>' +
@@ -172,6 +179,29 @@ function mountOutliner(host, opts) {
       '<span class="otool-ico" aria-hidden="true"><i class="ph ph-caret-circle-down"></i></span>' +
       '<span class="otool-lbl">Fold</span></button>';
   shell.appendChild(toolbar);
+
+  /** Exclusive bottom dock: outline vs reader — only one visible. */
+  function claimOutlineDock() {
+    if (!compact || !alive) return;
+    document.querySelectorAll(".outliner-shell.compact.is-dock-active").forEach((el) => {
+      if (el !== shell) el.classList.remove("is-dock-active");
+    });
+    shell.classList.add("is-dock-active");
+    document.body.dataset.dock = "outline";
+    try {
+      document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "outline" } }));
+    } catch (e) { /* ignore */ }
+  }
+  function releaseOutlineDock() {
+    if (!compact) return;
+    shell.classList.remove("is-dock-active");
+    if (!document.querySelector(".outliner-shell.compact.is-dock-active")) {
+      document.body.dataset.dock = "reader";
+      try {
+        document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "reader" } }));
+      } catch (e) { /* ignore */ }
+    }
+  }
 
   const dropLine = document.createElement("div");
   dropLine.className = "odrop";
@@ -793,6 +823,10 @@ function mountOutliner(host, opts) {
   let toolbarArmed = false;
   function runToolbarAct(act) {
     if (!act) return;
+    if (act === "nav") {
+      releaseOutlineDock();
+      return;
+    }
     // Capture row before any focus thrash
     const ae = document.activeElement;
     if (ae && host.contains(ae)) {
@@ -866,6 +900,7 @@ function mountOutliner(host, opts) {
     if (selected) {
       clearSelection();
     }
+    claimOutlineDock();
     const el = row.querySelector(".otext");
     if (el && !el.isContentEditable) {
       const id = row.dataset.id;
@@ -1416,10 +1451,14 @@ function mountOutliner(host, opts) {
     render(last.id, endOf({ textContent: last.text }));
   }
 
+  // Reader tray: take the bottom dock slot immediately (autofocus path).
+  if (compact) claimOutlineDock();
+
   return {
     focus() {
       const last = blocks[blocks.length - 1];
       render(last.id, endOf({ textContent: last.text }));
+      claimOutlineDock();
     },
     isEmpty() {
       syncFromDom();
@@ -1443,6 +1482,7 @@ function mountOutliner(host, opts) {
       clearTimeout(timer);
       clearTimeout(histTimer);
       if (blurTimer) clearTimeout(blurTimer);
+      releaseOutlineDock();
       host.innerHTML = "";
       host.classList.remove("outliner", "compact", "page", "selecting");
       if (shell.parentNode) {
@@ -1452,6 +1492,5 @@ function mountOutliner(host, opts) {
     },
   };
 }
-
 
 if (typeof mountOutliner === 'function') window.mountOutliner = mountOutliner;
