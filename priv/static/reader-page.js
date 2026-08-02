@@ -33,75 +33,20 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       }
 
       function outlineHtml(blocks) {
+        // Reader trays: always show the full outline. Collapse is editor-only;
+        // the verse tray itself is the open/closed control.
         const items = blocks || [];
         if (!items.length) return "";
-        const hidden = new Set();
-        for (let i = 0; i < items.length; i++) {
-          if (!items[i].collapsed) continue;
-          const base = Math.max(0, items[i].indent|0);
-          for (let j = i + 1; j < items.length; j++) {
-            const d = Math.max(0, items[j].indent|0);
-            if (d <= base) break;
-            hidden.add(j);
-          }
-        }
-        return '<div class="outline">' + items.map((b, i) => {
-          if (hidden.has(i)) return "";
+        return '<div class="outline">' + items.map((b) => {
           const depth = Math.max(0, b.indent|0);
           const empty = !(b.text && b.text.trim());
-          const hasKids = i + 1 < items.length && (Math.max(0, items[i + 1].indent|0) > depth);
-          const collapsed = !!(b.collapsed && hasKids);
           let cls = "oline";
           if (empty) cls += " blank";
-          if (hasKids) cls += " has-kids";
-          if (collapsed) cls += " collapsed";
           const id = String(b.id || "").replace(/"/g, "");
-          const aria = collapsed ? "Expand" : "Collapse";
           return '<div class="' + cls + '" style="--depth:' + depth + '" data-id="' + id + '" title="' + id + '">' +
-            '<span class="ochev" role="button" tabindex="-1" aria-label="' + aria + '"></span>' +
             '<span class="odot" aria-hidden="true"></span>' +
             '<span class="otxt">' + (empty ? "" : formatBlockHtml(b.text)) + '</span></div>';
         }).join("") + '</div>';
-      }
-
-      /** Fold/unfold a read-only outline row. Does not open editor or close the verse tray. */
-      function toggleReaderOutlineFold(ochev) {
-        const line = ochev.closest(".oline");
-        const noteEl = ochev.closest(".note");
-        if (!line || !noteEl || noteEl.classList.contains("editing")) return false;
-        if (noteEl.dataset.encrypted === "1") return false;
-        if (!line.classList.contains("has-kids")) return false;
-        const slug = noteEl.dataset.slug;
-        if (!slug || !seeds[slug]) return false;
-        const blocks = seeds[slug].map((b) => ({
-          id: b.id,
-          indent: b.indent|0,
-          text: b.text || "",
-          collapsed: !!b.collapsed,
-        }));
-        const id = line.dataset.id || line.getAttribute("title") || "";
-        const i = blocks.findIndex((b) => b.id === id);
-        if (i < 0) return false;
-        const base = blocks[i].indent|0;
-        if (!(i + 1 < blocks.length && (blocks[i + 1].indent|0) > base)) return false;
-        blocks[i].collapsed = !blocks[i].collapsed;
-        seeds[slug] = blocks;
-        const body = noteEl.querySelector(".note-body");
-        if (body) body.innerHTML = outlineHtml(blocks);
-        // Persist collapse; omit attachments so the server keeps existing ones.
-        const payload = {
-          blocks: blocks.map((b) => {
-            const row = { id: b.id, indent: b.indent|0, text: b.text || "" };
-            if (b.collapsed) row.collapsed = true;
-            return row;
-          }),
-        };
-        fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        }).catch(() => {});
-        return true;
       }
 
       function statusElFor(noteEl) {
@@ -694,15 +639,6 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
       document.addEventListener("click", (e) => {
         if (e.target.closest("a")) return;
         if (e.target.closest(".otext, .obullet, .outliner, .note-edit")) return;
-
-        // Read-only outline chevron: fold subnests only (never open editor / close tray).
-        const foldChev = e.target.closest(".outline .ochev, .oline.has-kids .ochev");
-        if (foldChev) {
-          e.preventDefault();
-          e.stopPropagation();
-          toggleReaderOutlineFold(foldChev);
-          return;
-        }
 
         // click any note outline (verse / range / chapter) → edit that note inline
         const body = e.target.closest(".note .note-body");

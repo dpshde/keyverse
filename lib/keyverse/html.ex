@@ -1005,63 +1005,28 @@ defmodule Keyverse.Html do
     if items == [], do: "", else: do_render_outline(items)
   end
 
+  # Reader view: always expand the full outline. Fold lives only in the editor;
+  # the verse tray (notes-open) is the sole open/closed control.
   defp do_render_outline(items) do
-    hidden = collapse_hidden(items)
-
     inner =
       items
-      |> Enum.with_index()
-      |> Enum.map(fn {b, i} ->
-        if MapSet.member?(hidden, i) do
-          ""
-        else
-          depth = max(0, trunc(b["indent"] || 0))
-          empty = String.trim(to_string(b["text"] || "")) == ""
-          has_kids = i + 1 < length(items) and max(0, trunc(Enum.at(items, i + 1)["indent"] || 0)) > depth
-          collapsed = b["collapsed"] && has_kids
+      |> Enum.map(fn b ->
+        depth = max(0, trunc(b["indent"] || 0))
+        empty = String.trim(to_string(b["text"] || "")) == ""
+        cls = ["oline", if(empty, do: "blank")] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
+        id = esc(to_string(b["id"] || ""))
+        text = if empty, do: "", else: esc(to_string(b["text"] || ""))
 
-          cls =
-            ["oline", if(empty, do: "blank"), if(has_kids, do: "has-kids"), if(collapsed, do: "collapsed")]
-            |> Enum.reject(&is_nil/1)
-            |> Enum.join(" ")
-
-          id = esc(to_string(b["id"] || ""))
-          aria = if collapsed, do: "Expand", else: "Collapse"
-          text = if empty, do: "", else: esc(to_string(b["text"] || ""))
-
-          """
-          <div class="#{cls}" style="--depth:#{depth}" data-id="#{id}" title="#{id}">
-            <span class="ochev" role="button" tabindex="-1" aria-label="#{aria}"></span>
-            <span class="odot" aria-hidden="true"></span>
-            <span class="otxt">#{text}</span>
-          </div>
-          """
-        end
+        """
+        <div class="#{cls}" style="--depth:#{depth}" data-id="#{id}" title="#{id}">
+          <span class="odot" aria-hidden="true"></span>
+          <span class="otxt">#{text}</span>
+        </div>
+        """
       end)
       |> Enum.join("")
 
     ~s(<div class="outline">#{inner}</div>)
-  end
-
-  defp collapse_hidden(items) do
-    items
-    |> Enum.with_index()
-    |> Enum.reduce(MapSet.new(), fn {b, i}, hid ->
-      if b["collapsed"] do
-        base = max(0, trunc(b["indent"] || 0))
-
-        Enum.reduce_while((i + 1)..max(i, length(items) - 1)//1, hid, fn j, h ->
-          if j >= length(items) do
-            {:halt, h}
-          else
-            d = max(0, trunc(Enum.at(items, j)["indent"] || 0))
-            if d <= base, do: {:halt, h}, else: {:cont, MapSet.put(h, j)}
-          end
-        end)
-      else
-        hid
-      end
-    end)
   end
 
   def web_manifest(start_url) do
