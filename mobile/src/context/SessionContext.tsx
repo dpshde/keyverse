@@ -1,9 +1,17 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { KeyverseClient, type SessionConfig } from "../api/client";
 import type { ProtocolInfo } from "../api/types";
 
 const KEY = "kv.session.v1";
+const PW_PREFIX = "kv.pw.";
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
 
 type Ctx = {
@@ -12,8 +20,12 @@ type Ctx = {
   door: string;
   client: KeyverseClient | null;
   protocol: ProtocolInfo | null;
+  passphrase: string;
+  hasPassphrase: boolean;
   setSession: (host: string, door: string) => Promise<void>;
   clearSession: () => Promise<void>;
+  setPassphrase: (pw: string) => Promise<void>;
+  clearPassphrase: () => Promise<void>;
   refreshProtocol: () => Promise<ProtocolInfo | null>;
 };
 
@@ -24,10 +36,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [host, setHost] = useState(DEFAULT_HOST);
   const [door, setDoor] = useState("");
   const [protocol, setProtocol] = useState<ProtocolInfo | null>(null);
+  const [passphrase, setPw] = useState("");
 
   const client = useMemo(() => {
-    if (!door && !host) return null;
-    // Door required for multipack unless open host
+    if (!door) return null;
     return new KeyverseClient({ host, door });
   }, [host, door]);
 
@@ -39,6 +51,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           const s = JSON.parse(raw) as SessionConfig;
           if (s.host) setHost(s.host);
           if (s.door) setDoor(s.door);
+          if (s.door) {
+            const pw = await AsyncStorage.getItem(PW_PREFIX + s.door);
+            if (pw) setPw(pw);
+          }
         }
       } finally {
         setReady(true);
@@ -71,6 +87,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setHost(hostN);
     setDoor(doorN);
     await AsyncStorage.setItem(KEY, JSON.stringify({ host: hostN, door: doorN }));
+    const pw = await AsyncStorage.getItem(PW_PREFIX + doorN);
+    setPw(pw || "");
     const c = new KeyverseClient({ host: hostN, door: doorN });
     try {
       const p = await c.protocol();
@@ -84,8 +102,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const clearSession = useCallback(async () => {
     setDoor("");
     setProtocol(null);
+    setPw("");
     await AsyncStorage.removeItem(KEY);
   }, []);
+
+  const setPassphrase = useCallback(
+    async (pw: string) => {
+      setPw(pw);
+      if (door) {
+        if (pw) await AsyncStorage.setItem(PW_PREFIX + door, pw);
+        else await AsyncStorage.removeItem(PW_PREFIX + door);
+      }
+    },
+    [door]
+  );
+
+  const clearPassphrase = useCallback(async () => {
+    setPw("");
+    if (door) await AsyncStorage.removeItem(PW_PREFIX + door);
+  }, [door]);
 
   const value: Ctx = {
     ready,
@@ -93,8 +128,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     door,
     client: door ? client : null,
     protocol,
+    passphrase,
+    hasPassphrase: !!passphrase,
     setSession,
     clearSession,
+    setPassphrase,
+    clearPassphrase,
     refreshProtocol,
   };
 

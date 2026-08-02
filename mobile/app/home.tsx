@@ -1,5 +1,5 @@
-import { Link, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,44 +11,92 @@ import {
   View,
 } from "react-native";
 import { useSession } from "@/src/context/SessionContext";
-import type { Note } from "@/src/api/types";
+import type { Note, SuggestItem } from "@/src/api/types";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
-import { hydrateBlocks } from "@/src/api/client";
+import { buildNoteTree, type TreeFolder, type TreeLeaf, type TreeNode } from "@/src/lib/noteTree";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function HomeScreen() {
-  const { client, door, protocol, clearSession } = useSession();
+  const { client, door, protocol, clearSession, hasPassphrase, setPassphrase, clearPassphrase } =
+    useSession();
   const router = useRouter();
   const [notes, setNotes] = useState<Note[]>([]);
   const [q, setQ] = useState("");
+  const [suggestions, setSuggestions] = useState<SuggestItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [pw, setPw] = useState("");
+
+  const foldKey = `kv.fold.${door}`;
 
   const load = useCallback(async () => {
     if (!client) return;
     setBusy(true);
     setErr(null);
     try {
-      const list = await client.listNotes();
+      const [list, foldRaw] = await Promise.all([
+        client.listNotes(),
+        AsyncStorage.getItem(foldKey),
+      ]);
       setNotes(list);
+      if (foldRaw) setCollapsed(JSON.parse(foldRaw) || {});
     } catch (e) {
       setErr(String(e));
     } finally {
       setBusy(false);
     }
-  }, [client]);
+  }, [client, foldKey]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const openPassage = async () => {
-    if (!client || !q.trim()) return;
+  useEffect(() => {
+    if (!client || q.trim().length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      client.suggest(q.trim()).then(setSuggestions).catch(() => setSuggestions([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [q, client]);
+
+  const tree = useMemo(() => buildNoteTree(notes), [notes]);
+
+  const flat = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
+
+  const toggle = async (id: string) => {
+    const next = { ...collapsed, [id]: !collapsed[id] };
+    if (!next[id]) delete next[id];
+    // store collapsed=true when folded
+    const store: Record<string, number> = {};
+    for (const [k, v] of Object.entries(next)) if (v) store[k] = 1;
+    // collapsed map: id -> true means collapsed
+    const map: Record<string, boolean> = {};
+    for (const k of Object.keys(store)) map[k] = true;
+    // fix: toggle means if currently collapsed, expand
+    const was = !!collapsed[id];
+    const map2 = { ...collapsed };
+    if (was) delete map2[id];
+    else map2[id] = true;
+    setCollapsed(map2);
+    await AsyncStorage.setItem(foldKey, JSON.stringify(map2));
+  };
+
+  const openPassage = async (query?: string) => {
+    if (!client) return;
+    const qq = (query ?? q).trim();
+    if (!qq) return;
     try {
-      const r = await client.resolve(q.trim());
+      const r = await client.resolve(qq);
       if (!r.ok || !r.scope) {
         setErr(r.error || "invalid passage");
         return;
       }
+      setSuggestions([]);
+      setQ("");
       router.push(`/read/${encodeURIComponent(r.scope.slug)}`);
     } catch (e) {
       setErr(String(e));
@@ -59,9 +107,9 @@ export default function HomeScreen() {
     return (
       <View style={styles.center}>
         <Text>No door open.</Text>
-        <Link href="/" style={{ marginTop: 12 }}>
-          Enter door
-        </Link>
+        <Pressable onPress={() => router.replace("/")}>
+          <Text style={styles.link}>Enter door</Text>
+        </Pressable>
       </View>
     );
   }
@@ -74,25 +122,69 @@ export default function HomeScreen() {
         </Text>
         <Text style={styles.meta}>
           {protocol?.version ? `protocol ${protocol.version}` : "…"} · {notes.length} notes
+          {hasPassphrase ? " · 🔒" : ""}
         </Text>
         <View style={styles.searchRow}>
           <TextInput
             style={styles.search}
             value={q}
             onChangeText={setQ}
-            placeholder="John 3:16 · psa 33 · go to reader"
+            placeholder="John 3:16 · psa 33"
             placeholderTextColor="#999"
             autoCapitalize="none"
-            onSubmitEditing={openPassage}
+            onSubmitEditing={() => openPassage()}
             returnKeyType="go"
           />
-          <Pressable style={styles.go} onPress={openPassage}>
+          <Pressable style={styles.go} onPress={() => openPassage()}>
             <Text style={styles.goTxt}>Go</Text>
           </Pressable>
         </View>
+        {suggestions.length > 0 ? (
+          <View style={styles.sugBox}>
+            {suggestions.map((s) => (
+              <Pressable
+                key={s.canonical + s.label}
+                style={styles.sug}
+                onPress={() => openPassage(s.insertText || s.canonical)}
+              >
+                <Text style={styles.sugTxt}>{s.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.pwRow}>
+          <TextInput
+            style={styles.pw}
+            value={pw}
+            onChangeText={setPw}
+            placeholder="Pack passphrase (optional)"
+            placeholderTextColor="#999"
+            secureTextEntry
+            autoCapitalize="none"
+          />
+          <Pressable
+            style={styles.pwBtn}
+            onPress={async () => {
+              await setPassphrase(pw);
+              setPw("");
+            }}
+          >
+            <Text style={styles.pwBtnTxt}>Set</Text>
+          </Pressable>
+          {hasPassphrase ? (
+            <Pressable onPress={() => clearPassphrase()}>
+              <Text style={styles.link}>Clear</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
         <View style={styles.navRow}>
           <Pressable onPress={() => router.push("/pack")}>
-            <Text style={styles.link}>Pack / export</Text>
+            <Text style={styles.link}>Pack</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/share")}>
+            <Text style={styles.link}>Share</Text>
           </Pressable>
           <Pressable
             onPress={async () => {
@@ -110,40 +202,43 @@ export default function HomeScreen() {
         <ActivityIndicator style={{ marginTop: 40 }} />
       ) : (
         <FlatList
-          data={notes}
-          keyExtractor={(n) => n.id || n.scope?.slug || String(Math.random())}
+          data={flat}
+          keyExtractor={(item) => item.key}
           refreshControl={<RefreshControl refreshing={busy} onRefresh={load} />}
-          contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
+          contentContainerStyle={{ padding: 12, paddingBottom: 48 }}
           ListEmptyComponent={<Text style={styles.empty}>No notes yet — open a passage.</Text>}
           renderItem={({ item }) => {
-            const slug = item.scope?.slug || "";
-            const label = item.scope?.osis || slug;
-            const preview = item.encrypted
-              ? "Encrypted"
-              : hydrateBlocks(item)
-                  .map((b) => b.text)
-                  .filter(Boolean)
-                  .slice(0, 2)
-                  .join(" · ");
-            const attN = (item.attachments || []).length;
+            if (item.kind === "folder") {
+              const f = item.node as TreeFolder;
+              const isCol = !!collapsed[f.id];
+              return (
+                <Pressable style={[styles.folder, { marginLeft: item.depth * 12 }]} onPress={() => toggle(f.id)}>
+                  <Text style={styles.folderChev}>{isCol ? "▸" : "▾"}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.folderTitle}>{f.label}</Text>
+                    <Text style={styles.folderMeta}>{f.kids.length} items</Text>
+                  </View>
+                </Pressable>
+              );
+            }
+            const leaf = item.node as TreeLeaf;
             return (
               <Pressable
-                style={styles.card}
-                onPress={() => router.push(`/read/${encodeURIComponent(slug)}`)}
-                onLongPress={() => router.push(`/note/${encodeURIComponent(slug)}`)}
+                style={[styles.card, { marginLeft: item.depth * 12 }]}
+                onPress={() => router.push(`/read/${encodeURIComponent(leaf.slug)}`)}
+                onLongPress={() => router.push(`/note/${encodeURIComponent(leaf.slug)}`)}
               >
-                <Text style={styles.cardTitle}>{label}</Text>
-                {preview ? (
-                  item.encrypted ? (
-                    <Text style={styles.cardBody}>{preview}</Text>
+                <Text style={styles.cardTitle}>{leaf.label}</Text>
+                {leaf.preview ? (
+                  leaf.encrypted ? (
+                    <Text style={styles.cardBody}>Encrypted</Text>
                   ) : (
-                    <InlineMarkdown text={preview} style={styles.cardBody} />
+                    <InlineMarkdown text={leaf.preview} style={styles.cardBody} />
                   )
                 ) : null}
                 <Text style={styles.cardMeta}>
-                  {item.scope?.kind || "note"}
-                  {attN ? ` · ${attN} attach` : ""}
-                  {item.updated_at ? ` · ${item.updated_at.slice(0, 10)}` : ""}
+                  {leaf.kind}
+                  {leaf.attCount ? ` · ${leaf.attCount} attach` : ""}
                 </Text>
               </Pressable>
             );
@@ -152,6 +247,23 @@ export default function HomeScreen() {
       )}
     </View>
   );
+}
+
+function flattenTree(
+  nodes: TreeNode[],
+  collapsed: Record<string, boolean>,
+  depth = 0
+): { key: string; kind: "folder" | "note"; node: TreeNode; depth: number }[] {
+  const out: { key: string; kind: "folder" | "note"; node: TreeNode; depth: number }[] = [];
+  for (const n of nodes) {
+    if (n.type === "folder") {
+      out.push({ key: n.id, kind: "folder", node: n, depth });
+      if (!collapsed[n.id]) out.push(...flattenTree(n.kids, collapsed, depth + 1));
+    } else {
+      out.push({ key: n.id, kind: "note", node: n, depth });
+    }
+  }
+  return out;
 }
 
 const styles = StyleSheet.create({
@@ -186,15 +298,48 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   goTxt: { color: "#fff", fontWeight: "700" },
+  sugBox: {
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,0,0,0.12)",
+    overflow: "hidden",
+  },
+  sug: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.06)" },
+  sugTxt: { fontSize: 15, color: "#222" },
+  pwRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  pw: {
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,0,0,0.12)",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+  },
+  pwBtn: { backgroundColor: "#eee", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  pwBtnTxt: { fontWeight: "600" },
   navRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
   link: { color: "#336", fontWeight: "600", fontSize: 13 },
   err: { color: "#a33", fontSize: 13 },
   empty: { textAlign: "center", color: "#888", marginTop: 40 },
+  folder: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(0,0,0,0.04)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  folderChev: { fontSize: 14, color: "#666", width: 16 },
+  folderTitle: { fontSize: 16, fontWeight: "700", color: "#111" },
+  folderMeta: { fontSize: 12, color: "#888" },
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(0,0,0,0.08)",
   },

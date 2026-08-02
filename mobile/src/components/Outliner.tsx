@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -14,12 +14,26 @@ type Props = {
   blocks: Block[];
   onChange: (blocks: Block[]) => void;
   editable?: boolean;
-  /** When false, collapse is ignored (show all) — reader tray style */
   honorCollapse?: boolean;
+  onDirty?: () => void;
 };
 
-export function Outliner({ blocks, onChange, editable = true, honorCollapse = true }: Props) {
-  const [focusId, setFocusId] = useState<string | null>(null);
+/** Full outliner: nest/unnest/fold, multi-line edit, Enter new line, Backspace merge. */
+export function Outliner({
+  blocks,
+  onChange,
+  editable = true,
+  honorCollapse = true,
+  onDirty,
+}: Props) {
+  const [focusId, setFocusId] = useState<string | null>(blocks[0]?.id ?? null);
+  const emit = useCallback(
+    (next: Block[]) => {
+      onChange(clampIndents(next));
+      onDirty?.();
+    },
+    [onChange, onDirty]
+  );
 
   const visible = useMemo(() => {
     if (!honorCollapse) return blocks.map((b, i) => ({ b, i }));
@@ -35,49 +49,53 @@ export function Outliner({ blocks, onChange, editable = true, honorCollapse = tr
     return blocks.map((b, i) => ({ b, i })).filter(({ i }) => !hidden.has(i));
   }, [blocks, honorCollapse]);
 
-  const updateAt = useCallback(
-    (i: number, patch: Partial<Block>) => {
-      const next = blocks.map((b, idx) => (idx === i ? { ...b, ...patch } : b));
-      onChange(next);
-    },
-    [blocks, onChange]
-  );
-
   const hasKids = (i: number) =>
     i + 1 < blocks.length && (blocks[i + 1].indent | 0) > (blocks[i].indent | 0);
 
+  const updateAt = (i: number, patch: Partial<Block>) => {
+    emit(blocks.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  };
+
   const indent = (i: number, dir: 1 | -1) => {
-    const b = blocks[i];
-    if (!b) return;
-    let ind = (b.indent | 0) + dir;
+    if (i < 0 || i >= blocks.length) return;
+    let ind = (blocks[i].indent | 0) + dir;
     if (ind < 0) ind = 0;
     if (i === 0) ind = 0;
     else ind = Math.min(ind, (blocks[i - 1].indent | 0) + 1);
-    const next = blocks.map((row, idx) => (idx === i ? { ...row, indent: ind } : row));
-    // clamp chain
-    for (let k = 1; k < next.length; k++) {
-      next[k] = {
-        ...next[k],
-        indent: Math.min(next[k].indent | 0, (next[k - 1].indent | 0) + 1),
-      };
-    }
-    onChange(next);
+    emit(blocks.map((row, idx) => (idx === i ? { ...row, indent: ind } : row)));
   };
 
   const addAfter = (i: number) => {
     const base = blocks[i]?.indent | 0;
     const nb: Block = { id: newBlockId(), indent: base, text: "" };
     const next = [...blocks.slice(0, i + 1), nb, ...blocks.slice(i + 1)];
-    onChange(next);
+    emit(next);
     setFocusId(nb.id);
   };
 
   const removeAt = (i: number) => {
     if (blocks.length <= 1) {
-      onChange([{ id: newBlockId(), indent: 0, text: "" }]);
+      const nb = { id: newBlockId(), indent: 0, text: "" };
+      emit([nb]);
+      setFocusId(nb.id);
       return;
     }
-    onChange(blocks.filter((_, idx) => idx !== i));
+    const next = blocks.filter((_, idx) => idx !== i);
+    emit(next);
+    setFocusId(next[Math.max(0, i - 1)]?.id ?? null);
+  };
+
+  const mergeIntoPrev = (i: number) => {
+    if (i <= 0) return;
+    const prev = blocks[i - 1];
+    const cur = blocks[i];
+    const merged = {
+      ...prev,
+      text: (prev.text || "") + (cur.text || ""),
+    };
+    const next = [...blocks.slice(0, i - 1), merged, ...blocks.slice(i + 1)];
+    emit(next);
+    setFocusId(merged.id);
   };
 
   const toggleCollapse = (i: number) => {
@@ -85,13 +103,15 @@ export function Outliner({ blocks, onChange, editable = true, honorCollapse = tr
     updateAt(i, { collapsed: !blocks[i].collapsed });
   };
 
+  const fi = focusIndex(blocks, focusId);
+
   return (
     <View style={styles.wrap}>
       {visible.map(({ b, i }) => {
         const depth = b.indent | 0;
         const kids = hasKids(i);
         return (
-          <View key={b.id} style={[styles.row, { paddingLeft: 8 + depth * 16 }]}>
+          <View key={b.id} style={[styles.row, { paddingLeft: 4 + depth * 16 }]}>
             {editable && honorCollapse ? (
               <Pressable
                 onPress={() => toggleCollapse(i)}
@@ -107,7 +127,7 @@ export function Outliner({ blocks, onChange, editable = true, honorCollapse = tr
               <View style={styles.chev} />
             )}
             <View style={styles.dotCol}>
-              <View style={styles.dot} />
+              <View style={[styles.dot, kids && b.collapsed && styles.dotCollapsed]} />
             </View>
             {editable ? (
               <TextInput
@@ -118,7 +138,13 @@ export function Outliner({ blocks, onChange, editable = true, honorCollapse = tr
                 multiline
                 blurOnSubmit
                 onSubmitEditing={() => addAfter(i)}
-                placeholder="…"
+                onKeyPress={(e) => {
+                  if (e.nativeEvent.key === "Backspace" && !(b.text || "").length) {
+                    e.preventDefault?.();
+                    mergeIntoPrev(i);
+                  }
+                }}
+                placeholder="Write…"
                 placeholderTextColor="#999"
                 autoCorrect
               />
@@ -130,45 +156,30 @@ export function Outliner({ blocks, onChange, editable = true, honorCollapse = tr
       })}
       {editable ? (
         <View style={styles.tools}>
-          <Tool
-            label="Nest"
-            onPress={() => {
-              const i = focusIndex(blocks, focusId);
-              indent(i, 1);
-            }}
-          />
-          <Tool
-            label="Unnest"
-            onPress={() => {
-              const i = focusIndex(blocks, focusId);
-              indent(i, -1);
-            }}
-          />
-          <Tool
-            label="Fold"
-            onPress={() => {
-              const i = focusIndex(blocks, focusId);
-              toggleCollapse(i);
-            }}
-          />
-          <Tool
-            label="Line+"
-            onPress={() => {
-              const i = focusIndex(blocks, focusId);
-              addAfter(i);
-            }}
-          />
-          <Tool
-            label="Del"
-            onPress={() => {
-              const i = focusIndex(blocks, focusId);
-              removeAt(i);
-            }}
-          />
+          <Tool label="Unnest" onPress={() => indent(fi, -1)} />
+          <Tool label="Nest" onPress={() => indent(fi, 1)} />
+          <Tool label="Fold" onPress={() => toggleCollapse(fi)} />
+          <Tool label="Line+" onPress={() => addAfter(fi)} />
+          <Tool label="Del" onPress={() => removeAt(fi)} />
         </View>
       ) : null}
     </View>
   );
+}
+
+function clampIndents(blocks: Block[]): Block[] {
+  return blocks.map((b, i) => {
+    let ind = Math.max(0, b.indent | 0);
+    if (i === 0) ind = 0;
+    else ind = Math.min(ind, (blocks[i - 1].indent | 0) + 1);
+    const kids =
+      i + 1 < blocks.length && (blocks[i + 1].indent | 0) > ind;
+    return {
+      ...b,
+      indent: ind,
+      collapsed: kids ? !!b.collapsed : false,
+    };
+  });
 }
 
 function focusIndex(blocks: Block[], id: string | null): number {
@@ -191,7 +202,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     minHeight: 28,
-    paddingVertical: 2,
+    paddingVertical: 3,
   },
   chev: { width: 18, height: 22, alignItems: "center", justifyContent: "center" },
   chevTxt: { fontSize: 12, color: "#666" },
@@ -209,6 +220,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.28)",
     transform: [{ translateY: -1 }],
   },
+  dotCollapsed: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: "rgba(0,0,0,0.35)",
+  },
   input: {
     flex: 1,
     fontSize: 16,
@@ -222,16 +238,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 12,
+    paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(0,0,0,0.12)",
   },
   toolBtn: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: "rgba(0,0,0,0.06)",
+    minHeight: 44,
+    justifyContent: "center",
   },
   toolLbl: { fontSize: 13, fontWeight: "600", color: "#333" },
 });

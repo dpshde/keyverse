@@ -1,17 +1,17 @@
 /**
- * Full door HTTP client — protocol checklist from docs/API.md.
- * BASE = {host}/{door}  (multiword door is the pack selector / secret).
+ * Full door HTTP client — complete protocol surface (docs/API.md + PROTOCOL.md).
  */
 import type {
   Attachment,
   Block,
+  ChapterText,
   Note,
   PackManifest,
   ProtocolInfo,
   ReadBundle,
   ResolveResult,
   SuggestItem,
-  ChapterText,
+  CipherEnvelope,
 } from "./types";
 
 export class ApiError extends Error {
@@ -25,17 +25,9 @@ export class ApiError extends Error {
 }
 
 export type SessionConfig = {
-  /** e.g. https://keyverse-production.up.railway.app */
   host: string;
-  /** multiword door phrase, or "" if DOOR_OPEN host */
   door: string;
 };
-
-function joinUrl(host: string, path: string): string {
-  const h = host.replace(/\/+$/, "");
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${h}${p}`;
-}
 
 export function doorBase(cfg: SessionConfig): string {
   const h = cfg.host.replace(/\/+$/, "");
@@ -68,14 +60,21 @@ export class KeyverseClient {
     return doorBase(this.cfg);
   }
 
+  get hostRoot(): string {
+    return this.cfg.host.replace(/\/+$/, "");
+  }
+
   private async req(
     method: string,
     path: string,
-    init: RequestInit & { rawBody?: ArrayBuffer | Blob | string } = {}
+    init: RequestInit & { rawBody?: ArrayBuffer | Blob | string; base?: "door" | "host" } = {}
   ): Promise<{ status: number; body: unknown; headers: Headers; res: Response }> {
-    const url = path.startsWith("http") ? path : `${this.base}${path.startsWith("/") ? path : `/${path}`}`;
+    const root = init.base === "host" ? this.hostRoot : this.base;
+    const url = path.startsWith("http")
+      ? path
+      : `${root}${path.startsWith("/") ? path : `/${path}`}`;
     const headers = new Headers(init.headers || {});
-    const { rawBody, ...rest } = init;
+    const { rawBody, base: _b, ...rest } = init;
     const body = rawBody !== undefined ? rawBody : rest.body;
     const res = await fetch(url, { ...rest, method, headers, body: body as BodyInit | undefined });
     const parsed = await parseBody(res);
@@ -83,10 +82,46 @@ export class KeyverseClient {
       const msg =
         typeof parsed === "object" && parsed && "error" in parsed
           ? String((parsed as { error: unknown }).error)
-          : `HTTP ${res.status}`;
+          : typeof parsed === "string" && parsed.length < 200
+            ? parsed
+            : `HTTP ${res.status}`;
       throw new ApiError(res.status, parsed, msg);
     }
     return { status: res.status, body: parsed, headers: res.headers, res };
+  }
+
+  // —— Host (no door) ——
+  async health(): Promise<Record<string, unknown>> {
+    const { body } = await this.req("GET", "/health", { base: "host" });
+    return body as Record<string, unknown>;
+  }
+
+  /**
+   * Claim a new multipack door (form POST /setup).
+   * Returns normalized door phrase on success.
+   */
+  async setupClaim(door: string): Promise<string> {
+    const body = new URLSearchParams();
+    body.set("door", door);
+    body.set("intent", "claim");
+    const res = await fetch(`${this.hostRoot}/setup`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "text/html" },
+      body: body.toString(),
+      redirect: "manual",
+    });
+    // 302 → /{door}/
+    const loc = res.headers.get("location") || "";
+    const m = loc.match(/\/([a-z0-9]+(?:-[a-z0-9]+){2,})\//i);
+    if (m) return m[1].toLowerCase();
+    if (res.status >= 200 && res.status < 400) {
+      // follow-up: try open protocol on claimed door
+      const d = door.trim().toLowerCase().replace(/\s+/g, "-");
+      const probe = await fetch(`${this.hostRoot}/${d}/api/protocol`);
+      if (probe.ok) return d;
+    }
+    const text = await res.text();
+    throw new ApiError(res.status, text, "setup claim failed");
   }
 
   // —— Discovery ——
@@ -100,6 +135,14 @@ export class KeyverseClient {
     return body as Record<string, unknown>;
   }
 
+  async rotateDoor(): Promise<{ door: string; pack_id?: string; url_path?: string }> {
+    const { body } = await this.req("POST", "/api/door/rotate", {
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    return body as { door: string; pack_id?: string; url_path?: string };
+  }
+
   async resolve(q: string): Promise<ResolveResult> {
     const { body } = await this.req("GET", `/api/resolve?q=${encodeURIComponent(q)}`);
     return body as ResolveResult;
@@ -110,8 +153,7 @@ export class KeyverseClient {
       "GET",
       `/api/suggest?q=${encodeURIComponent(q)}&limit=${limit}`
     );
-    const b = body as { suggestions?: SuggestItem[] };
-    return b.suggestions || [];
+    return (body as { suggestions?: SuggestItem[] }).suggestions || [];
   }
 
   // —— Notes ——
@@ -128,24 +170,17 @@ export class KeyverseClient {
   async getNoteRaw(slug: string): Promise<string> {
     const url = `${this.base}/api/note/${encodeURIComponent(slug)}?raw`;
     const res = await fetch(url, { headers: { Accept: "text/plain" } });
-    if (!res.ok) {
-      const parsed = await parseBody(res);
-      throw new ApiError(res.status, parsed);
-    }
+    if (!res.ok) throw new ApiError(res.status, await parseBody(res));
     return res.text();
   }
 
-  /**
-   * PUT note. Omit `attachments` to preserve existing (protocol rule).
-   * Empty blank blocks + no attachments → delete.
-   */
   async putNote(
     slug: string,
     payload: {
       blocks?: Block[];
       attachments?: Attachment[];
       encrypted?: boolean;
-      cipher?: Note["cipher"];
+      cipher?: CipherEnvelope;
     }
   ): Promise<Note | { deleted: true; slug: string }> {
     const { body } = await this.req("PUT", `/api/note/${encodeURIComponent(slug)}`, {
@@ -183,10 +218,7 @@ export class KeyverseClient {
     mime = "application/octet-stream"
   ): Promise<Note | { encrypted: true; attachment: Attachment }> {
     const { body } = await this.req("POST", `/api/note/${encodeURIComponent(slug)}/attachments`, {
-      headers: {
-        "content-type": mime,
-        "x-filename": filename,
-      },
+      headers: { "content-type": mime, "x-filename": filename },
       rawBody: bytes,
     });
     return body as Note | { encrypted: true; attachment: Attachment };
@@ -240,12 +272,29 @@ export class KeyverseClient {
     return `${this.base}/api/pack/export`;
   }
 
-  shareQrUrl(origin: string): string {
-    return `${this.base}/api/share-qr?origin=${encodeURIComponent(origin)}`;
+  shareQrUrl(origin?: string): string {
+    const o = origin || this.hostRoot;
+    return `${this.base}/api/share-qr?origin=${encodeURIComponent(o)}`;
+  }
+
+  async importPack(
+    zipBytes: ArrayBuffer,
+    mode: "merge" | "replace" = "merge"
+  ): Promise<Record<string, unknown>> {
+    const { body } = await this.req("POST", `/api/pack/import?mode=${mode}`, {
+      headers: { "content-type": "application/zip" },
+      rawBody: zipBytes,
+    });
+    return body as Record<string, unknown>;
+  }
+
+  async exportPackBytes(): Promise<ArrayBuffer> {
+    const res = await fetch(this.exportUrl());
+    if (!res.ok) throw new ApiError(res.status, await parseBody(res));
+    return res.arrayBuffer();
   }
 }
 
-/** Hydrate legacy body → blocks (PROTOCOL.md). */
 export function hydrateBlocks(note: Note): Block[] {
   if (Array.isArray(note.blocks) && note.blocks.length) {
     return note.blocks.map((b, i) => ({
@@ -275,4 +324,9 @@ export function newBlockId(): string {
 
 export function blocksToInterchange(blocks: Block[]): string {
   return blocks.map((b) => `${"  ".repeat(b.indent | 0)}${b.text || ""}`).join("\n");
+}
+
+export function isBlankNote(blocks: Block[], attachments: Attachment[]): boolean {
+  const emptyBlocks = !blocks.some((b) => (b.text || "").trim());
+  return emptyBlocks && attachments.length === 0;
 }

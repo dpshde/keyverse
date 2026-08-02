@@ -17,6 +17,7 @@ export default function RootLayout() {
           <Stack.Screen name="read/[slug]" options={{ title: "Read" }} />
           <Stack.Screen name="note/[slug]" options={{ title: "Note" }} />
           <Stack.Screen name="pack" options={{ title: "Pack" }} />
+          <Stack.Screen name="share" options={{ title: "Share" }} />
         </Stack>
       </ThemeProvider>
     </SessionProvider>

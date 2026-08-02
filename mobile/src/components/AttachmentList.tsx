@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import type { Attachment } from "../api/types";
 import type { KeyverseClient } from "../api/client";
 
@@ -61,7 +61,7 @@ export function AttachmentList({ slug, attachments, client, onChange, onNoteFrom
       const asset = pick.assets[0];
       setBusy(true);
       const b64 = await FileSystem.readAsStringAsync(asset.uri, {
-        encoding: "base64",
+        encoding: FileSystem.EncodingType.Base64,
       });
       const bin = b64ToArrayBuffer(b64);
       const res = await client.addFileAttachment(
