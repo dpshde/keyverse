@@ -94,7 +94,7 @@ defmodule Keyverse.Html do
         <button type="submit" class="login-btn login-btn-secondary" name="intent" value="generate"
           formnovalidate>Suggest another key</button>
       </form>
-      <p class="muted" style="margin-top:1rem"><a href="/">← Already have a key?</a></p>
+      <p class="muted" style="margin-top:1rem"><a class="back-btn" href="/">← Already have a key?</a></p>
       <details class="login-more">
         <summary>How keys work</summary>
         <p>Your key is four words that open <strong>your</strong> pack of notes — also the link
