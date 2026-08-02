@@ -986,36 +986,56 @@
     color: color-mix(in srgb, currentColor 45%, transparent); }
   .note-edit { margin: .05rem 0 0; }
 
-  /* Scripture above note outline (verse / range editor) */
-  .passage-strip {
-    margin: 0 0 1rem;
-    padding: 0 0 .85rem;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  }
-  .passage-strip-head {
+  /* Editor page header — title once; actions stay clear of passage */
+  .editor-head {
     display: flex;
+    flex-wrap: nowrap;
     align-items: baseline;
-    justify-content: space-between;
-    gap: .75rem;
-    margin: 0 0 .45rem;
+    gap: .45rem .65rem;
+    margin: 0 0 .4rem;
   }
-  .passage-strip-ref {
-    font-size: .92rem;
+  .editor-head h1 {
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 1.2rem;
     font-weight: 600;
     letter-spacing: -.01em;
   }
-  .passage-strip-tr {
-    font-size: .72rem;
-    font-weight: 550;
-    letter-spacing: .06em;
-    text-transform: uppercase;
+  .editor-back { flex: 0 0 auto; }
+  .editor-head-actions {
+    display: flex;
+    align-items: baseline;
+    gap: .55rem;
+    flex: 0 0 auto;
+    margin-left: auto;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .86rem;
   }
+  .editor-head-actions #status {
+    margin-left: 0;
+    min-width: 0;
+  }
+  /* When passage preview is present, keep chrome tight to the text */
+  .editor-head + #note-main > .passage-strip:first-child,
+  .editor-head + .crypto-bar + #note-main > .passage-strip:first-child {
+    margin-top: 0;
+  }
+
+  /* Scripture above note outline (verse / range editor) */
+  .passage-strip {
+    margin: 0 0 .75rem;
+    padding: 0 0 .65rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  /* no second ref row — title already names the passage; BSB only via aria */
+  .passage-strip-head { display: none; }
   .passage-strip-body {
     font-size: 1.02rem;
     line-height: 1.55;
   }
   .passage-v {
-    margin: 0 0 .35rem;
+    margin: 0 0 .3rem;
     text-wrap: pretty;
   }
   .passage-v:last-child { margin-bottom: 0; }
@@ -1028,8 +1048,25 @@
     line-height: 0;
   }
   @media (max-width: 640px) {
-    .passage-strip { margin-bottom: .85rem; padding-bottom: .75rem; }
-    .passage-strip-body { font-size: 1.05rem; line-height: 1.5; }
+    .editor-head {
+      margin-bottom: .3rem;
+    }
+    .editor-head h1 {
+      font-size: 1.12rem;
+      line-height: 1.25;
+    }
+    .editor-head-actions {
+      font-size: .82rem;
+      gap: .45rem;
+    }
+    .passage-strip {
+      margin: 0 0 .65rem;
+      padding: 0 0 .55rem;
+    }
+    .passage-strip-body {
+      font-size: 1.05rem;
+      line-height: 1.5;
+    }
   }
 
   /* range editor sits inside the selection surface — tighten chrome */

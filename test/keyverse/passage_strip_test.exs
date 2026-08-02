@@ -8,10 +8,12 @@ defmodule Keyverse.PassageStripTest do
     assert scope.kind == "verse"
     html = Html.passage_strip_html(scope)
     assert html =~ "passage-strip"
-    assert html =~ "John 3:16" or html =~ "JHN"
+    # title already carries the ref — strip is body text only
+    refute html =~ "passage-strip-ref"
+    refute html =~ ~s(passage-strip-tr)
+    assert html =~ "aria-label="
     assert html =~ "BSB"
     assert html =~ "data-v=\"16\""
-    # real BSB snippet
     assert html =~ "God" or html =~ "loved" or String.length(html) > 80
   end
 

@@ -535,11 +535,13 @@ defmodule Keyverse.Html do
     passage = passage_strip_html(scope)
 
     body = """
-    <header class="ui">
-      <a href="#{esc(base)}/" class="muted">&larr;</a>
+    <header class="ui editor-head">
+      <a href="#{esc(base)}/" class="muted editor-back" aria-label="Home">&larr;</a>
       <h1>#{esc(display)}</h1>
-      <a class="muted" href="#{esc(base)}/read/#{esc(scope.slug)}">read</a>
-      <span id="status"></span>
+      <div class="editor-head-actions">
+        <a class="muted" href="#{esc(base)}/read/#{esc(scope.slug)}">read</a>
+        <span id="status"></span>
+      </div>
     </header>
     #{crypto_bar(locked?)}
     <div id="note-main" #{if locked?, do: "hidden", else: ""}>
@@ -605,11 +607,7 @@ defmodule Keyverse.Html do
               end)
 
             """
-            <section class="passage-strip" aria-label="#{esc(Scope.display(scope))} (BSB)">
-              <div class="passage-strip-head">
-                <span class="passage-strip-ref">#{esc(Scope.display(scope))}</span>
-                <span class="passage-strip-tr muted">BSB</span>
-              </div>
+            <section class="passage-strip" aria-label="#{esc(Scope.display(scope))} · BSB" data-tr="BSB">
               <div class="passage-strip-body">#{body}</div>
             </section>
             """
