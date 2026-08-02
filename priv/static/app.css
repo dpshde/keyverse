@@ -181,17 +181,18 @@
       -webkit-backface-visibility: hidden;
       backface-visibility: hidden;
     }
-    .reader-dock.is-hidden {
-      bottom: -6.5rem !important;
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
+    /* Hide state works whenever JS applies .is-hidden (not only inside 640px). */
+  .reader-dock.is-hidden {
+    bottom: -6.5rem !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reader-dock {
+      transition: none;
     }
-    @media (prefers-reduced-motion: reduce) {
-      .reader-dock {
-        transition: none;
-      }
-    }
+  }
     @supports (background: color-mix(in srgb, Canvas 50%, transparent)) {
       .reader-dock {
         background: color-mix(in srgb, Canvas 52%, transparent);

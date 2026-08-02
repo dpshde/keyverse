@@ -1037,6 +1037,7 @@ let META = JSON.parse(document.getElementById("page-meta").textContent);
         const GAP = 10;
 
         function mobile() {
+          // Must match when CSS makes the dock position:fixed (max-width: 640px).
           return mq.matches;
         }
 
