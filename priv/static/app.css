@@ -752,29 +752,14 @@
   h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
        font-family: -apple-system, system-ui, sans-serif; }
   /*
-   * Home list — gutter tree (no cards).
-   *
-   * Every folder row is a 2-col grid:
-   *   [ --nt-gutter  |  content ]
-   * Chevron sits in the gutter; its CENTER is the branch stem x.
-   *
-   * Kids pad so child text starts at the same x as parent content:
-   *   margin-left  = gutter/2          (stem x)
-   *   padding-left = gutter/2 + gap    (→ content col)
-   *
-   *   ▾ Title                 ← content col
-   *   │  n notes
-   *   ├── child               ← same content col
-   *   └── child
+   * Home list — flat (no branch rails / cards).
+   * Folder row: [ chevron | title… ]; kids are a plain indented list.
    */
   .note-tree {
     margin-top: .15rem;
     --nt-gutter: 1.15rem;
-    --nt-gap: .45rem;
-    --nt-twig-y: 1.1rem; /* first-line center of a normal row */
-    --nt-rail: color-mix(in srgb, currentColor 20%, transparent);
-    --nt-stem-x: calc(var(--nt-gutter) / 2);
-    --nt-kids-pad: calc(var(--nt-gutter) / 2 + var(--nt-gap));
+    --nt-gap: .4rem;
+    --nt-indent: 1.15rem;
   }
   .nt-node {
     position: relative;
@@ -797,8 +782,8 @@
   .note-row.is-folder,
   .note-row.is-chapter.has-kids {
     border-bottom-color: transparent;
-    margin: .4rem 0 0;
-    padding: .4rem 0 .15rem;
+    margin: .35rem 0 0;
+    padding: .4rem 0 .1rem;
     background: transparent;
     border-radius: 0;
   }
@@ -846,7 +831,6 @@
   }
   .note-row .nt-time { font-size: .8rem; margin-left: .2rem; white-space: nowrap; }
   .note-row .nt-ex { margin-top: .12rem; }
-  /* Excerpt is already in the content column — no fake indent */
   .note-row.has-kids .nt-ex { margin-top: .1rem; margin-left: 0; }
   .note-row.is-folder .ref,
   .note-row.is-chapter .ref { font-weight: 600; }
@@ -862,13 +846,13 @@
   }
   .nt-act svg { display: block; }
 
-  /* Chevron — gutter cell, glyph centered on stem axis */
+  /* Chevron — plain disclosure in the gutter */
   .nt-chev {
     grid-column: 1;
     box-sizing: border-box;
     width: 100%;
     height: var(--nt-gutter);
-    margin: .2rem 0 0; /* optical align with title cap-height */
+    margin: .2rem 0 0;
     padding: 0;
     border: 0;
     background: transparent !important;
@@ -912,49 +896,23 @@
   }
   .nt-node.is-collapsed > .nt-kids { display: none; }
 
-  /*
-   * Kids rail — stem x = parent gutter center; content x = parent content col.
-   * Each child draws its own │ and ─ so the last child can end cleanly (└).
-   */
+  /* Flat kids — simple indent, no branch lines */
   .nt-kids {
     display: block;
-    position: relative;
-    margin: 0 0 .4rem;
-    margin-left: var(--nt-stem-x);
-    padding-left: var(--nt-kids-pad);
+    margin: 0 0 .35rem;
+    padding-left: var(--nt-indent);
   }
   .nt-kids > .nt-node {
     position: relative;
   }
-  /* Vertical stem segment */
-  .nt-kids > .nt-node::before {
-    content: "";
-    position: absolute;
-    left: calc(-1 * var(--nt-kids-pad));
-    top: 0;
-    bottom: 0;
-    width: 0;
-    border-left: 1.5px solid var(--nt-rail);
-    pointer-events: none;
-  }
-  /* Last child: stem only down to the twig (└) */
-  .nt-kids > .nt-node:last-child::before {
-    bottom: auto;
-    height: var(--nt-twig-y);
-  }
-  /* Horizontal twig into the row */
+  .nt-kids > .nt-node::before,
   .nt-kids > .nt-node::after {
-    content: "";
-    position: absolute;
-    left: calc(-1 * var(--nt-kids-pad));
-    top: var(--nt-twig-y);
-    width: var(--nt-kids-pad);
-    border-top: 1.5px solid var(--nt-rail);
-    pointer-events: none;
+    content: none !important;
+    display: none !important;
   }
   /*
-   * Leaf rows under a folder already sit in the kids pad (= content col).
-   * Drop the second gutter so text lines up with the parent title.
+   * Leaf rows under a folder: no second chevron gutter —
+   * full-width row inside the indent.
    */
   .nt-kids > .nt-node > .note-row:not(.has-kids) {
     display: block;
@@ -967,7 +925,7 @@
   .nt-kids > .nt-node > .note-row:not(.has-kids) > .nt-main {
     display: block;
   }
-  /* Nested folders keep their own gutter (chevron for further collapse) */
+  /* Nested folders keep a disclosure chevron */
   .nt-kids > .nt-node > .note-row.has-kids {
     display: grid;
     grid-template-columns: var(--nt-gutter) minmax(0, 1fr);
@@ -1902,13 +1860,9 @@
       border: 0;
     }
     .note-tree {
-      /* Layout gutter stays small so stem == chevron center.
-         Hit target expands via negative margin without shifting the rail. */
       --nt-gutter: 1.25rem;
-      --nt-gap: .5rem;
-      --nt-twig-y: 1.25rem;
-      --nt-stem-x: calc(var(--nt-gutter) / 2);
-      --nt-kids-pad: calc(var(--nt-gutter) / 2 + var(--nt-gap));
+      --nt-gap: .45rem;
+      --nt-indent: 1.25rem;
     }
     .nt-kids > .nt-node > .note-row {
       min-height: var(--tap-comfy);
@@ -1922,7 +1876,7 @@
       justify-content: center;
       padding: .05rem 0;
     }
-    /* Chevron: 44px hit box, layout width still --nt-gutter (stem stays put) */
+    /* Chevron: 44px hit box; layout gutter stays compact */
     .nt-chev:not(.is-leaf) {
       width: var(--tap) !important;
       height: var(--tap) !important;
