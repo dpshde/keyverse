@@ -473,7 +473,7 @@ defmodule Keyverse.Html do
       |> Enum.reject(&is_nil/1)
       |> Enum.join(" ")
 
-    # Folders: hide per-note edit/read chrome — whole card toggles / leads with chevron+title
+    # Folders: hide per-note edit/read chrome — row toggles via chevron+title
     meta =
       if has_kids do
         ""
