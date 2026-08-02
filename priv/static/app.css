@@ -752,14 +752,16 @@
   h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
        font-family: -apple-system, system-ui, sans-serif; }
   /*
-   * Home list — flat (no branch rails / cards).
-   * Folder row: [ chevron | title… ]; kids are a plain indented list.
+   * Home list — flat nested list (no branch rails / cards).
+   * Folder: [ chevron | title… ]
+   * Kids indent under the parent title column (and stack per nest level).
    */
   .note-tree {
     margin-top: .15rem;
     --nt-gutter: 1.15rem;
     --nt-gap: .4rem;
-    --nt-indent: 1.15rem;
+    /* One nest step = chevron column + gap + a little extra so kids read nested */
+    --nt-indent: calc(var(--nt-gutter) + var(--nt-gap) + .55rem);
   }
   .nt-node {
     position: relative;
@@ -896,10 +898,10 @@
   }
   .nt-node.is-collapsed > .nt-kids { display: none; }
 
-  /* Flat kids — simple indent, no branch lines */
+  /* Nested kids — indented under parent, no branch lines. Levels stack. */
   .nt-kids {
     display: block;
-    margin: 0 0 .35rem;
+    margin: 0 0 .4rem;
     padding-left: var(--nt-indent);
   }
   .nt-kids > .nt-node {
@@ -911,8 +913,8 @@
     display: none !important;
   }
   /*
-   * Leaf rows under a folder: no second chevron gutter —
-   * full-width row inside the indent.
+   * Leaf rows under a folder: drop the empty chevron gutter so the
+   * title sits cleanly at the nest indent (not double-guttered).
    */
   .nt-kids > .nt-node > .note-row:not(.has-kids) {
     display: block;
@@ -925,7 +927,7 @@
   .nt-kids > .nt-node > .note-row:not(.has-kids) > .nt-main {
     display: block;
   }
-  /* Nested folders keep a disclosure chevron */
+  /* Nested folders keep a disclosure chevron; their kids nest another step */
   .nt-kids > .nt-node > .note-row.has-kids {
     display: grid;
     grid-template-columns: var(--nt-gutter) minmax(0, 1fr);
@@ -1862,7 +1864,7 @@
     .note-tree {
       --nt-gutter: 1.25rem;
       --nt-gap: .45rem;
-      --nt-indent: 1.25rem;
+      --nt-indent: calc(var(--nt-gutter) + var(--nt-gap) + .65rem);
     }
     .nt-kids > .nt-node > .note-row {
       min-height: var(--tap-comfy);
