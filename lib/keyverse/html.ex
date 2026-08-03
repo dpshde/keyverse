@@ -549,6 +549,10 @@ defmodule Keyverse.Html do
       <h1>#{esc(display)}</h1>
       <div class="editor-head-actions">
         <a class="muted" href="#{esc(base)}/read/#{esc(scope.slug)}">read</a>
+        <button type="button" class="muted passage-share-btn" data-passage-share
+          data-slug="#{esc(scope.slug)}" data-label="#{esc(display)}"
+          title="Share projected reading view (includes notes inside this passage)"
+          aria-label="Share passage link">Share</button>
         <span id="status"></span>
       </div>
     </header>
@@ -580,6 +584,7 @@ defmodule Keyverse.Html do
     <script type="application/json" id="initial-cipher">#{cipher_json}</script>
     <script src="/outliner.js"></script>
     <script src="/editor-page.js"></script>
+    <script src="/passage-share.js"></script>
     """
 
     page(display, body, base: base)
@@ -921,10 +926,18 @@ defmodule Keyverse.Html do
             ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ph-caret-right"></i></span><span class="reader-dock-lbl">Next</span></span>)
           end
 
+        share_label = Scope.display(scope)
+
         body = """
         <header class="ui reader-head">
           <a href="#{esc(base)}/" class="muted reader-back" aria-label="Home">&larr;</a>
           <h1 id="reader-title">#{esc(display)}</h1>
+          <div class="reader-head-actions">
+            <button type="button" class="muted passage-share-btn" data-passage-share
+              data-slug="#{esc(scope.slug)}" data-label="#{esc(share_label)}"
+              title="Share this reading view (door link — full pack access)"
+              aria-label="Share passage link">Share</button>
+          </div>
         </header>
         <nav class="reader-dock" id="reader-dock" aria-label="Chapter tools">
           #{prev_btn}
@@ -950,6 +963,7 @@ defmodule Keyverse.Html do
         <script type="application/json" id="verse-seeds">#{Jason.encode!(bundle.seed)}</script>
         <script src="/outliner.js"></script>
         <script src="/reader-page.js"></script>
+        <script src="/passage-share.js"></script>
         """
 
         page(display, body, base: base)

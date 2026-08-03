@@ -12,9 +12,10 @@
     "legacy:node": "node server.mjs",
     "extract:client": "node scripts/extract_client_js.mjs",
     "test:e2e:local-mount": "node scripts/e2e-local-mount.mjs",
-    "mobile": "npm --prefix mobile start",
-    "mobile:ios": "npm --prefix mobile run ios",
-    "mobile:android": "npm --prefix mobile run android"
+    "mobile": "pnpm --dir mobile start",
+    "mobile:ios": "pnpm --dir mobile run ios",
+    "mobile:android": "pnpm --dir mobile run android",
+    "mobile:install": "pnpm --dir mobile install"
   },
   "dependencies": {
     "grab-bcv": "^0.1.7",

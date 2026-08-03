@@ -44,18 +44,71 @@ export type SyncResult = {
   pushed: number;
   pulled: number;
   attachments: number;
+  /** join = used existing multiword door; claim = created a new one */
+  mode: "join" | "claim" | "resume";
 };
 
+export type EnableCloudOpts = {
+  /**
+   * Existing multiword door phrase (e.g. quiet-river-lantern).
+   * When set, opens that pack and syncs (typical for pull-from-remote).
+   * When omitted, claims a new random door.
+   */
+  door?: string;
+};
+
+/** Normalize user-entered multiword phrase → door path segment. */
+export function normalizeDoorPhrase(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 /**
- * Enable cloud: claim multiword door, push all local notes (+ file bytes), pull remote.
- * Local remains source of truth that is now mirrored.
+ * Enable cloud and sync.
+ * - With `opts.door`: join an existing multiword door (pull remote + push local).
+ * - Without: claim a fresh door (or resume the previously saved door if re-enabling).
  */
-export async function enableCloudAndSync(host = DEFAULT_HOST): Promise<SyncResult> {
+export async function enableCloudAndSync(
+  host = DEFAULT_HOST,
+  opts: EnableCloudOpts = {}
+): Promise<SyncResult> {
   const hostN = host.replace(/\/+$/, "");
   const meta = await Local.getMeta();
-  let door = meta.cloud?.door;
-  if (!door || !meta.cloud?.enabled) {
-    // claim fresh door
+  let door = "";
+  let mode: SyncResult["mode"] = "claim";
+
+  const requested = opts.door ? normalizeDoorPhrase(opts.door) : "";
+  if (requested) {
+    // Join existing pack (or sync on known door) — verify before writing meta
+    const probe = new KeyverseClient({ host: hostN, door: requested });
+    try {
+      await probe.protocol();
+    } catch {
+      throw new Error("That key didn’t work. Check it and try again.");
+    }
+    door = requested;
+    mode =
+      meta.cloud?.enabled && meta.cloud?.door === requested ? "resume" : "join";
+  } else if (meta.cloud?.door) {
+    // Re-enable or re-sync the previously saved door (do not claim a new one)
+    door = meta.cloud.door;
+    mode = "resume";
+    const probe = new KeyverseClient({ host: hostN, door });
+    try {
+      await probe.protocol();
+    } catch {
+      // Door gone — fall through to claim only if user did not specify a phrase
+      door = "";
+      mode = "claim";
+    }
+  }
+
+  if (!door) {
     let claimed = "";
     for (let attempt = 0; attempt < 6; attempt++) {
       const phrase = await generateDoorPhrase(4);
@@ -67,13 +120,15 @@ export async function enableCloudAndSync(host = DEFAULT_HOST): Promise<SyncResul
         /* try another phrase */
       }
     }
-    if (!claimed) throw new Error("could not claim multiword door");
+    if (!claimed) {
+      throw new Error("Couldn’t turn on sync. Check your connection and try again.");
+    }
     door = claimed;
+    mode = "claim";
   }
 
   const client = new KeyverseClient({ host: hostN, door });
   await client.protocol(); // verify
-
   // Push local → cloud
   const localNotes = await Local.listNotes();
   let pushed = 0;
@@ -150,7 +205,7 @@ export async function enableCloudAndSync(host = DEFAULT_HOST): Promise<SyncResul
     },
   });
 
-  return { door, host: hostN, pushed, pulled, attachments: attN };
+  return { door, host: hostN, pushed, pulled, attachments: attN, mode };
 }
 
 export async function disableCloudKeepLocal(): Promise<void> {
@@ -167,7 +222,8 @@ export async function syncNow(): Promise<SyncResult> {
   if (!meta.cloud?.enabled || !meta.cloud.door) {
     throw new Error("cloud not enabled");
   }
-  return enableCloudAndSync(meta.cloud.host || DEFAULT_HOST);
+  // Resume sync on the already-enabled door (do not claim a new one)
+  return enableCloudAndSync(meta.cloud.host || DEFAULT_HOST, { door: meta.cloud.door });
 }
 
 /**

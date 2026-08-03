@@ -5,6 +5,7 @@
 import { Asset } from "expo-asset";
 import * as FileSystem from "expo-file-system/legacy";
 import { gunzipSync } from "fflate";
+import { Platform } from "react-native";
 import type { ChapterText } from "../api/types";
 
 export type TranslationId = "BSB" | "KJV";
@@ -54,10 +55,20 @@ async function loadPack(tr: TranslationId): Promise<PackIndex> {
     await asset.downloadAsync();
     const uri = asset.localUri || asset.uri;
     if (!uri) throw new Error(`missing asset uri for ${tr}`);
-    const b64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const gz = b64ToBytes(b64);
+
+    // Web: fetch ArrayBuffer (readAsStringAsync is native-only). Native: FileSystem base64.
+    let gz: Uint8Array;
+    if (Platform.OS === "web") {
+      const res = await fetch(uri);
+      if (!res.ok) throw new Error(`fetch ${uri}: ${res.status}`);
+      gz = new Uint8Array(await res.arrayBuffer());
+    } else {
+      const b64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      gz = b64ToBytes(b64);
+    }
+
     const jsonBytes = gunzipSync(gz);
     const text = new TextDecoder().decode(jsonBytes);
     const idx = JSON.parse(text) as PackIndex;

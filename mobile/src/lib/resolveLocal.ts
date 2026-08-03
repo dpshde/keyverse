@@ -151,20 +151,58 @@ function scopeResult(
   return { ok: true, q, scope, label };
 }
 
+/**
+ * Human book name from any common id (`1sa` / `1SA` / `1sam` / `1 samuel` → `1 Samuel`).
+ * Never returns raw OSIS shouting when a map hit exists.
+ */
+export function bookLabel(osisBook: string): string {
+  const raw = (osisBook || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const compact = raw.replace(/\s+/g, "");
+  const canonical =
+    BOOK_ALIASES[raw] ||
+    BOOK_ALIASES[compact] ||
+    (OSIS_LABEL[raw] ? raw : undefined) ||
+    (OSIS_LABEL[compact] ? compact : undefined) ||
+    raw;
+  if (OSIS_LABEL[canonical]) return OSIS_LABEL[canonical];
+  if (OSIS_LABEL[raw]) return OSIS_LABEL[raw];
+  if (OSIS_LABEL[compact]) return OSIS_LABEL[compact];
+  // Prefer title-ish over ALL-CAPS OSIS when unknown
+  if (/^[1-3]?[a-z]{2,5}$/i.test(compact)) {
+    return compact.length <= 4 ? compact.toUpperCase() : compact;
+  }
+  return osisBook.trim() || "Unknown";
+}
+
+/** Natural-language passage from scope or slug — never surface raw `1SA.15.15`. */
 export function displayScope(scope: Scope): string {
-  const book = scope.slug.split(".")[0];
-  const name = OSIS_LABEL[book] || book.toUpperCase();
-  if (scope.kind === "chapter") {
-    const ch = scope.slug.split(".")[1];
+  const slug = (scope.slug || scope.osis || "").trim();
+  const m =
+    /^([1-3]?[A-Za-z]+)\.(\d+)(?:\.(\d+)(?:-(\d+))?)?$/i.exec(slug.replace(/\s+/g, "")) ||
+    /^([1-3]?[A-Za-z]+)\.(\d+)\.(\d+)-(\d+)$/i.exec(slug.replace(/\s+/g, ""));
+  if (m) {
+    const name = bookLabel(m[1]);
+    const ch = m[2];
+    const v1 = m[3];
+    const v2 = m[4];
+    if (v1 && v2 && v1 !== v2) return `${name} ${ch}:${v1}–${v2}`;
+    if (v1) return `${name} ${ch}:${v1}`;
     return `${name} ${ch}`;
   }
-  if (scope.kind === "verse") {
-    const [, ch, v] = scope.slug.split(".");
-    return `${name} ${ch}:${v}`;
+  // kind-based fallback when slug is nonstandard
+  const book = slug.split(".")[0];
+  const name = bookLabel(book);
+  if (scope.kind === "chapter") {
+    const ch = slug.split(".")[1];
+    return ch ? `${name} ${ch}` : name;
   }
-  const m = /\.(\d+)\.(\d+)-(\d+)$/.exec(scope.slug);
-  if (m) return `${name} ${m[1]}:${m[2]}-${m[3]}`;
-  return scope.osis;
+  if (scope.kind === "verse") {
+    const [, ch, v] = slug.split(".");
+    if (ch && v) return `${name} ${ch}:${v}`;
+  }
+  const range = /\.(\d+)\.(\d+)-(\d+)$/.exec(slug);
+  if (range) return `${name} ${range[1]}:${range[2]}–${range[3]}`;
+  return name !== book.toUpperCase() ? name : slug;
 }
 
 export function suggestLocal(q: string, limit = 8): SuggestItem[] {

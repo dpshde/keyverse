@@ -27,9 +27,38 @@ No account. Your **key** is four words — it’s also the link to your notes.
 | **Phone / another device** | Enter your key → **Open notes** |
 | **New key** | Sign-in → **Create a new key** — keeps notes; old links stop working |
 | **Return visit** | Bookmark after first open (key is remembered for prefilling) |
-| **Share** | On home, tap your four-word key → QR + **Share** |
+| **Share pack** | On home, tap your four-word key → QR + **Share** |
+| **Share a passage** | On a note or reader page → **Share** — deep link to the **reading view** for that verse, range, or chapter (see below) |
 
 Wrong key → try again.
+
+### Passage deep links
+
+Design: [ADR 0019](./adr/0019-passage-deep-link-sharing.md). Addressing: [ADR 0002](./adr/0002-osis-passage-addressing.md). Projection: [ADR 0004](./adr/0004-compose-dont-absorb.md).
+
+| Scope | Example URL | What opens |
+|-------|-------------|------------|
+| Verse | `/{key}/read/jhn.3.16` | Chapter reader, verse highlighted; notes on that verse (and covering ranges) projected in |
+| Range | `/{key}/read/jhn.3.16-18` | Same reader; range highlight + notes inside the range |
+| Chapter | `/{key}/read/jhn.3` | Full chapter reading view + all notes in the chapter |
+
+| Kind of link | Path | Use when |
+|--------------|------|----------|
+| **Share (default)** | `/read/{slug}` | Hand someone the projected study view |
+| **Editor** | `/note/{slug}` | Jump straight to that address’s outline only |
+| **Pack** | `/{key}/` | Full library / co-editing |
+
+**Trust:** every deep link includes your multiword key. Anyone with the URL can open the whole pack (not only that passage). Rotate the key if a link leaks ([ADR 0011](./adr/0011-multiword-door-access.md)). Sealed notes still need the client passphrase ([ADR 0012](./adr/0012-client-side-note-encryption.md)).
+
+**QR:** pack home is default. Passage QR:
+
+```text
+GET /{key}/api/share-qr?origin=https://your.host&path=/read/jhn.3.16
+```
+
+Allowed `path` values: `/`, `/note/<slug>`, `/read/<slug>`.
+
+**Mobile:** Share from the note or reader header when sync is on. Local-only packs have no cloud URL until sync is enabled.
 
 ## Optional passphrase (encrypt notes)
 
@@ -138,6 +167,9 @@ unnest / nest / fold.
 Mobile: Nest/Unnest/Fold toolbar sticks above the home indicator; large tap targets.
 
 ## Reading view (`/read/<slug>`)
+
+This is the **default share target** for a verse, range, or chapter
+([ADR 0019](./adr/0019-passage-deep-link-sharing.md)).
 
 - BSB chapter text (fetched once, cached under `pack/text/bsb/`).
 - **Click verse text:** show/hide all notes for that verse (all or none). Empty

@@ -63,6 +63,28 @@
   }
   .reader-back { flex: 0 0 auto; }
   .editor-back { flex: 0 0 auto; }
+  .reader-head-actions {
+    display: flex;
+    align-items: baseline;
+    gap: .45rem;
+    flex: 0 0 auto;
+    margin-left: auto;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .86rem;
+  }
+  button.passage-share-btn {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  button.passage-share-btn:hover { color: inherit; opacity: .85; }
+  button.passage-share-btn[data-flash="1"] { opacity: .75; }
   /* Icon/back controls — quiet on desktop, enlarged on touch (see mobile adapt) */
   .reader-back,
   .editor-back,
@@ -1902,13 +1924,16 @@
       font-size: 1.15rem;
     }
 
-    /* Header text actions: read, status neighbors */
+    /* Header text actions: read, share, status neighbors */
     .editor-head-actions a,
     .editor-head-actions button,
+    .reader-head-actions a,
+    .reader-head-actions button,
     .reader-head a.muted:not(.reader-back),
     header a.muted:not(.reader-back):not(.editor-back):not(.back-btn),
     header button.text-btn,
-    button.text-btn {
+    button.text-btn,
+    button.passage-share-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;

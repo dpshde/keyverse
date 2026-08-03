@@ -199,6 +199,7 @@ and a client that implements PROTOCOL §3.1 to recover text.
 | Built-in | Not built-in |
 |----------|----------------|
 | Multiword door URL as shared secret | Accounts, OAuth, per-user ACL |
+| Passage deep links under the door ([ADR 0019](./adr/0019-passage-deep-link-sharing.md)) | Capability tokens that share one note without the door |
 | Optional client-side note passphrase (ADR 0012) | Server-side encryption at rest / blob encryption |
 | Single-writer assumption | Multi-writer locking |
 | — | TLS (use a reverse proxy) |

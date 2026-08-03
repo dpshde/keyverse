@@ -4491,10 +4491,30 @@ function publicOrigin(req, originParam) {
   return `${proto}://${host}`;
 }
 
-/** Full pack door URL (trailing slash) for sharing. */
-function packShareUrl(req, originParam) {
-  if (DOOR_OPEN || !door()) return publicOrigin(req, originParam) + "/";
-  return `${publicOrigin(req, originParam)}/${door()}/`;
+/** Full pack door URL (trailing slash) for sharing. Optional path under door. */
+function packShareUrl(req, originParam, pathParam) {
+  const origin = publicOrigin(req, originParam);
+  if (DOOR_OPEN || !door()) {
+    const p = normalizeSharePath(pathParam);
+    if (p == null) return null;
+    return p === "/" ? origin + "/" : origin + p;
+  }
+  const p = normalizeSharePath(pathParam);
+  if (p == null) return null;
+  const base = `${origin}/${door()}`;
+  return p === "/" ? base + "/" : base + p;
+}
+
+/** Safe deep-link under door: / or /note|read/<slug>. Returns null if invalid. */
+function normalizeSharePath(pathParam) {
+  if (pathParam == null || pathParam === "") return "/";
+  const p = String(pathParam).trim();
+  if (p === "/" || p === "") return "/";
+  if (p.includes("..") || p.includes("://") || p.startsWith("//")) return null;
+  if (!p.startsWith("/")) return null;
+  const m = p.match(/^\/(note|read)\/([a-z0-9][a-z0-9.\-]*)$/i);
+  if (!m) return null;
+  return `/${m[1].toLowerCase()}/${m[2].toLowerCase()}`;
 }
 
 async function shareQrSvg(text) {
@@ -6481,13 +6501,17 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // GET /api/share-qr?origin=https%3A%2F%2Fhost — SVG QR for this pack’s door URL
+    // GET /api/share-qr?origin=…&path=/read/jhn.3 — SVG QR for pack home or deep link
     if (req.method === "GET" && p === "/api/share-qr") {
       if (DOOR_OPEN || !door()) {
         res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         return res.end("no door");
       }
-      const packUrl = packShareUrl(req, url.searchParams.get("origin"));
+      const packUrl = packShareUrl(req, url.searchParams.get("origin"), url.searchParams.get("path"));
+      if (!packUrl) {
+        res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+        return res.end(JSON.stringify({ error: "invalid path" }));
+      }
       try {
         const svg = await shareQrSvg(packUrl);
         res.writeHead(200, {

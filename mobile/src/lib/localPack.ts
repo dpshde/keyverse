@@ -10,6 +10,38 @@ import { resolveLocal, displayScope } from "./resolveLocal";
 const META_KEY = "kv.local.meta.v1";
 const NOTES_INDEX = "kv.local.notesIndex.v1";
 
+/** In-memory note list — avoids re-reading every .json on each screen focus. */
+let notesListCache: Note[] | null = null;
+let notesBySlugCache: Map<string, Note> | null = null;
+/** Bumps on any write/delete/import so UIs can skip redundant reloads. */
+let notesCacheEpoch = 0;
+
+/** Live note updates for reader ↔ full note (and multi-surface) sync. */
+export type NoteChange =
+  | { slug: string; note: Note; deleted?: false }
+  | { slug: string; note: null; deleted: true };
+
+type NoteChangeListener = (change: NoteChange) => void;
+const noteChangeListeners = new Set<NoteChangeListener>();
+
+/** Subscribe to local pack writes/deletes. Returns unsubscribe. */
+export function subscribeNoteChanges(fn: NoteChangeListener): () => void {
+  noteChangeListeners.add(fn);
+  return () => {
+    noteChangeListeners.delete(fn);
+  };
+}
+
+function emitNoteChange(change: NoteChange): void {
+  for (const fn of noteChangeListeners) {
+    try {
+      fn(change);
+    } catch {
+      /* ignore listener errors */
+    }
+  }
+}
+
 export type LocalMeta = {
   created_at: string;
   updated_at: string;
@@ -21,6 +53,66 @@ export type LocalMeta = {
   };
   translation: "BSB" | "KJV";
 };
+
+export function getNotesCacheEpoch(): number {
+  return notesCacheEpoch;
+}
+
+/** Drop memory cache (next listNotes/getNote hits disk). */
+export function invalidateNotesCache(): void {
+  notesListCache = null;
+  notesBySlugCache = null;
+  notesCacheEpoch += 1;
+}
+
+function sortNotes(notes: Note[]): Note[] {
+  return notes.slice().sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+}
+
+function setNotesCache(notes: Note[]) {
+  const sorted = sortNotes(notes);
+  notesListCache = sorted;
+  notesBySlugCache = new Map();
+  for (const n of sorted) {
+    const s = n.scope?.slug;
+    if (s) notesBySlugCache.set(s, n);
+  }
+}
+
+function cacheUpsert(note: Note) {
+  const slug = note.scope?.slug;
+  if (!slug) {
+    invalidateNotesCache();
+    return;
+  }
+  if (!notesListCache || !notesBySlugCache) {
+    // Lazy: just invalidate so next listNotes rebuilds
+    invalidateNotesCache();
+    // Still notify — subscribers can getNote after list rebuild
+    notesCacheEpoch += 1;
+    emitNoteChange({ slug, note });
+    return;
+  }
+  notesBySlugCache.set(slug, note);
+  const i = notesListCache.findIndex((n) => n.scope?.slug === slug);
+  if (i >= 0) notesListCache[i] = note;
+  else notesListCache.push(note);
+  notesListCache = sortNotes(notesListCache);
+  notesCacheEpoch += 1;
+  emitNoteChange({ slug, note });
+}
+
+function cacheRemove(slug: string) {
+  if (!notesListCache || !notesBySlugCache) {
+    invalidateNotesCache();
+    emitNoteChange({ slug, note: null, deleted: true });
+    return;
+  }
+  notesBySlugCache.delete(slug);
+  notesListCache = notesListCache.filter((n) => n.scope?.slug !== slug);
+  notesCacheEpoch += 1;
+  emitNoteChange({ slug, note: null, deleted: true });
+}
 
 function notesDir(): string {
   return `${FileSystem.documentDirectory}keyverse/pack/notes/`;
@@ -87,6 +179,7 @@ function notePath(slug: string) {
 }
 
 export async function listNotes(): Promise<Note[]> {
+  if (notesListCache) return notesListCache;
   await ensureDirs();
   const slugs = await getIndex();
   const notes: Note[] = [];
@@ -94,12 +187,16 @@ export async function listNotes(): Promise<Note[]> {
     const n = await readJson<Note>(notePath(slug));
     if (n) notes.push(n);
   }
-  notes.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-  return notes;
+  setNotesCache(notes);
+  return notesListCache!;
 }
 
 export async function getNote(slug: string): Promise<Note | null> {
-  return readJson<Note>(notePath(slug));
+  // Warm full cache on first access so home/reader share one in-memory set
+  if (notesListCache === null || notesBySlugCache === null) {
+    await listNotes();
+  }
+  return notesBySlugCache?.get(slug) ?? null;
 }
 
 function scopeFromSlug(slug: string): Scope {
@@ -141,6 +238,7 @@ export async function putNote(
     await FileSystem.deleteAsync(notePath(slug), { idempotent: true }).catch(() => {});
     const idx = (await getIndex()).filter((s) => s !== slug);
     await setIndex(idx);
+    cacheRemove(slug);
     return { deleted: true, slug };
   }
 
@@ -177,7 +275,18 @@ export async function putNote(
     await setIndex(idx);
   }
   await setMeta({}); // touch updated_at
+  cacheUpsert(note);
   return note;
+}
+
+/** Remove a note from the local pack (file + index + memory cache). */
+export async function deleteNote(slug: string): Promise<void> {
+  await ensureDirs();
+  await FileSystem.deleteAsync(notePath(slug), { idempotent: true }).catch(() => {});
+  const idx = (await getIndex()).filter((s) => s !== slug);
+  await setIndex(idx);
+  await setMeta({}); // touch updated_at
+  cacheRemove(slug);
 }
 
 export async function upsertNoteRecord(note: Note): Promise<void> {
@@ -190,6 +299,7 @@ export async function upsertNoteRecord(note: Note): Promise<void> {
     idx.push(slug);
     await setIndex(idx);
   }
+  cacheUpsert(note);
 }
 
 export async function saveAttachmentBytes(sha256: string, bytes: ArrayBuffer): Promise<string> {

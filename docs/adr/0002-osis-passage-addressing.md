@@ -21,3 +21,4 @@ One address ⇒ at most one note.
 - **Easier:** URLs are shareable and meaningful; containment is computable from geometry; curl paths are obvious.
 - **Harder:** non-scripture “topic” notes are out of scope (deliberately); cross-chapter ranges are limited in v0.1; renames of canon rules would require migration.
 - **Implication:** identity is the passage, not a user-chosen title.
+- **Sharing:** deep links under the door use these slugs; default share is the projected reader (`/read/{slug}`). See [ADR 0019](./0019-passage-deep-link-sharing.md).

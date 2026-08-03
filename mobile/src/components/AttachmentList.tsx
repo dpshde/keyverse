@@ -13,6 +13,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import type { Attachment } from "../api/types";
 import type { KeyverseClient } from "../api/client";
+import { color, ui } from "../theme";
 
 type Props = {
   slug: string;
@@ -152,13 +153,13 @@ export function AttachmentList({ slug, attachments, client, onChange, onNoteFrom
         placeholderTextColor="#999"
       />
       <View style={styles.actions}>
-        <Pressable style={styles.btn} onPress={addUrl} disabled={busy}>
-          <Text style={styles.btnTxt}>Add URL</Text>
+        <Pressable style={[ui.primaryBtn, busy && { opacity: 0.5 }]} onPress={addUrl} disabled={busy}>
+          <Text style={ui.primaryBtnTxt}>Add URL</Text>
         </Pressable>
-        <Pressable style={styles.btn} onPress={addFile} disabled={busy}>
-          <Text style={styles.btnTxt}>Add file</Text>
+        <Pressable style={[ui.secondaryBtn, busy && { opacity: 0.5 }]} onPress={addFile} disabled={busy}>
+          <Text style={ui.secondaryBtnTxt}>Add file</Text>
         </Pressable>
-        {busy ? <ActivityIndicator /> : null}
+        {busy ? <ActivityIndicator color={color.muted} /> : null}
       </View>
     </View>
   );

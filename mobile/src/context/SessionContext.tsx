@@ -4,8 +4,10 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { KeyverseClient } from "../api/client";
 import type { ProtocolInfo } from "../api/types";
@@ -33,7 +35,8 @@ type Ctx = {
   hasPassphrase: boolean;
   setPassphrase: (pw: string) => Promise<void>;
   clearPassphrase: () => Promise<void>;
-  enableCloud: (host?: string) => Promise<Cloud.SyncResult>;
+  /** Enable cloud. Pass existing multiword door to join/pull remote; omit to claim new. */
+  enableCloud: (host?: string, door?: string) => Promise<Cloud.SyncResult>;
   disableCloud: () => Promise<void>;
   syncCloud: () => Promise<Cloud.SyncResult>;
   refreshProtocol: () => Promise<ProtocolInfo | null>;
@@ -109,10 +112,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.removeItem(PW_KEY);
   }, []);
 
-  const enableCloud = useCallback(async (host?: string) => {
-    const res = await Cloud.enableCloudAndSync(host || DEFAULT_HOST);
+  const enableCloud = useCallback(async (host?: string, door?: string) => {
+    const res = await Cloud.enableCloudAndSync(host || DEFAULT_HOST, {
+      door: door?.trim() || undefined,
+    });
     const m = await Local.getMeta();
     setMetaState(m);
+    try {
+      const { completeSyncInvite } = await import("../lib/syncInvite");
+      await completeSyncInvite();
+    } catch {
+      /* ok */
+    }
     try {
       const c = new KeyverseClient({ host: res.host, door: res.door });
       setProtocol(await c.protocol());
@@ -133,6 +144,37 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setMetaState(await Local.getMeta());
     return res;
   }, []);
+
+  /** Quiet full sync under the hood — never a user control. */
+  const quietSync = useCallback(() => {
+    if (!cloudEnabled) return;
+    Cloud.syncNow()
+      .then(async () => {
+        setMetaState(await Local.getMeta());
+      })
+      .catch(() => {
+        /* silent */
+      });
+  }, [cloudEnabled]);
+
+  useEffect(() => {
+    if (!ready || !cloudEnabled) return;
+    quietSync();
+  }, [ready, cloudEnabled, quietSync]);
+
+  // Sync again when returning to the foreground
+  const appState = useRef(AppState.currentState);
+  useEffect(() => {
+    if (!ready || !cloudEnabled) return;
+    const onChange = (next: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && next === "active") {
+        quietSync();
+      }
+      appState.current = next;
+    };
+    const sub = AppState.addEventListener("change", onChange);
+    return () => sub.remove();
+  }, [ready, cloudEnabled, quietSync]);
 
   const value: Ctx = {
     ready,

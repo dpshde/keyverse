@@ -21,6 +21,8 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0015](./0015-user-owned-pack-transfer.md) | User-owned pack transfer (export / import) | Accepted |
 | [0016](./0016-per-pack-write-queue-and-metrics.md) | Per-pack write queue and host metrics | Accepted |
 | [0017](./0017-browser-local-pack-mount.md) | Browser local pack mount (directory as door) | **Proposed** |
+| [0018](./0018-react-native-mobile-client.md) | React Native mobile client (web mirror) | Accepted |
+| [0019](./0019-passage-deep-link-sharing.md) | Passage deep-link sharing (verse / range / chapter) | Accepted |
 
 ## How to add an ADR
 
@@ -69,6 +71,7 @@ confidentiality layer under frictionlessness, not a permanence/sync feature.
 | No accounts / no save button | 0005 |
 | Multiword door URL | 0011 |
 | Client-side pack passphrase | 0012 |
+| Passage deep links (share verse / range / chapter) | 0019 |
 | Deferred multi-device / at-rest / blob crypto | 0008 |
 
 ## Doc map

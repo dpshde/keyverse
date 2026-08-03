@@ -349,11 +349,13 @@ matrix: [docs/API.md](docs/API.md).
   re-encrypts. Optional `?sha256=` triggers best-effort blob GC.
 - `GET /api/attachments/<sha256>` — raw file bytes (`Content-Type` from a
   referencing note when known, else `application/octet-stream`).
-- `GET /api/share-qr?origin=<url-origin>` — SVG QR code for this pack’s door
-  URL (`{origin}/{door}/`). `origin` SHOULD be the browser’s `location.origin`
-  so the code matches the URL the user sees; when omitted, the server derives
-  origin from `Forwarded` / `Host`. Door-only (404 when the door is open/disabled).
-  Response: `image/svg+xml`. Used by the home share popup (QR + Share).
+- `GET /api/share-qr?origin=<url-origin>&path=<optional>` — SVG QR for this pack’s
+  door URL. Default path is pack home (`{origin}/{door}/`). Optional `path` may be
+  `/note/<slug>` or `/read/<slug>` for a passage deep link (invalid path → 400).
+  `origin` SHOULD be the browser’s `location.origin`; when omitted, derived from
+  `Forwarded` / `Host`. Door-only (404 when the door is open/disabled).
+  Response: `image/svg+xml`. Used by the home share popup and passage share.
+  Sharing policy (default = projected `/read/{slug}`): [ADR 0019](docs/adr/0019-passage-deep-link-sharing.md).
 
 ### 7.1 CORS (browser clients)
 

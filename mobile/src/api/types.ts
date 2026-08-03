@@ -90,11 +90,18 @@ export interface SuggestItem {
   kind: string;
 }
 
+export interface ChapterVerse {
+  v: number;
+  text: string;
+  /** Section heading shown above this verse (BSB pericope titles) */
+  heading?: string;
+}
+
 export interface ChapterText {
   translation?: string;
   book: string;
   chapter: number;
-  verses: { v: number; text: string }[];
+  verses: ChapterVerse[];
   [key: string]: unknown;
 }
 

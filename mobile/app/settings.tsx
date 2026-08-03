@@ -1,18 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
+  Keyboard,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
+  type KeyboardEvent,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSession } from "@/src/context/SessionContext";
 import type { TranslationId } from "@/src/lib/textBundle";
 import * as Local from "@/src/lib/localPack";
@@ -21,6 +26,22 @@ import {
   importLocalPackZip,
 } from "@/src/lib/packTransfer";
 import { b64ToArrayBuffer } from "@/src/lib/bytes";
+import { EnterSyncKey } from "@/src/components/EnterSyncKey";
+import { SyncKeyReveal } from "@/src/components/SyncKeyReveal";
+import {
+  completeSyncInvite,
+  formatKeyForDisplay,
+  formatLastSynced,
+  plainSyncError,
+} from "@/src/lib/syncInvite";
+import {
+  hapticError,
+  hapticLight,
+  hapticSelect,
+  hapticSuccess,
+  hapticWarning,
+} from "@/src/lib/haptics";
+import { color, radius, space, tap, type, ui } from "@/src/theme";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
 
@@ -35,12 +56,52 @@ export default function SettingsScreen() {
     enableCloud,
     disableCloud,
     syncCloud,
-    protocol,
     client,
+    hasPassphrase,
+    setPassphrase,
+    clearPassphrase,
   } = useSession();
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
   const [host, setHost] = useState(cloudHost || DEFAULT_HOST);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState({ notes: 0, label: "…" });
+  const [pw, setPw] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [enterOpen, setEnterOpen] = useState(false);
+  const [revealDoor, setRevealDoor] = useState<string | null>(null);
+  const [syncErr, setSyncErr] = useState<string | null>(null);
+  /** Keyboard height → bottom content pad (same curve as passage dock). */
+  const kbPad = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const run = (height: number, e?: KeyboardEvent) => {
+      const duration =
+        Platform.OS === "ios" && e?.duration != null && e.duration > 0
+          ? e.duration
+          : height > 0
+            ? 250
+            : 220;
+      Animated.timing(kbPad, {
+        toValue: Math.max(0, height),
+        duration,
+        easing: Easing.bezier(0.17, 0.59, 0.4, 0.99),
+        useNativeDriver: false,
+      }).start();
+    };
+
+    const onShow = (e: KeyboardEvent) => run(e.endCoordinates?.height ?? 0, e);
+    const onHide = (e: KeyboardEvent) => run(0, e);
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      subShow.remove();
+      subHide.remove();
+    };
+  }, [kbPad]);
 
   const refreshStats = useCallback(async () => {
     const notes = await Local.listNotes();
@@ -51,46 +112,80 @@ export default function SettingsScreen() {
     refreshStats();
   }, [refreshStats]);
 
-  const onToggleCloud = async (on: boolean) => {
+  useEffect(() => {
+    if (cloudHost) setHost(cloudHost);
+  }, [cloudHost]);
+
+  const turnOnSync = async () => {
+    hapticSelect();
     setBusy(true);
+    setSyncErr(null);
     try {
-      if (on) {
-        const res = await enableCloud(host.trim() || DEFAULT_HOST);
-        Alert.alert(
-          "Cloud on",
-          `Door assigned:\n${res.door}\n\nPushed ${res.pushed} notes · pulled ${res.pulled}`
-        );
-      } else {
-        await disableCloud();
+      if (pw.trim()) {
+        await setPassphrase(pw.trim());
+        setPw("");
       }
+      const res = await enableCloud(host.trim() || DEFAULT_HOST);
+      await completeSyncInvite();
+      hapticSuccess();
+      if (res.mode === "claim") setRevealDoor(res.door);
     } catch (e) {
-      Alert.alert("Cloud toggle failed", String(e));
+      hapticError();
+      setSyncErr(plainSyncError(e, "turn_on"));
     } finally {
       setBusy(false);
       refreshStats();
     }
   };
 
-  const onSync = async () => {
-    setBusy(true);
-    try {
-      const res = await syncCloud();
-      Alert.alert("Synced", `Pushed ${res.pushed} · pulled ${res.pulled}`);
-    } catch (e) {
-      Alert.alert("Sync failed", String(e));
-    } finally {
-      setBusy(false);
-      refreshStats();
+  const onEnterSubmit = async (door: string) => {
+    if (pw.trim()) {
+      await setPassphrase(pw.trim());
+      setPw("");
     }
+    const res = await enableCloud(host.trim() || DEFAULT_HOST, door);
+    await completeSyncInvite();
+    setEnterOpen(false);
+    if (res.mode === "claim") setRevealDoor(res.door);
+    refreshStats();
+  };
+
+  const onTurnOff = () => {
+    hapticWarning();
+    Alert.alert(
+      "Turn off sync?",
+      "Sync will stop. Notes stay on this device. You can turn it on again with your key.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Turn off sync",
+          style: "destructive",
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await disableCloud();
+              hapticLight();
+            } catch (e) {
+              hapticError();
+              setSyncErr(plainSyncError(e, "off"));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   /** Local pack zip → share sheet (protocol user-data only). */
   const onExportLocal = async () => {
+    hapticLight();
     setBusy(true);
     try {
       const res = await exportLocalPackZip({
         door: cloudEnabled ? cloudDoor : undefined,
       });
+      hapticSuccess();
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(res.path, {
           mimeType: "application/zip",
@@ -101,6 +196,7 @@ export default function SettingsScreen() {
         Alert.alert("Exported", `${res.filename}\n${res.notes} notes · ${res.attachments} files`);
       }
     } catch (e) {
+      hapticError();
       Alert.alert("Export failed", String(e));
     } finally {
       setBusy(false);
@@ -111,6 +207,7 @@ export default function SettingsScreen() {
   const onImportLocal = async (mode: "merge" | "replace") => {
     try {
       if (mode === "replace") {
+        hapticWarning();
         const ok = await new Promise<boolean>((resolve) => {
           Alert.alert(
             "Replace local pack?",
@@ -123,6 +220,7 @@ export default function SettingsScreen() {
         });
         if (!ok) return;
       }
+      hapticLight();
       const pick = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         type: ["application/zip", "application/x-zip-compressed", "*/*"],
@@ -134,18 +232,18 @@ export default function SettingsScreen() {
       });
       const bytes = b64ToArrayBuffer(b64);
       const res = await importLocalPackZip(bytes, mode);
+      hapticSuccess();
       Alert.alert(
         "Import complete",
         `${mode}: ${res.notes} notes · ${res.attachments} attachments · ${res.files} zip entries`
       );
       if (cloudEnabled) {
-        Alert.alert(
-          "Cloud is on",
-          "Local pack updated. Tap Sync now to double this import up to the cloud door."
-        );
+        // Quiet push after import — no user-facing sync control
+        syncCloud().catch(() => {});
       }
       refreshStats();
     } catch (e) {
+      hapticError();
       Alert.alert("Import failed", String(e));
     } finally {
       setBusy(false);
@@ -155,20 +253,24 @@ export default function SettingsScreen() {
   /** Download cloud export zip and merge into local. */
   const onImportFromCloudExport = async () => {
     if (!client) {
-      Alert.alert("Cloud off", "Enable cloud first.");
+      hapticWarning();
+      Alert.alert("Sync off", "Turn on sync first.");
       return;
     }
+    hapticLight();
     setBusy(true);
     try {
       const bytes = await client.exportPackBytes();
       const res = await importLocalPackZip(bytes, "merge");
+      hapticSuccess();
       Alert.alert(
-        "Imported from cloud",
+        "Imported from remote",
         `Merged ${res.notes} notes · ${res.attachments} attachments`
       );
       refreshStats();
     } catch (e) {
-      Alert.alert("Cloud import failed", String(e));
+      hapticError();
+      Alert.alert("Import failed", String(e));
     } finally {
       setBusy(false);
     }
@@ -177,7 +279,7 @@ export default function SettingsScreen() {
   /** Push current local pack zip to cloud import API. */
   const onPushZipToCloud = async (mode: "merge" | "replace") => {
     if (!client) {
-      Alert.alert("Cloud off", "Enable cloud first.");
+      Alert.alert("Sync off", "Turn on sync first.");
       return;
     }
     setBusy(true);
@@ -188,167 +290,284 @@ export default function SettingsScreen() {
       });
       const bytes = b64ToArrayBuffer(b64);
       const res = await client.importPack(bytes, mode);
-      Alert.alert("Cloud import API", JSON.stringify(res).slice(0, 240));
+      Alert.alert("Remote import", JSON.stringify(res).slice(0, 240));
       await syncCloud().catch(() => {});
       refreshStats();
     } catch (e) {
-      Alert.alert("Push to cloud failed", String(e));
+      Alert.alert("Push failed", String(e));
     } finally {
       setBusy(false);
     }
   };
 
+  const restBottom = Math.max(insets.bottom, space[4]) + space[8];
+  const displayKey = cloudDoor ? formatKeyForDisplay(cloudDoor) : "";
+
   return (
-    <ScrollView style={styles.root} contentContainerStyle={{ paddingBottom: 48 }}>
-      <Text style={styles.h}>Scripture text</Text>
-      <Text style={styles.hint}>Bundled BSB + KJV on device. No network to read.</Text>
-      <View style={styles.row}>
-        {(["BSB", "KJV"] as TranslationId[]).map((t) => (
+    <View style={ui.screen}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: restBottom }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets
+      >
+        <View style={ui.group}>
+          <Text style={type.section}>Scripture text</Text>
+          <Text style={type.meta}>Bundled BSB + KJV on device. No network to read.</Text>
+          <View style={styles.row}>
+            {(["BSB", "KJV"] as TranslationId[]).map((t) => (
+              <Pressable
+                key={t}
+                style={[styles.chip, translation === t && styles.chipOn]}
+                onPress={() => {
+                  hapticSelect();
+                  setTranslation(t);
+                }}
+              >
+                <Text style={[styles.chipTxt, translation === t && styles.chipTxtOn]}>{t}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={ui.group}>
+          <Text style={type.section}>Sync</Text>
+
+          {cloudEnabled ? (
+            <>
+              <Text style={type.bodyStrong}>
+                On
+                {lastSyncAt
+                  ? ` · ${formatLastSynced(lastSyncAt).replace(/^Last synced /i, "")}`
+                  : ""}
+              </Text>
+              {displayKey ? (
+                <Text style={styles.keyPreview} selectable>
+                  {displayKey}
+                </Text>
+              ) : null}
+              {syncErr ? <Text style={ui.err}>{syncErr}</Text> : null}
+              <Pressable style={ui.ghostBtn} onPress={onTurnOff} disabled={busy}>
+                <Text style={ui.ghostBtnTxt}>Turn off</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={type.body}>
+                Same notes on another phone, with a private key (a few words).
+              </Text>
+              {cloudDoor ? (
+                <Text style={type.caption}>
+                  This phone already has a key — turn on to use it again.
+                </Text>
+              ) : null}
+              {syncErr ? <Text style={ui.err}>{syncErr}</Text> : null}
+              <Pressable style={ui.primaryBtn} onPress={turnOnSync} disabled={busy}>
+                {busy ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={ui.primaryBtnTxt}>Turn on sync</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={ui.secondaryBtn}
+                onPress={() => {
+                  hapticSelect();
+                  setEnterOpen(true);
+                }}
+                disabled={busy}
+              >
+                <Text style={ui.secondaryBtnTxt}>Enter a key</Text>
+              </Pressable>
+              <Text style={type.caption}>
+                First phone: turn on. Second phone: enter the key.
+              </Text>
+            </>
+          )}
+        </View>
+
+        <View style={ui.group}>
           <Pressable
-            key={t}
-            style={[styles.chip, translation === t && styles.chipOn]}
-            onPress={() => setTranslation(t)}
+            onPress={() => {
+              hapticSelect();
+              setAdvancedOpen((v) => !v);
+            }}
+            style={styles.advancedHead}
           >
-            <Text style={[styles.chipTxt, translation === t && styles.chipTxtOn]}>{t}</Text>
+            <Text style={type.section}>Advanced {advancedOpen ? "▴" : "▾"}</Text>
+            <Text style={type.meta}>Host, pack files, note passphrase</Text>
           </Pressable>
-        ))}
-      </View>
 
-      <Text style={styles.h}>Local pack</Text>
-      <Text style={styles.body}>{stats.label}</Text>
-      <Text style={styles.hint}>
-        Export/import uses the same zip shape as the web door: protocol.json, notes/**,
-        attachments/** (no scripture text).
-      </Text>
-      <Pressable style={styles.btn} onPress={onExportLocal} disabled={busy}>
-        <Text style={styles.btnTxt}>{busy ? "…" : "Export pack zip"}</Text>
-      </Pressable>
-      <Pressable
-        style={styles.btnSecondary}
-        onPress={() => onImportLocal("merge")}
-        disabled={busy}
-      >
-        <Text style={styles.btnSecondaryTxt}>Import zip (merge)</Text>
-      </Pressable>
-      <Pressable
-        style={styles.btnSecondary}
-        onPress={() => onImportLocal("replace")}
-        disabled={busy}
-      >
-        <Text style={styles.btnSecondaryTxt}>Import zip (replace)</Text>
-      </Pressable>
+          {advancedOpen ? (
+            <>
+              <Text style={[type.label, { marginTop: space[2] }]}>Host</Text>
+              <TextInput
+                style={ui.input}
+                value={host}
+                onChangeText={setHost}
+                autoCapitalize="none"
+                editable={!cloudEnabled}
+                placeholderTextColor={color.faint}
+                onFocus={() => {
+                  setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+                }}
+              />
 
-      <Text style={styles.h}>Cloud mirror</Text>
-      <Text style={styles.hint}>
-        Toggle on → multiword door + double local to host. Import/export still work offline.
-      </Text>
-      <View style={styles.switchRow}>
-        <Text style={styles.body}>Enable cloud sync</Text>
-        {busy ? <ActivityIndicator /> : <Switch value={cloudEnabled} onValueChange={onToggleCloud} />}
-      </View>
-      <Text style={styles.label}>Host</Text>
-      <TextInput
-        style={styles.input}
-        value={host}
-        onChangeText={setHost}
-        autoCapitalize="none"
-        editable={!cloudEnabled}
-      />
-      {cloudEnabled ? (
-        <>
-          <Text style={styles.label}>Door</Text>
-          <Text style={styles.mono} selectable>
-            {cloudDoor}
-          </Text>
-          <Text style={styles.meta}>
-            Last sync: {lastSyncAt ? lastSyncAt.replace("T", " ").slice(0, 19) : "—"}
-          </Text>
-          {protocol ? (
-            <Text style={styles.meta}>
-              Protocol {protocol.version} · {protocol.protocol}
-            </Text>
+              <Text style={[type.label, { marginTop: space[3] }]}>Local pack</Text>
+              <Text style={type.body}>{stats.label}</Text>
+              <Text style={type.meta}>
+                Export/import uses the same zip as the web door: protocol.json, notes, attachments
+                (no scripture text).
+              </Text>
+              <Pressable style={ui.primaryBtn} onPress={onExportLocal} disabled={busy}>
+                <Text style={ui.primaryBtnTxt}>{busy ? "Working…" : "Export pack zip"}</Text>
+              </Pressable>
+              <Pressable
+                style={ui.secondaryBtn}
+                onPress={() => onImportLocal("merge")}
+                disabled={busy}
+              >
+                <Text style={ui.secondaryBtnTxt}>Import zip (merge)</Text>
+              </Pressable>
+              <Pressable
+                style={ui.secondaryBtn}
+                onPress={() => onImportLocal("replace")}
+                disabled={busy}
+              >
+                <Text style={ui.secondaryBtnTxt}>Import zip (replace)</Text>
+              </Pressable>
+
+              {cloudEnabled ? (
+                <>
+                  <Text style={[type.label, { marginTop: space[3] }]}>Remote pack zip</Text>
+                  <Pressable
+                    style={ui.secondaryBtn}
+                    onPress={onImportFromCloudExport}
+                    disabled={busy}
+                  >
+                    <Text style={ui.secondaryBtnTxt}>Pull remote export → local</Text>
+                  </Pressable>
+                  <Pressable
+                    style={ui.secondaryBtn}
+                    onPress={() => onPushZipToCloud("merge")}
+                    disabled={busy}
+                  >
+                    <Text style={ui.secondaryBtnTxt}>Push local zip → remote (merge)</Text>
+                  </Pressable>
+                  <Pressable
+                    style={ui.secondaryBtn}
+                    onPress={() => onPushZipToCloud("replace")}
+                    disabled={busy}
+                  >
+                    <Text style={ui.secondaryBtnTxt}>Push local zip → remote (replace)</Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              <Text style={[type.label, { marginTop: space[3] }]}>Note passphrase</Text>
+              <Text style={type.meta}>
+                For sealed notes only. Never sent to the host. Separate from your sync key.
+              </Text>
+              <Text style={type.caption}>
+                {hasPassphrase ? "Passphrase is set (device memory)" : "No passphrase set"}
+              </Text>
+              <TextInput
+                style={ui.input}
+                value={pw}
+                onChangeText={setPw}
+                placeholder="Passphrase for sealed notes"
+                placeholderTextColor={color.faint}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                onFocus={() => {
+                  setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+                }}
+              />
+              <View style={styles.pwActions}>
+                <Pressable
+                  style={[ui.primaryBtn, styles.pwActionBtn]}
+                  onPress={async () => {
+                    if (!pw.trim()) {
+                      hapticWarning();
+                      Alert.alert("Empty passphrase", "Enter a passphrase, or clear the existing one.");
+                      return;
+                    }
+                    await setPassphrase(pw.trim());
+                    setPw("");
+                    hapticSuccess();
+                    Alert.alert("Passphrase set", "Sealed notes can decrypt on this device.");
+                  }}
+                >
+                  <Text style={ui.primaryBtnTxt}>Set passphrase</Text>
+                </Pressable>
+                {hasPassphrase ? (
+                  <Pressable
+                    style={[ui.ghostBtn, styles.pwActionBtn]}
+                    onPress={async () => {
+                      hapticLight();
+                      await clearPassphrase();
+                      setPw("");
+                    }}
+                  >
+                    <Text style={ui.ghostBtnTxt}>Clear</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </>
           ) : null}
-          <Pressable style={styles.btn} onPress={onSync} disabled={busy}>
-            <Text style={styles.btnTxt}>Sync now</Text>
-          </Pressable>
-          <Pressable style={styles.btnSecondary} onPress={onImportFromCloudExport} disabled={busy}>
-            <Text style={styles.btnSecondaryTxt}>Pull cloud export → local</Text>
-          </Pressable>
-          <Pressable
-            style={styles.btnSecondary}
-            onPress={() => onPushZipToCloud("merge")}
-            disabled={busy}
-          >
-            <Text style={styles.btnSecondaryTxt}>Push local zip → cloud (merge)</Text>
-          </Pressable>
-          <Pressable
-            style={styles.btnSecondary}
-            onPress={() => onPushZipToCloud("replace")}
-            disabled={busy}
-          >
-            <Text style={styles.btnSecondaryTxt}>Push local zip → cloud (replace)</Text>
-          </Pressable>
-        </>
-      ) : null}
-    </ScrollView>
+        </View>
+
+        <Animated.View style={{ height: kbPad }} accessibilityElementsHidden />
+      </ScrollView>
+
+      <EnterSyncKey
+        visible={enterOpen}
+        onCancel={() => setEnterOpen(false)}
+        onSubmit={onEnterSubmit}
+      />
+      <SyncKeyReveal
+        visible={!!revealDoor}
+        door={revealDoor || ""}
+        onDone={() => setRevealDoor(null)}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, padding: 16, backgroundColor: "#faf9f7" },
-  h: {
-    marginTop: 16,
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#666",
-    textTransform: "uppercase",
+  scroll: { flex: 1 },
+  scrollContent: {
+    padding: space[4],
+    gap: space[2],
   },
-  hint: { fontSize: 13, color: "#777", lineHeight: 18, marginBottom: 6 },
-  body: { fontSize: 15, color: "#222", lineHeight: 21 },
-  row: { flexDirection: "row", gap: 10, marginTop: 4, marginBottom: 4 },
+  row: { flexDirection: "row", gap: space[2], marginTop: space[1] },
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.06)",
+    minHeight: tap,
+    paddingHorizontal: space[4],
+    paddingVertical: space[2],
+    borderRadius: radius.pill,
+    backgroundColor: color.fillStrong,
+    justifyContent: "center",
   },
-  chipOn: { backgroundColor: "#161616" },
-  chipTxt: { fontWeight: "700", color: "#333" },
+  chipOn: { backgroundColor: color.ink },
+  chipTxt: { fontWeight: "700", color: color.inkSoft },
   chipTxtOn: { color: "#fff" },
-  switchRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 8,
-  },
-  label: { fontSize: 12, fontWeight: "600", color: "#666", marginTop: 8 },
-  input: {
+  keyPreview: {
+    fontSize: 17,
+    lineHeight: 26,
+    fontWeight: "700",
+    color: color.ink,
+    padding: space[3],
+    backgroundColor: color.paper,
+    borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.15)",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#fff",
-    fontSize: 15,
+    borderColor: color.lineSoft,
+    overflow: "hidden",
   },
-  mono: { fontSize: 15, color: "#111", fontWeight: "600" },
-  meta: { fontSize: 12, color: "#888" },
-  btn: {
-    marginTop: 10,
-    backgroundColor: "#161616",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  btnTxt: { color: "#fff", fontWeight: "700" },
-  btnSecondary: {
-    marginTop: 8,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.15)",
-  },
-  btnSecondaryTxt: { color: "#111", fontWeight: "600" },
+  advancedHead: { gap: space[1] },
+  pwActions: { flexDirection: "row", flexWrap: "wrap", gap: space[2], marginTop: space[1] },
+  pwActionBtn: { flexGrow: 1, minWidth: 120 },
 });

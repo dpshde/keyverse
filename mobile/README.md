@@ -48,13 +48,60 @@ Implementation: `src/lib/packTransfer.ts` (fflate). Scripture bundles are never 
 | `/read/[slug]` | VBV reader from bundled BSB/KJV + local outlines |
 | `/note/[slug]` | Outliner + local attachments + encrypt |
 | `/settings` | Translation · cloud toggle · sync |
-| `/share` | Door URL when cloud enabled |
+| `/share` | Sync key management (pack door), not per-passage links |
 
-## Run
+### Passage share (cloud)
+
+When cloud is on, **Share** on note and reader headers builds a **projected**
+deep link: `https://{host}/{door}/read/{slug}` (verse, range, or chapter).
+Same trust model as web: the URL includes the multiword door. See
+[ADR 0019](../docs/adr/0019-passage-deep-link-sharing.md) and
+`src/lib/shareUrl.ts`.
+
+### Thumb-reach (mobile-first)
+
+Primary actions stay in the **lower third / bottom dock**, not top-only desktop chrome:
+
+- **Passage search** is a floating **liquid-glass** capsule (`PassageSelector`: frosted fill, specular rim, soft field well — pure RN, no `expo-blur`).
+- Suggestions stack as a glass sheet **above** the capsule in the thumb zone.
+- Secondary chrome (pack status, passphrase, Settings/Share) can live at the top.
+
+### Button system (`src/theme.ts` → `ui.*`)
+
+Use only these — no ad-hoc blue text “buttons”:
+
+| Style | Use |
+|-------|-----|
+| `ui.primaryBtn` | One main action (Go, Save, Sync, Export) |
+| `ui.secondaryBtn` | Alternate (Import, Open reader) |
+| `ui.ghostBtn` / `ui.ghostBtnSm` | Chrome actions (Settings, Share, Prev/Next) |
+| `ui.headerBtn` | Nav bar trailing actions |
+| `ui.link` | In-content links only (markdown), not chrome |
+
+## Run (pnpm)
+
+This app targets **Expo SDK 54** — the SDK currently shipping in **App Store Expo Go** (as of 2026-08, store Go is still 54; SDKs 55–57 need `eas go` / TestFlight Expo Go or a dev build).
 
 ```sh
-cd mobile && npm install && npm start
+cd mobile
+pnpm install
+pnpm start
+# or: pnpm start:clear
+# or: pnpm exec expo start --clear
 ```
+
+From repo root: `pnpm --dir mobile start` / `pnpm mobile` (after `pnpm --dir mobile install`).
+
+**Do not use `pnpx expo`.** `pnpx` / `pnpm dlx` install a detached Expo CLI that cannot resolve this app’s `expo-router` (fails with `Cannot find module 'expo-router/_ctx-shared'`). Always use the project binary via `pnpm start` or `pnpm exec expo`.
+
+| Command | Use |
+|---------|-----|
+| `pnpm install` | Install deps (lockfile: `pnpm-lock.yaml`) |
+| `pnpm start` | Metro + Expo Go QR |
+| `pnpm exec expo …` | Any Expo CLI flag against **local** deps |
+| `pnpx expo …` | Avoid — isolated CLI, breaks this project |
+
+`mobile/.npmrc` sets `node-linker=hoisted` so Expo/Metro resolve modules correctly under pnpm.
 
 ## Layout
 

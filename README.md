@@ -66,7 +66,8 @@ There is **no account**. Your **key is your pack**.
 |--|--|
 | **New notes** | `/setup` → create a key → pack at `packs/{key}/` |
 | **Open** | `/` → enter key, or bookmark `/{key}/` |
-| **Share** | Share the full URL only with co-editors |
+| **Share pack** | Full `/{key}/` URL (or home QR) only with co-editors |
+| **Share a passage** | From note/reader → **Share** → `/{key}/read/{slug}` (verse, range, or chapter). Includes the key — full pack access. [ADR 0019](./docs/adr/0019-passage-deep-link-sharing.md) |
 | **Forgot** | `ls packs/` on the host (directory name = key) |
 
 All notes and APIs for a pack live under `/{key}/…`.

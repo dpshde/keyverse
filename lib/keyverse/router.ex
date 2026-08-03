@@ -81,6 +81,10 @@ defmodule Keyverse.Router do
     send_static(conn, "door-share.js", "application/javascript", "public, max-age=3600")
   end
 
+  get "/passage-share.js" do
+    send_static(conn, "passage-share.js", "application/javascript", "public, max-age=3600")
+  end
+
   get "/ref-search.js" do
     send_static(conn, "ref-search.js", "application/javascript", "public, max-age=3600")
   end
@@ -374,13 +378,20 @@ defmodule Keyverse.Router do
           send_resp(conn, 404, "no door")
         else
           origin = conn.query_params["origin"] || public_origin(conn)
-          url = String.trim_trailing(origin, "/") <> "/#{door}/"
-          svg = qr_svg(url)
+          path = normalize_share_path(conn.query_params["path"])
 
-          conn
-          |> put_resp_content_type("image/svg+xml")
-          |> put_resp_header("cache-control", "private, max-age=300")
-          |> send_resp(200, svg)
+          if is_nil(path) do
+            send_json(conn, 400, %{error: "invalid path"})
+          else
+            base = String.trim_trailing(origin, "/") <> "/#{door}"
+            url = if path == "/", do: base <> "/", else: base <> path
+            svg = qr_svg(url)
+
+            conn
+            |> put_resp_content_type("image/svg+xml")
+            |> put_resp_header("cache-control", "private, max-age=300")
+            |> send_resp(200, svg)
+          end
         end
 
       {"GET", "/api/pack"} ->
@@ -1071,7 +1082,7 @@ defmodule Keyverse.Router do
         "GET /api/pack",
         "GET /api/pack/export",
         "POST /api/pack/import",
-        "GET /api/share-qr?origin=",
+        "GET /api/share-qr?origin=&path=",
         "GET /local",
         "GET /metrics",
         "GET /manifest.webmanifest",
@@ -1339,4 +1350,34 @@ defmodule Keyverse.Router do
     |> EQRCode.encode()
     |> EQRCode.svg(width: 200)
   end
+
+  @doc false
+  # Safe deep-link path under this door: / or /note|read/<slug>
+  def normalize_share_path(nil), do: "/"
+  def normalize_share_path(""), do: "/"
+
+  def normalize_share_path(path) when is_binary(path) do
+    p = String.trim(path)
+
+    cond do
+      p in ["", "/"] ->
+        "/"
+
+      String.contains?(p, "..") or String.contains?(p, "://") or String.starts_with?(p, "//") ->
+        nil
+
+      not String.starts_with?(p, "/") ->
+        nil
+
+      Regex.match?(~r{\A/(note|read)/[a-z0-9][a-z0-9.\-]*\z}i, p) ->
+        # Canonicalize: lowercase slug segment
+        [_, kind, slug] = Regex.run(~r{\A/(note|read)/(.+)\z}i, p)
+        "/#{String.downcase(kind)}/#{String.downcase(slug)}"
+
+      true ->
+        nil
+    end
+  end
+
+  def normalize_share_path(_), do: nil
 end

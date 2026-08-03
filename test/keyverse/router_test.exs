@@ -113,6 +113,45 @@ defmodule Keyverse.RouterTest do
   end
 
 
+  test "normalize_share_path allows note and read deep links" do
+    assert Router.normalize_share_path(nil) == "/"
+    assert Router.normalize_share_path("") == "/"
+    assert Router.normalize_share_path("/read/jhn.3.16") == "/read/jhn.3.16"
+    assert Router.normalize_share_path("/NOTE/JHN.3.16-18") == "/note/jhn.3.16-18"
+    assert Router.normalize_share_path("../etc/passwd") == nil
+    assert Router.normalize_share_path("https://evil") == nil
+    assert Router.normalize_share_path("/api/notes") == nil
+  end
+
+  test "share-qr accepts path deep link and rejects invalid path" do
+    conn =
+      conn(:post, "/setup", %{"intent" => "claim", "door" => "quiet-share-path-test"})
+      |> Router.call([])
+
+    assert conn.status == 302
+
+    conn =
+      conn(
+        :get,
+        "/quiet-share-path-test/api/share-qr?origin=https://example.test&path=/read/jhn.3.16"
+      )
+      |> Router.call([])
+
+    assert conn.status == 200
+    ct = conn |> Plug.Conn.get_resp_header("content-type") |> List.first() || ""
+    assert String.contains?(ct, "svg")
+    assert conn.resp_body =~ "<svg" or conn.resp_body =~ "svg"
+
+    conn =
+      conn(
+        :get,
+        "/quiet-share-path-test/api/share-qr?origin=https://example.test&path=//evil"
+      )
+      |> Router.call([])
+
+    assert conn.status == 400
+  end
+
   test "UX HTML includes window.BASE" do
     conn =
       conn(:post, "/setup", %{"intent" => "claim", "door" => "quiet-river-lantern-home"})
@@ -163,6 +202,8 @@ defmodule Keyverse.RouterTest do
     assert conn.status == 200
     assert conn.resp_body =~ "window.BASE"
     assert conn.resp_body =~ "outliner.js" or conn.resp_body =~ "mountOutliner" or conn.resp_body =~ "editor"
+    assert conn.resp_body =~ "passage-share.js"
+    assert conn.resp_body =~ ~s(data-passage-share)
   end
 
   test "reader HTML matches client contract (verse-seeds, id=vN, vnotes)" do
@@ -200,6 +241,8 @@ defmodule Keyverse.RouterTest do
       assert html =~ "expand-notes"
       assert html =~ "reader-page.js"
       assert html =~ "outliner.js"
+      assert html =~ "passage-share.js"
+      assert html =~ ~s(data-passage-share)
       # seed map includes the verse note blocks
       assert html =~ "seed verse" or html =~ "jhn.3.16"
       refute html =~ ~s(id="chapter-notes")

@@ -230,13 +230,25 @@ API GETs are network-first with cache fallback via the service worker.
 
 ## UX helper
 
-### `GET /api/share-qr?origin=<url-origin>`
+### `GET /api/share-qr?origin=<url-origin>&path=<optional>`
 
-SVG QR for `{origin}/{door}/`. Door-only.
+SVG QR for a door URL. Door-only. Passage deep-link policy:
+[ADR 0019](./adr/0019-passage-deep-link-sharing.md).
+
+| Query | Effect |
+|-------|--------|
+| `origin` | Browser origin (e.g. `https://host`). When omitted, derived from `Forwarded` / `Host`. |
+| `path` | Optional deep link under the door. Default `/` (pack home). Allowed: `/`, `/note/<slug>`, `/read/<slug>`. Invalid path → `400`. |
+
+Examples:
+
+- pack home → `{origin}/{door}/`
+- passage (projected reader) → `{origin}/{door}/read/jhn.3.16`
 
 | Status | Body |
 |--------|------|
 | `200` | `image/svg+xml` |
+| `400` | `{ "error": "invalid path" }` |
 | `404` | plain text `no door` when `DOOR_OPEN` |
 | `500` | QR generation failed |
 

@@ -1,15 +1,17 @@
-import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSession } from "@/src/context/SessionContext";
 import type { Note, SuggestItem } from "@/src/api/types";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
@@ -17,47 +19,173 @@ import { buildNoteTree, type TreeFolder, type TreeLeaf, type TreeNode } from "@/
 import * as Local from "@/src/lib/localPack";
 import { resolveLocal, suggestLocal } from "@/src/lib/resolveLocal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SymbolView } from "expo-symbols";
+import { NoteSwipeRow } from "@/src/components/NoteSwipeRow";
+import { PassageSelector, passageSelectorListPad } from "@/src/components/PassageSelector";
+import { EnterSyncKey } from "@/src/components/EnterSyncKey";
+import { SyncInviteBanner } from "@/src/components/SyncInviteBanner";
+import { SyncKeyReveal } from "@/src/components/SyncKeyReveal";
+import {
+  completeSyncInvite,
+  deferSyncInvite,
+  getSyncInviteState,
+  plainSyncError,
+  type SyncInviteState,
+} from "@/src/lib/syncInvite";
+import { hapticError, hapticLight, hapticSelect, hapticSuccess, hapticWarning } from "@/src/lib/haptics";
+import { color, fontRead, radius, space, tap, type, ui } from "@/src/theme";
 
+const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
+
+/**
+ * Critique → improve (operate mode):
+ * - Machine OSIS (`1SA.15.15`) → natural refs (`1 Samuel 15:15`)
+ * - Folder labels match people language (books & chapters)
+ * - Cards lead with the note body; kind chrome demoted/removed
+ * - Hierarchy: book (strong) → chapter (quiet) → note (content card)
+ * - Full-note affordance is a soft trailing control, not a heavy rail
+ */
 export default function HomeScreen() {
-  const {
-    cloudEnabled,
-    cloudDoor,
-    translation,
-    hasPassphrase,
-    setPassphrase,
-    clearPassphrase,
-  } = useSession();
+  const { cloudEnabled, cloudHost, translation, enableCloud } = useSession();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [notes, setNotes] = useState<Note[]>([]);
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<SuggestItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [pw, setPw] = useState("");
+  const [kbHeight, setKbHeight] = useState(0);
+  const [invite, setInvite] = useState<SyncInviteState>("pending");
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [enterOpen, setEnterOpen] = useState(false);
+  const [revealDoor, setRevealDoor] = useState<string | null>(null);
 
   const foldKey = "kv.fold.local";
+  const onKeyboardHeightChange = useCallback((h: number) => setKbHeight(h), []);
 
-  const load = useCallback(async () => {
-    setBusy(true);
-    setErr(null);
+  const notesEpochRef = useRef(Local.getNotesCacheEpoch());
+  /** Only one iMessage-style swipe row open at a time. */
+  const openSwipeRef = useRef<SwipeableMethods | null>(null);
+
+  const closeOpenSwipe = useCallback(() => {
+    openSwipeRef.current?.close();
+    openSwipeRef.current = null;
+  }, []);
+
+  const onSwipeWillOpen = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeRef.current && openSwipeRef.current !== methods) {
+      openSwipeRef.current.close();
+    }
+    openSwipeRef.current = methods;
+  }, []);
+
+  const deleteNote = useCallback(
+    (leaf: TreeLeaf) => {
+      hapticWarning();
+      Alert.alert(
+        "Delete note?",
+        `Remove “${leaf.label}” from this device. This cannot be undone here.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                closeOpenSwipe();
+                await Local.deleteNote(leaf.slug);
+                notesEpochRef.current = Local.getNotesCacheEpoch();
+                setNotes((prev) => prev.filter((n) => n.scope?.slug !== leaf.slug));
+                hapticSuccess();
+              } catch (e) {
+                hapticError();
+                Alert.alert("Delete failed", String(e));
+              }
+            },
+          },
+        ]
+      );
+    },
+    [closeOpenSwipe]
+  );
+
+  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+    const quiet = !!opts?.quiet;
+    if (!quiet) {
+      setBusy(true);
+      setErr(null);
+    }
     try {
-      const [list, foldRaw] = await Promise.all([
-        Local.listNotes(),
+      const [list, foldRaw, inv] = await Promise.all([
+        Local.listNotes(), // memory-cached after first disk read
         AsyncStorage.getItem(foldKey),
+        getSyncInviteState(),
       ]);
       setNotes(list);
+      setInvite(inv);
+      notesEpochRef.current = Local.getNotesCacheEpoch();
       if (foldRaw) setCollapsed(JSON.parse(foldRaw) || {});
     } catch (e) {
-      setErr(String(e));
+      if (!quiet) setErr(String(e));
     } finally {
-      setBusy(false);
+      if (!quiet) setBusy(false);
     }
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Refresh list only when notes actually changed elsewhere (note editor / sync / import)
+  useFocusEffect(
+    useCallback(() => {
+      const ep = Local.getNotesCacheEpoch();
+      if (ep !== notesEpochRef.current) {
+        load({ quiet: true });
+      } else {
+        // Re-read invite / cloud chrome when returning from Sync home
+        getSyncInviteState().then(setInvite).catch(() => {});
+      }
+    }, [load])
+  );
+
+  const showInviteBanner =
+    !cloudEnabled && invite === "pending" && notes.length >= 1 && !syncBusy;
+
+  const onTurnOnFromBanner = async () => {
+    setSyncBusy(true);
+    setErr(null);
+    try {
+      const res = await enableCloud(cloudHost || DEFAULT_HOST);
+      await completeSyncInvite();
+      setInvite("done");
+      hapticSuccess();
+      if (res.mode === "claim") setRevealDoor(res.door);
+      load({ quiet: true });
+    } catch (e) {
+      hapticError();
+      setErr(plainSyncError(e, "turn_on"));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const onEnterFromBanner = () => setEnterOpen(true);
+
+  const onDismissInvite = async () => {
+    await deferSyncInvite();
+    setInvite("deferred");
+  };
+
+  const onEnterSubmit = async (door: string) => {
+    const res = await enableCloud(cloudHost || DEFAULT_HOST, door);
+    await completeSyncInvite();
+    setInvite("done");
+    setEnterOpen(false);
+    if (res.mode === "claim") setRevealDoor(res.door);
+    load({ quiet: true });
+  };
 
   useEffect(() => {
     if (q.trim().length < 1) {
@@ -72,6 +200,7 @@ export default function HomeScreen() {
   const flat = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
 
   const toggle = async (id: string) => {
+    hapticSelect();
     const was = !!collapsed[id];
     const map2 = { ...collapsed };
     if (was) delete map2[id];
@@ -88,140 +217,232 @@ export default function HomeScreen() {
       setErr(r.error || "invalid passage");
       return;
     }
+    hapticLight();
     setSuggestions([]);
     setQ("");
+    setErr(null);
     router.push(`/read/${encodeURIComponent(r.scope.slug)}`);
   };
 
+  const dockPad = passageSelectorListPad(suggestions.length, insets.bottom, kbHeight);
+
   return (
-    <View style={styles.root}>
-      <View style={styles.top}>
-        <Text style={styles.door} numberOfLines={1}>
-          Local pack{cloudEnabled ? ` · cloud ${cloudDoor}` : " · offline"}
-        </Text>
-        <Text style={styles.meta}>
-          {translation} · {notes.length} notes{hasPassphrase ? " · 🔒" : ""}
-        </Text>
-        <View style={styles.searchRow}>
-          <TextInput
-            style={styles.search}
-            value={q}
-            onChangeText={setQ}
-            placeholder="John 3:16 · psa 33"
-            placeholderTextColor="#999"
-            autoCapitalize="none"
-            onSubmitEditing={() => openPassage()}
-            returnKeyType="go"
-          />
-          <Pressable style={styles.go} onPress={() => openPassage()}>
-            <Text style={styles.goTxt}>Go</Text>
-          </Pressable>
-        </View>
-        {suggestions.length > 0 ? (
-          <View style={styles.sugBox}>
-            {suggestions.map((s) => (
+    <View style={ui.screen}>
+      <View style={[styles.top, { paddingTop: Math.max(insets.top, space[2]) }]}>
+        <View style={styles.topRow}>
+          <View style={styles.topMeta}>
+            <Text style={styles.brand} numberOfLines={1}>
+              keyverse
+            </Text>
+            {cloudEnabled ? (
               <Pressable
-                key={s.canonical + s.label}
-                style={styles.sug}
-                onPress={() => openPassage(s.insertText || s.canonical)}
+                onPress={() => {
+                  hapticSelect();
+                  router.push("/share");
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Sync on, open sync"
+                hitSlop={6}
               >
-                <Text style={styles.sugTxt}>{s.label}</Text>
+                <Text style={styles.status}>Sync on</Text>
               </Pressable>
-            ))}
+            ) : (
+              <Text style={styles.status}>On this device</Text>
+            )}
+            <Text style={styles.metaLine}>
+              {translation} · {notes.length} {notes.length === 1 ? "note" : "notes"}
+            </Text>
+          </View>
+          <View style={styles.topActions}>
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                router.push("/share");
+              }}
+              style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Sync"
+              hitSlop={8}
+            >
+              <SymbolView
+                name="arrow.triangle.2.circlepath"
+                size={22}
+                weight="semibold"
+                tintColor={color.ink}
+                fallback={<Text style={styles.gearFallback}>{"\u21BB"}</Text>}
+              />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                router.push("/settings");
+              }}
+              style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+              hitSlop={8}
+            >
+              <SymbolView
+                name="gearshape"
+                size={22}
+                weight="semibold"
+                tintColor={color.ink}
+                fallback={<Text style={styles.gearFallback}>{"\u2699"}</Text>}
+              />
+            </Pressable>
+          </View>
+        </View>
+        {err ? <Text style={ui.err}>{err}</Text> : null}
+        {syncBusy ? (
+          <View style={styles.syncBusyRow}>
+            <ActivityIndicator color={color.muted} />
+            <Text style={type.meta}>Turning on sync…</Text>
           </View>
         ) : null}
-
-        <View style={styles.pwRow}>
-          <TextInput
-            style={styles.pw}
-            value={pw}
-            onChangeText={setPw}
-            placeholder="Passphrase (optional encrypt)"
-            placeholderTextColor="#999"
-            secureTextEntry
-            autoCapitalize="none"
-          />
-          <Pressable
-            style={styles.pwBtn}
-            onPress={async () => {
-              await setPassphrase(pw);
-              setPw("");
-            }}
-          >
-            <Text style={styles.pwBtnTxt}>Set</Text>
-          </Pressable>
-          {hasPassphrase ? (
-            <Pressable onPress={() => clearPassphrase()}>
-              <Text style={styles.link}>Clear</Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        <View style={styles.navRow}>
-          <Pressable onPress={() => router.push("/settings")}>
-            <Text style={styles.link}>Settings · cloud</Text>
-          </Pressable>
-          <Pressable onPress={() => router.push("/share")}>
-            <Text style={styles.link}>Share</Text>
-          </Pressable>
-        </View>
-        {err ? <Text style={styles.err}>{err}</Text> : null}
       </View>
 
+      {showInviteBanner ? (
+        <SyncInviteBanner
+          onTurnOn={onTurnOnFromBanner}
+          onEnterKey={onEnterFromBanner}
+          onDismiss={onDismissInvite}
+        />
+      ) : null}
+
       {busy && !notes.length ? (
-        <ActivityIndicator style={{ marginTop: 40 }} />
+        <ActivityIndicator style={{ marginTop: space[10] }} color={color.muted} />
       ) : (
         <FlatList
           data={flat}
           keyExtractor={(item) => item.key}
-          refreshControl={<RefreshControl refreshing={busy} onRefresh={load} />}
-          contentContainerStyle={{ padding: 12, paddingBottom: 48 }}
+          refreshControl={
+            <RefreshControl refreshing={busy} onRefresh={load} tintColor={color.muted} />
+          }
+          contentContainerStyle={{
+            paddingHorizontal: space[4],
+            paddingTop: space[3],
+            paddingBottom: dockPad,
+          }}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={closeOpenSwipe}
           ListEmptyComponent={
             <Text style={styles.empty}>
-              Notes stay on this device. Search a passage to read ({translation}) and capture.
+              Notes stay on this device. Open a passage below in {translation} and write under a
+              verse.
             </Text>
           }
           renderItem={({ item }) => {
             if (item.kind === "folder") {
               const f = item.node as TreeFolder;
               const isCol = !!collapsed[f.id];
+              const isBook = f.level === "book";
+              const a11y = f.accessibilityLabel || f.label;
               return (
                 <Pressable
-                  style={[styles.folder, { marginLeft: item.depth * 12 }]}
+                  style={[
+                    styles.folder,
+                    isBook ? styles.folderBook : styles.folderChapter,
+                    { marginLeft: item.depth * space[3] },
+                  ]}
                   onPress={() => toggle(f.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: !isCol }}
+                  accessibilityLabel={`${a11y}, ${f.noteCount} notes`}
                 >
-                  <Text style={styles.folderChev}>{isCol ? "▸" : "▾"}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.folderTitle}>{f.label}</Text>
-                    <Text style={styles.folderMeta}>{f.kids.length} items</Text>
-                  </View>
+                  <Text style={[styles.folderChev, isBook && styles.folderChevBook]}>
+                    {isCol ? "▸" : "▾"}
+                  </Text>
+                  {isBook ? (
+                    <View style={styles.folderText}>
+                      <Text style={styles.folderTitleBook} numberOfLines={1}>
+                        {f.label}
+                      </Text>
+                      <Text style={styles.folderMeta}>
+                        {f.noteCount} {f.noteCount === 1 ? "note" : "notes"}
+                      </Text>
+                    </View>
+                  ) : (
+                    // Single quiet row — title left, count right (no gray chip)
+                    <>
+                      <Text style={styles.folderTitleChapter} numberOfLines={1}>
+                        {f.label}
+                      </Text>
+                      <Text style={styles.folderChapterCount}>
+                        {f.noteCount}
+                      </Text>
+                    </>
+                  )}
                 </Pressable>
               );
             }
+
             const leaf = item.node as TreeLeaf;
             return (
-              <Pressable
-                style={[styles.card, { marginLeft: item.depth * 12 }]}
-                onPress={() => router.push(`/read/${encodeURIComponent(leaf.slug)}`)}
-                onLongPress={() => router.push(`/note/${encodeURIComponent(leaf.slug)}`)}
+              <NoteSwipeRow
+                style={{ marginLeft: item.depth * space[3] }}
+                label={leaf.label}
+                onWillOpen={onSwipeWillOpen}
+                onDelete={() => deleteNote(leaf)}
+                onEdit={() => {
+                  hapticLight();
+                  router.push(`/note/${encodeURIComponent(leaf.slug)}`);
+                }}
               >
-                <Text style={styles.cardTitle}>{leaf.label}</Text>
-                {leaf.preview ? (
-                  leaf.encrypted ? (
-                    <Text style={styles.cardBody}>Encrypted</Text>
-                  ) : (
+                <Pressable
+                  style={styles.card}
+                  onPress={() => {
+                    closeOpenSwipe();
+                    hapticSelect();
+                    router.push(`/read/${encodeURIComponent(leaf.slug)}`);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${leaf.label} in reader. Swipe left for options.`}
+                  accessibilityHint="Swipe left for Note and Delete"
+                >
+                  <View style={styles.cardHead}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>
+                      {leaf.label}
+                    </Text>
+                    {leaf.encrypted ? (
+                      <Text style={styles.badge}>Sealed</Text>
+                    ) : leaf.attCount > 0 ? (
+                      <Text style={styles.badge}>
+                        {leaf.attCount} file{leaf.attCount === 1 ? "" : "s"}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {leaf.preview ? (
                     <InlineMarkdown text={leaf.preview} style={styles.cardBody} />
-                  )
-                ) : null}
-                <Text style={styles.cardMeta}>
-                  {leaf.kind}
-                  {leaf.attCount ? ` · ${leaf.attCount} attach` : ""}
-                </Text>
-              </Pressable>
+                  ) : leaf.encrypted ? (
+                    <Text style={styles.cardBodyMuted}>Encrypted — open with passphrase</Text>
+                  ) : (
+                    <Text style={styles.cardBodyMuted}>Empty note</Text>
+                  )}
+                </Pressable>
+              </NoteSwipeRow>
             );
           }}
         />
       )}
+
+      <PassageSelector
+        value={q}
+        onChangeText={setQ}
+        onSubmit={(query) => openPassage(query)}
+        suggestions={suggestions}
+        onKeyboardHeightChange={onKeyboardHeightChange}
+      />
+
+      <EnterSyncKey
+        visible={enterOpen}
+        onCancel={() => setEnterOpen(false)}
+        onSubmit={onEnterSubmit}
+      />
+      <SyncKeyReveal
+        visible={!!revealDoor}
+        door={revealDoor || ""}
+        onDone={() => setRevealDoor(null)}
+      />
     </View>
   );
 }
@@ -244,87 +465,185 @@ function flattenTree(
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#faf9f7" },
   top: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 10,
+    paddingHorizontal: space[4],
+    paddingBottom: space[3] + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(0,0,0,0.1)",
-    backgroundColor: "#fff",
-    gap: 6,
+    borderBottomColor: color.line,
+    backgroundColor: color.paperRaised,
+    gap: space[1],
+    // Slight lift so the bar reads as chrome, not page wash
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  door: { fontSize: 13, fontWeight: "600", color: "#666" },
-  meta: { fontSize: 12, color: "#888" },
-  searchRow: { flexDirection: "row", gap: 8, marginTop: 4 },
-  search: {
-    flex: 1,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.15)",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    backgroundColor: "#f6f6f6",
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space[3],
+    minHeight: 48,
   },
-  go: {
-    backgroundColor: "#161616",
-    borderRadius: 10,
-    paddingHorizontal: 16,
+  topMeta: { flex: 1, minWidth: 0, gap: 2, paddingRight: space[3] },
+  topActions: { flexDirection: "row", alignItems: "center" },
+  brand: {
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+    color: color.ink,
+  },
+  iconBtn: {
+    width: tap,
+    height: tap,
+    alignItems: "center",
     justifyContent: "center",
   },
-  goTxt: { color: "#fff", fontWeight: "700" },
-  sugBox: {
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.12)",
-    overflow: "hidden",
+  iconBtnPressed: {
+    opacity: 0.45,
   },
-  sug: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(0,0,0,0.06)",
+  gearFallback: { fontSize: 20, color: color.ink, lineHeight: 22, fontWeight: "700" },
+  status: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: color.inkSoft,
+    letterSpacing: -0.1,
   },
-  sugTxt: { fontSize: 15, color: "#222" },
-  pwRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  pw: {
-    flex: 1,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.12)",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 14,
+  metaLine: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: color.faint,
+    letterSpacing: -0.1,
   },
-  pwBtn: { backgroundColor: "#eee", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
-  pwBtnTxt: { fontWeight: "600" },
-  navRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
-  link: { color: "#336", fontWeight: "600", fontSize: 13 },
-  err: { color: "#a33", fontSize: 13 },
-  empty: { textAlign: "center", color: "#888", marginTop: 40, paddingHorizontal: 24, lineHeight: 20 },
+  syncBusyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space[2],
+    marginTop: space[2],
+  },
+  empty: {
+    textAlign: "center",
+    color: color.muted,
+    marginTop: space[10],
+    paddingHorizontal: space[6],
+    lineHeight: 22,
+    fontSize: 15,
+  },
+
   folder: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(0,0,0,0.04)",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
+    gap: space[2],
+    marginBottom: space[1],
+    minHeight: 36,
   },
-  folderChev: { fontSize: 14, color: "#666", width: 16 },
-  folderTitle: { fontSize: 16, fontWeight: "700", color: "#111" },
-  folderMeta: { fontSize: 12, color: "#888" },
+  folderBook: {
+    marginTop: space[3],
+    marginBottom: space[2],
+    paddingVertical: space[1],
+    minHeight: 48,
+  },
+  /**
+   * Chapter rows: HIG-sized hit target (44+) without becoming another card.
+   * Quiet fill + full-row press beats a skinny hairline label.
+   */
+  folderChapter: {
+    minHeight: tap, // 44
+    paddingVertical: space[3],
+    paddingHorizontal: space[2],
+    marginBottom: space[1],
+    borderRadius: radius.sm,
+    backgroundColor: color.fill,
+  },
+  folderChev: {
+    fontSize: 12,
+    color: color.faint,
+    width: 16,
+    textAlign: "center",
+  },
+  folderChevBook: {
+    fontSize: 13,
+    color: color.muted,
+    fontWeight: "600",
+  },
+  folderText: { flex: 1, minWidth: 0 },
+  folderTitleBook: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: color.ink,
+    letterSpacing: -0.2,
+  },
+  folderTitleChapter: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "600",
+    color: color.inkSoft,
+    letterSpacing: -0.1,
+  },
+  folderChapterCount: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: color.faint,
+    fontVariant: ["tabular-nums"],
+    minWidth: 20,
+    textAlign: "right",
+    paddingRight: 2,
+  },
+  folderMeta: {
+    fontSize: 12,
+    color: color.faint,
+    marginTop: 1,
+  },
+
   card: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 8,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    // margin lives on NoteSwipeRow so swipe actions align under the card
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.08)",
+    borderColor: color.lineSoft,
+    paddingVertical: space[3],
+    paddingHorizontal: space[3] + 2,
+    gap: space[1],
+    // Soft lift without fighting the paper field
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginBottom: 4 },
-  cardBody: { fontSize: 14, color: "#444", lineHeight: 20 },
-  cardMeta: { marginTop: 8, fontSize: 11, color: "#999" },
+  cardHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space[2],
+  },
+  cardTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "700",
+    color: color.ink,
+    letterSpacing: -0.2,
+  },
+  badge: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: color.muted,
+    backgroundColor: color.fill,
+    overflow: "hidden",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  cardBody: {
+    fontSize: 15,
+    lineHeight: 21,
+    color: color.inkSoft,
+    fontFamily: fontRead,
+  },
+  cardBodyMuted: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: color.faint,
+    fontStyle: "italic",
+  },
 });

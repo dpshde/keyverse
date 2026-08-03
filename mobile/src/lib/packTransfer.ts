@@ -176,6 +176,7 @@ export async function importLocalPackZip(
 
   if (mode === "replace") {
     await clearLocalNotesAndAttachments();
+    Local.invalidateNotesCache();
   }
 
   let noteCount = 0;
@@ -236,6 +237,8 @@ export async function importLocalPackZip(
     }
   }
 
+  // Ensure list is coherent after bulk disk writes
+  Local.invalidateNotesCache();
   return { mode, notes: noteCount, attachments: attCount, files: entries.length };
 }
 

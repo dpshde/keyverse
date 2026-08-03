@@ -40,6 +40,7 @@ Single pack (offline / import) is just that inner directory.
 - Encryption (optional): `{encrypted:true, cipher:{v,alg,kdf,iter,salt,iv,ct}}`; blocks/attachments empty on disk.
 - Cipher plaintext is UTF-8 JSON `{"blocks":[…],"attachments":[…]}` (AES-256-GCM, PBKDF2-HMAC-SHA-256, 210000 iter).
 - Containment is computed from OSIS geometry — never merge/copy note bodies between addresses.
+- Passage share (door UX): default deep link is `/{door}/read/{slug}` (projected reader). Pack share is `/{door}/`. Knowing either URL is full pack access (no capability tokens in v0.2). See docs/adr/0019.
 
 ## HTTP door (optional)
 
@@ -60,7 +61,7 @@ Single pack (offline / import) is just that inner directory.
 | GET | /api/pack | Pack manifest (user-owned counts) |
 | GET | /api/pack/export | Zip export (notes+attachments only) |
 | POST | /api/pack/import | Zip import (`mode=merge|replace`) |
-| GET | /api/share-qr?origin= | Door URL as SVG QR |
+| GET | /api/share-qr?origin=&path= | Door or deep-link SVG QR (`path` = `/`, `/note|read/<slug>`) |
 | OPTIONS | /api/* | CORS preflight → 204 |
 | GET | /sw.js | Service worker (root; PWA) |
 | GET | /manifest.webmanifest | Web app manifest |
