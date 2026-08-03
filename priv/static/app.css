@@ -286,6 +286,97 @@
   @media (pointer: coarse) and (min-width: 641px) {
     .reader-dock-item { min-height: 2.6rem; }
   }
+  /* Phosphor inline labels — used across home / reader / editor chrome */
+  .ui-ico-label {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+  }
+  .ui-ico-label .ph {
+    font-size: 1.05em;
+    line-height: 1;
+    opacity: .88;
+  }
+  .ui-ico-txt { line-height: 1.2; }
+  .head-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .3rem;
+  }
+  .head-icon-btn .ph {
+    font-size: 1.15em;
+    line-height: 1;
+  }
+  .reader-back .ph,
+  .editor-back .ph {
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+  .nt-act .ph {
+    font-size: 1rem;
+    line-height: 1;
+  }
+  .pwa-install .ui-ico-label .ph,
+  .pack-own-link .ph,
+  .pack-own-sum .ph,
+  .site-foot .ph {
+    font-size: 1em;
+    line-height: 1;
+    opacity: .75;
+  }
+  .pack-own-sum {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+  }
+  .home-notes-h {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+  }
+  .home-notes-h .ph {
+    font-size: .95em;
+    opacity: .7;
+  }
+  .ref-search form {
+    position: relative;
+  }
+  .ref-search-ico {
+    position: absolute;
+    left: .85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    font-size: 1.05rem;
+    z-index: 1;
+  }
+  .ref-search-ico .ph { line-height: 1; }
+  .ref-search input[type=text] {
+    padding-left: 2.35rem !important;
+  }
+  .door-share-hint .ph {
+    font-size: .95em;
+    line-height: 1;
+  }
+  .door-share-x .ph {
+    font-size: 1.15rem;
+    line-height: 1;
+  }
+  .door-share-action .ui-ico-label,
+  .door-share-copy .ui-ico-label {
+    justify-content: center;
+  }
+  .att-file-btn .ph,
+  .att-link-btn .ph {
+    font-size: 1em;
+    margin-right: .25rem;
+    vertical-align: -0.1em;
+  }
+
   /* Home: brand left, multiword key right — tight chrome, not a second hero */
   .home-head {
     display: flex;
@@ -451,13 +542,13 @@
     position: relative;
     margin: 0;
   }
-  .ref-search form { margin: 0; }
+  .ref-search form { margin: 0; position: relative; }
   .ref-search input[type=text] {
     margin: 0; display: block;
     border-color: var(--rs-border);
     border-radius: var(--rs-radius);
     background: #fff;
-    padding: .7rem .85rem;
+    padding: .7rem .85rem .7rem 2.35rem; /* room for magnifying-glass */
     box-shadow: 0 1px 2px color-mix(in srgb, #000 3.5%, transparent);
   }
   @media (prefers-color-scheme: dark) {

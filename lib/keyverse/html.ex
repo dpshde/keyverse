@@ -6,6 +6,16 @@ defmodule Keyverse.Html do
   def esc(nil), do: ""
   def esc(s), do: Plug.HTML.html_escape(to_string(s))
 
+  @doc false
+  # Phosphor Icons (regular) — loaded on every page via CDN in page/3.
+  def ico(name) when is_binary(name) do
+    ~s(<i class="ph ph-#{name}" aria-hidden="true"></i>)
+  end
+
+  def ico_label(name, text) when is_binary(name) and is_binary(text) do
+    ~s(<span class="ui-ico-label">#{ico(name)}<span class="ui-ico-txt">#{esc(text)}</span></span>)
+  end
+
   def page(title, body, opts \\ []) do
     base = Keyword.get(opts, :base, "")
     man_scope = Keyword.get(opts, :manifest_scope, base)
@@ -66,13 +76,13 @@ defmodule Keyverse.Html do
   def site_footer(install? \\ false) do
     install =
       if install? do
-        ~s(<button type="button" class="pwa-install" id="pwa-install">Install app</button>)
+        ~s(<button type="button" class="pwa-install" id="pwa-install">#{ico_label("device-mobile", "Install app")}</button>)
       else
         ""
       end
 
     """
-    <footer class="site-foot ui">#{install}<span class="muted">no account · just your key</span></footer>
+    <footer class="site-foot ui">#{install}<span class="muted">#{ico("key")} no account · just your key</span></footer>
     """
   end
 
@@ -281,19 +291,19 @@ defmodule Keyverse.Html do
         title="Share your notes link" aria-label="Share notes link: #{esc(door)}"
         aria-expanded="false" aria-controls="door-share-panel">
         <span class="door-share-key">#{esc(door)}</span>
-        <span class="door-share-hint" aria-hidden="true">↗</span>
+        <span class="door-share-hint" aria-hidden="true">#{ico("export")}</span>
       </button>
       <div class="door-share-panel" id="door-share-panel" role="dialog"
         aria-label="Share your notes" hidden>
         <div class="door-share-head">
           <div class="door-share-title" id="door-share-title">#{esc(door)}</div>
           <button type="button" class="door-share-x" id="door-share-close"
-            title="Close" aria-label="Close share">×</button>
+            title="Close" aria-label="Close share">#{ico("x")}</button>
         </div>
         <div class="door-share-qr" id="door-share-qr" aria-busy="true"></div>
         <div class="door-share-actions">
-          <button type="button" class="door-share-action" id="door-share-action">Share</button>
-          <button type="button" class="door-share-copy" id="door-share-copy">Copy link</button>
+          <button type="button" class="door-share-action" id="door-share-action">#{ico_label("share-network", "Share")}</button>
+          <button type="button" class="door-share-copy" id="door-share-copy">#{ico_label("copy", "Copy link")}</button>
         </div>
       </div>
     </div>
@@ -308,6 +318,7 @@ defmodule Keyverse.Html do
     """
     <div class="ref-search" id="ref-search">
       <form action="#{esc(base)}/go" method="get" id="ref-form" role="search" autocomplete="off">
+        <span class="ref-search-ico" aria-hidden="true">#{ico("magnifying-glass")}</span>
         <input class="ui" type="text" name="q" id="ref-input"
           placeholder="John 3:16" autofocus autocomplete="off" autocorrect="off"
           autocapitalize="off" spellcheck="false" inputmode="search"
@@ -324,9 +335,9 @@ defmodule Keyverse.Html do
     """
     <div class="crypto-bar ui" id="crypto-bar" data-locked="#{if locked?, do: "1", else: "0"}">
       <span class="crypto-status" id="crypto-status"></span>
-      <button type="button" class="crypto-btn" id="crypto-unlock" hidden>Unlock</button>
-      <button type="button" class="crypto-btn" id="crypto-set" hidden>Set passphrase</button>
-      <button type="button" class="crypto-btn" id="crypto-clear" hidden>Lock</button>
+      <button type="button" class="crypto-btn" id="crypto-unlock" hidden>#{ico_label("lock-open", "Unlock")}</button>
+      <button type="button" class="crypto-btn" id="crypto-set" hidden>#{ico_label("key", "Set passphrase")}</button>
+      <button type="button" class="crypto-btn" id="crypto-clear" hidden>#{ico_label("lock", "Lock")}</button>
     </div>
     <script src="/crypto-bar.js"></script>
     """
@@ -345,7 +356,7 @@ defmodule Keyverse.Html do
     #{crypto_bar(false)}
     #{ref_search_html(base)}
     <section class="home-notes">
-      <h2 class="ui muted">Notes</h2>
+      <h2 class="ui muted home-notes-h">#{ico("notebook")} Notes</h2>
       #{tree}
     </section>
     #{pack_ownership_html(base, man)}
@@ -366,13 +377,13 @@ defmodule Keyverse.Html do
     """
     <section class="pack-own ui" id="pack-own" aria-label="Backup">
       <div class="pack-own-row">
-        <span class="muted pack-own-sum">#{note_bit} · #{file_bit}</span>
+        <span class="muted pack-own-sum">#{ico("stack")} #{note_bit} · #{file_bit}</span>
         <span class="pack-own-dot muted" aria-hidden="true">·</span>
-        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>Export</a>
+        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>#{ico_label("export", "Export")}</a>
         <span class="pack-own-dot muted" aria-hidden="true">·</span>
         <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
           <label class="pack-own-link pack-own-file">
-            Import
+            #{ico_label("upload-simple", "Import")}
             <input type="file" name="pack" accept=".zip,application/zip" required hidden>
           </label>
           <label class="pack-own-replace muted" title="Clear existing notes before import">
@@ -425,8 +436,9 @@ defmodule Keyverse.Html do
     end
   end
 
-  @nt_icon_edit ~s(<svg width="14" height="14" viewBox="0 0 256 256" fill="none" aria-hidden="true"><polygon points="128 160 96 160 96 128 192 32 224 64 128 160" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="168" y1="56" x2="200" y2="88" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M216,128v80a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V48a8,8,0,0,1,8-8h80" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>)
-  @nt_icon_read ~s(<svg width="14" height="14" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,88a32,32,0,0,1,32-32h72V200H160a32,32,0,0,0-32,32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M24,200H96a32,32,0,0,1,32,32V88A32,32,0,0,0,96,56H24Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>)
+  # Prefer Phosphor over inline SVG so weight/size match the rest of the UI.
+  @nt_icon_edit ~s(<i class="ph ph-pencil-simple" aria-hidden="true"></i>)
+  @nt_icon_read ~s(<i class="ph ph-book-open" aria-hidden="true"></i>)
 
   defp render_home_tree_node(node, depth, base) do
     kids = Map.get(node, :children) || []
@@ -566,14 +578,14 @@ defmodule Keyverse.Html do
 
     body = """
     <header class="ui editor-head">
-      <a href="#{esc(base)}/" class="muted editor-back" aria-label="Home">&larr;</a>
+      <a href="#{esc(base)}/" class="muted editor-back head-icon-btn" aria-label="Home">#{ico("arrow-left")}</a>
       <h1>#{esc(display)}</h1>
       <div class="editor-head-actions">
-        <a class="muted" href="#{esc(base)}/read/#{esc(scope.slug)}">read</a>
-        <button type="button" class="muted passage-share-btn" data-passage-share
+        <a class="muted head-icon-btn" href="#{esc(base)}/read/#{esc(scope.slug)}">#{ico_label("book-open", "Read")}</a>
+        <button type="button" class="muted passage-share-btn head-icon-btn" data-passage-share
           data-slug="#{esc(scope.slug)}" data-label="#{esc(display)}"
           title="Share projected reading view (includes notes inside this passage)"
-          aria-label="Share passage link">Share</button>
+          aria-label="Share passage link">#{ico_label("export", "Share")}</button>
         <span id="status"></span>
       </div>
     </header>
@@ -588,7 +600,7 @@ defmodule Keyverse.Html do
       <p>This note is sealed with a client-side passphrase (cowyo-style). The server only stores ciphertext. Enter the passphrase or open with <code>#pw=…</code> in the URL.</p>
       <form id="crypto-unlock-form">
         <input type="password" id="crypto-pw" placeholder="Passphrase" autocomplete="current-password" required>
-        <button type="submit">Unlock</button>
+        <button type="submit">#{ico_label("lock-open", "Unlock")}</button>
       </form>
       <p class="muted" id="crypto-err" hidden>Could not decrypt — wrong passphrase?</p>
     </div>
@@ -983,13 +995,13 @@ defmodule Keyverse.Html do
 
         body = """
         <header class="ui reader-head">
-          <a href="#{esc(base)}/" class="muted reader-back" aria-label="Home">&larr;</a>
+          <a href="#{esc(base)}/" class="muted reader-back head-icon-btn" aria-label="Home">#{ico("arrow-left")}</a>
           <h1 id="reader-title">#{esc(display)}</h1>
           <div class="reader-head-actions">
-            <button type="button" class="muted passage-share-btn" data-passage-share
+            <button type="button" class="muted passage-share-btn head-icon-btn" data-passage-share
               data-slug="#{esc(scope.slug)}" data-label="#{esc(share_label)}"
               title="Share this reading view (door link — full pack access)"
-              aria-label="Share passage link">Share</button>
+              aria-label="Share passage link">#{ico_label("export", "Share")}</button>
           </div>
         </header>
         <nav class="reader-dock" id="reader-dock" aria-label="Chapter tools">

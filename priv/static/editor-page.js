@@ -58,10 +58,10 @@
           '<div class="att-board" id="att-board">' +
             (rows ? '<ul class="att-list">' + rows + '</ul>' : '') +
             '<form class="att-add" id="att-url-form">' +
-              '<label class="att-file-btn' + (uploadBusy ? " busy" : "") + '">+ File' +
+              '<label class="att-file-btn' + (uploadBusy ? " busy" : "") + '"><i class="ph ph-paperclip" aria-hidden="true"></i> File' +
               '<input type="file" id="att-file" multiple accept="*/*"' + (uploadBusy ? " disabled" : "") + '></label>' +
               '<div class="att-link-wrap" id="att-link-wrap">' +
-                '<button type="button" class="att-link-btn" id="att-link-open">+ Link</button>' +
+                '<button type="button" class="att-link-btn" id="att-link-open"><i class="ph ph-link" aria-hidden="true"></i> Link</button>' +
                 '<input class="att-url" type="url" id="att-url" placeholder="https://\u2026" inputmode="url" autocomplete="url">' +
               '</div>' +
             '</form>' +
