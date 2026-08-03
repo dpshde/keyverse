@@ -1801,14 +1801,15 @@ const CSS = `
     pointer-events: none;
     border-radius: 0;
   }
+  /* Outer curve on the RIGHT only — left edge stays square */
   .verse.sel.sel-lo .vtext::after {
-    border-radius: var(--sel-radius) var(--sel-radius) 0 0;
+    border-radius: 0 var(--sel-radius) 0 0;
   }
   .verse.sel.sel-hi .vtext::after {
-    border-radius: 0 0 var(--sel-radius) var(--sel-radius);
+    border-radius: 0 0 var(--sel-radius) 0;
   }
   .verse.sel.sel-lo.sel-hi .vtext::after {
-    border-radius: var(--sel-radius);
+    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
   }
   /*
    * Stitch: extend each following selected verse's fill up into the previous
@@ -1837,19 +1838,19 @@ const CSS = `
   }
   .verse.sel.sel-hi.notes-open .vtext::after,
   .verse.sel.sel-hi.editing .vtext::after {
-    border-bottom-left-radius: var(--sel-radius);
     border-bottom-right-radius: var(--sel-radius);
+    border-bottom-left-radius: 0;
   }
   .verse.sel.sel-lo.sel-hi.notes-open .vtext::after,
   .verse.sel.sel-lo.sel-hi.editing .vtext::after {
-    border-radius: var(--sel-radius);
+    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
   }
   .verse.sel .vnotes {
     background-color: #fff;
     margin: .55rem 0 0;
     padding: .55rem var(--sel-x) .65rem;
     border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-    border-radius: var(--sel-radius);
+    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
     box-shadow:
       0 1px 3px color-mix(in srgb, #000 6%, transparent),
       0 6px 16px color-mix(in srgb, #000 4%, transparent);
@@ -1865,7 +1866,7 @@ const CSS = `
   }
   .verse.sel.sel-hi.notes-open .vnotes,
   .verse.sel.sel-hi.editing .vnotes {
-    border-radius: var(--sel-radius);
+    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
     padding-bottom: .7rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
@@ -1887,7 +1888,7 @@ const CSS = `
     top: var(--v-pad-y, .34rem);
     bottom: var(--v-pad-y, .34rem);
     width: 2px;
-    border-radius: 1px;
+    border-radius: 0; /* left rails never rounded */
     background: color-mix(in srgb, currentColor 22%, transparent);
     pointer-events: none;
   }
@@ -1898,10 +1899,6 @@ const CSS = `
     top: var(--sel-y, .36rem);
     bottom: var(--sel-y, .36rem);
   }
-  /*
-   * Expanded selection: drop rails on every .sel in the run once any member
-   * has its tray open (mids are not .notes-open themselves).
-   */
   .verse.sel.has-notes:has(~ .verse.sel.notes-open)::before,
   .verse.sel.has-notes:has(~ .verse.sel.editing)::before,
   .verse.sel.notes-open ~ .verse.sel.has-notes::before,
@@ -1910,17 +1907,11 @@ const CSS = `
     width: 0;
     background: transparent;
   }
-  /* Join into next closed has-notes verse */
   .verse.has-notes:not(.notes-open):not(.editing):has(+ .verse.has-notes:not(.notes-open):not(.editing))::before {
     bottom: 0;
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
   }
-  /* Join from previous closed has-notes verse */
   .verse.has-notes:not(.notes-open):not(.editing) + .verse.has-notes:not(.notes-open):not(.editing)::before {
     top: 0;
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
   }
   .vtext { margin: 0; }
   .vtext sup {
@@ -1937,7 +1928,74 @@ const CSS = `
   }
   .verse:not(.sel).notes-open .vnotes,
   .verse:not(.sel).editing .vnotes {
-    margin-left: .35rem;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  /*
+   * Click-to-toggle open tray (notes-open / editing, not multi-verse .sel).
+   * Left edge always square; right corners soft.
+   */
+  .verse.notes-open:not(.sel),
+  .verse.editing:not(.sel) {
+    --open-fill: color-mix(in srgb, #6b5a3e 18%, #f3efe6);
+    --open-rail: color-mix(in srgb, #5c5330 55%, #8a7a55);
+    --open-ring: color-mix(in srgb, #5c5330 28%, transparent);
+    --open-radius: .7rem;
+    --open-x: .75rem;
+    --open-y: .45rem;
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    position: relative;
+    overflow: visible;
+  }
+  @media (prefers-color-scheme: dark) {
+    .verse.notes-open:not(.sel),
+    .verse.editing:not(.sel) {
+      --open-fill: color-mix(in srgb, #d4c4a0 16%, Canvas);
+      --open-rail: color-mix(in srgb, #e8d9b0 70%, transparent);
+      --open-ring: color-mix(in srgb, #d4c4a0 32%, transparent);
+    }
+  }
+  .verse.notes-open:not(.sel) > .vtext,
+  .verse.editing:not(.sel) > .vtext {
+    position: relative;
+    isolation: isolate;
+    padding: var(--open-y) var(--open-x);
+    margin: 0;
+  }
+  .verse.notes-open:not(.sel) > .vtext::after,
+  .verse.editing:not(.sel) > .vtext::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-color: var(--open-fill);
+    box-shadow:
+      inset 3px 0 0 0 var(--open-rail),
+      inset 0 0 0 1.5px var(--open-ring);
+    border-radius: 0 var(--open-radius) var(--open-radius) 0;
+    pointer-events: none;
+  }
+  .verse.notes-open:not(.sel) > .vnotes,
+  .verse.editing:not(.sel) > .vnotes {
+    background-color: #fff;
+    margin: .55rem 0 0;
+    padding: .55rem var(--open-x) .7rem;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    border-radius: 0 var(--open-radius) var(--open-radius) 0;
+    box-shadow:
+      0 1px 3px color-mix(in srgb, #000 6%, transparent),
+      0 6px 16px color-mix(in srgb, #000 4%, transparent);
+    box-sizing: border-box;
+    width: 100%;
+  }
+  @media (prefers-color-scheme: dark) {
+    .verse.notes-open:not(.sel) > .vnotes,
+    .verse.editing:not(.sel) > .vnotes {
+      background-color: color-mix(in srgb, Canvas 82%, #fff 18%);
+      border-color: color-mix(in srgb, currentColor 16%, transparent);
+    }
   }
   /* Only show trays that actually host a note (range cover mids stay closed). */
   .verse.notes-open .vnotes:has(.note),
