@@ -1194,16 +1194,17 @@
   }
   /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
   /*
-   * Passage mark — ink into paper (not link-blue UI selection). Mobile parity:
-   * wash lives on .vtext only so .vnotes is a sibling tool surface under the run,
-   * not painted as part of the mark. Opaque mix avoids transparency seam bars.
+   * Passage mark — ink into paper (not link-blue). Must read clearly on warm
+   * paper stock: stronger wash + hairline edge (7.5% alone disappeared).
+   * Wash lives on .vtext only; .vnotes is a raised sibling under the run.
    * ::before stays free for the has-notes left rail.
    */
   .verse.sel {
-    --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
-    --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
+    --sel-fill: color-mix(in srgb, currentColor 15%, Canvas);
+    --sel-edge: color-mix(in srgb, currentColor 22%, Canvas);
+    --sel-ring: color-mix(in srgb, currentColor 14%, transparent);
     --sel-x: .75rem;
-    --sel-y: .4rem;
+    --sel-y: .42rem;
     --sel-radius: .65rem;
     background: transparent;
     padding: 0;
@@ -1230,6 +1231,8 @@
     bottom: 0;
     z-index: -1;
     background-color: var(--sel-fill);
+    /* Edge so the mark doesn't dissolve into paper */
+    box-shadow: inset 0 0 0 1px var(--sel-ring);
     pointer-events: none;
     border-radius: 0;
   }
@@ -1260,28 +1263,46 @@
     margin-top: 0;
   }
   /*
-   * Note tray open: scripture keeps full end radius; tray sits below as its
-   * own quiet card (not a continuation of the passage wash).
+   * Note tray open: scripture keeps full end radius; tray is a raised card
+   * under the mark (not the same wash — selection must stay distinct).
    */
   .verse.sel.sel-hi.notes-open,
   .verse.sel.sel-hi.editing {
     overflow: visible;
   }
-  .verse.sel .vnotes {
-    background-color: color-mix(in srgb, currentColor 5.5%, Canvas);
-    margin: .5rem 0 0;
-    padding: .55rem var(--sel-x) .6rem;
-    border-top: 0;
+  /* Tray is outside the mark — keep bottom radius on scripture when open */
+  .verse.sel.sel-hi.notes-open .vtext::after,
+  .verse.sel.sel-hi.editing .vtext::after {
+    border-bottom-left-radius: var(--sel-radius);
+    border-bottom-right-radius: var(--sel-radius);
+  }
+  .verse.sel.sel-lo.sel-hi.notes-open .vtext::after,
+  .verse.sel.sel-lo.sel-hi.editing .vtext::after {
     border-radius: var(--sel-radius);
-    box-shadow: none;
+  }
+  .verse.sel .vnotes {
+    background-color: #fff;
+    margin: .45rem 0 0;
+    padding: .55rem var(--sel-x) .65rem;
+    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    border-radius: var(--sel-radius);
+    box-shadow:
+      0 1px 2px color-mix(in srgb, #000 4%, transparent),
+      0 4px 12px color-mix(in srgb, #000 3%, transparent);
     position: relative;
     box-sizing: border-box;
     width: 100%;
   }
+  @media (prefers-color-scheme: dark) {
+    .verse.sel .vnotes {
+      background-color: color-mix(in srgb, Canvas 88%, #fff 12%);
+      border-color: color-mix(in srgb, currentColor 14%, transparent);
+    }
+  }
   .verse.sel.sel-hi.notes-open .vnotes,
   .verse.sel.sel-hi.editing .vnotes {
     border-radius: var(--sel-radius);
-    padding-bottom: .65rem;
+    padding-bottom: .7rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }

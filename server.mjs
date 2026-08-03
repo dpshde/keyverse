@@ -1755,10 +1755,11 @@ const CSS = `
    * ::before stays free for the has-notes left rail.
    */
   .verse.sel {
-    --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
-    --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
+    --sel-fill: color-mix(in srgb, currentColor 15%, Canvas);
+    --sel-edge: color-mix(in srgb, currentColor 22%, Canvas);
+    --sel-ring: color-mix(in srgb, currentColor 14%, transparent);
     --sel-x: .75rem;
-    --sel-y: .4rem;
+    --sel-y: .42rem;
     --sel-radius: .65rem;
     background: transparent;
     padding: 0;
@@ -1785,6 +1786,7 @@ const CSS = `
     bottom: 0;
     z-index: -1;
     background-color: var(--sel-fill);
+    box-shadow: inset 0 0 0 1px var(--sel-ring);
     pointer-events: none;
     border-radius: 0;
   }
@@ -1822,21 +1824,38 @@ const CSS = `
   .verse.sel.sel-hi.editing {
     overflow: visible;
   }
-  .verse.sel .vnotes {
-    background-color: color-mix(in srgb, currentColor 5.5%, Canvas);
-    margin: .5rem 0 0;
-    padding: .55rem var(--sel-x) .6rem;
-    border-top: 0;
+  .verse.sel.sel-hi.notes-open .vtext::after,
+  .verse.sel.sel-hi.editing .vtext::after {
+    border-bottom-left-radius: var(--sel-radius);
+    border-bottom-right-radius: var(--sel-radius);
+  }
+  .verse.sel.sel-lo.sel-hi.notes-open .vtext::after,
+  .verse.sel.sel-lo.sel-hi.editing .vtext::after {
     border-radius: var(--sel-radius);
-    box-shadow: none;
+  }
+  .verse.sel .vnotes {
+    background-color: #fff;
+    margin: .45rem 0 0;
+    padding: .55rem var(--sel-x) .65rem;
+    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    border-radius: var(--sel-radius);
+    box-shadow:
+      0 1px 2px color-mix(in srgb, #000 4%, transparent),
+      0 4px 12px color-mix(in srgb, #000 3%, transparent);
     position: relative;
     box-sizing: border-box;
     width: 100%;
   }
+  @media (prefers-color-scheme: dark) {
+    .verse.sel .vnotes {
+      background-color: color-mix(in srgb, Canvas 88%, #fff 12%);
+      border-color: color-mix(in srgb, currentColor 14%, transparent);
+    }
+  }
   .verse.sel.sel-hi.notes-open .vnotes,
   .verse.sel.sel-hi.editing .vnotes {
     border-radius: var(--sel-radius);
-    padding-bottom: .65rem;
+    padding-bottom: .7rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }
