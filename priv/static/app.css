@@ -826,18 +826,18 @@
     border-radius: 0;
   }
   /*
-   * Structure rows (chapter/book): quiet labels on paper — not chips.
-   * Padding lives on .nt-main (the real hit target) so the full painted
-   * row is clickable — not just the text metrics.
+   * Structure rows (chapter/book): labels on paper — not grey chips.
+   * RN folderChapter: transparent until press; count pill only when collapsed.
+   * Padding on .nt-main so the full row is the hit target.
    */
   .note-row.has-kids,
   .note-row.is-folder,
   .note-row.is-chapter.has-kids {
     position: relative;
     z-index: 0;
-    margin: .2rem 0 .08rem;
+    margin: .1rem 0;
     padding: 0;
-    border-radius: .55rem;
+    border-radius: 0;
     background: transparent;
     border: 0;
     min-height: 0;
@@ -848,10 +848,12 @@
     justify-content: center;
     box-sizing: border-box;
     width: 100%;
-    min-height: 2.85rem; /* ≥ 44px */
-    padding: .7rem .9rem;
-    border-radius: .55rem;
+    min-height: 2.75rem; /* 44px */
+    /* Tight sides — title + count, not a padded chip */
+    padding: .5rem .2rem;
+    border-radius: .35rem;
     cursor: pointer;
+    background: transparent;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
@@ -862,13 +864,14 @@
     outline: 2px solid color-mix(in srgb, currentColor 28%, transparent);
     outline-offset: 2px;
   }
+  /* Book folders only (not chapters) — quiet wash when present */
   .note-row.is-folder:not(.is-chapter)::before {
     content: "";
     position: absolute;
     z-index: -1;
     inset: 0;
-    border-radius: .55rem;
-    background: color-mix(in srgb, currentColor 5%, transparent);
+    border-radius: .45rem;
+    background: color-mix(in srgb, currentColor 4%, transparent);
     pointer-events: none;
   }
   /* Leaf notes = raised content cards (mobile home card) */
@@ -889,13 +892,13 @@
       box-shadow: 0 1px 2px color-mix(in srgb, #000 35%, transparent);
     }
   }
-  /* Hover only on real pointers — iOS sticky :hover was painting “cards” */
+  /* Light press/hover only — never a resting grey bar on chapters */
   @media (hover: hover) and (pointer: fine) {
     .note-row.has-kids > .nt-main.nt-fold:hover {
-      background: color-mix(in srgb, currentColor 5%, transparent);
+      background: color-mix(in srgb, currentColor 3.5%, transparent);
     }
     .note-row.is-folder:not(.is-chapter):hover::before {
-      background: color-mix(in srgb, currentColor 8%, transparent);
+      background: color-mix(in srgb, currentColor 6.5%, transparent);
     }
     .note-row.is-note:hover {
       border-color: color-mix(in srgb, currentColor 14%, transparent);
@@ -905,7 +908,7 @@
   }
   @media (hover: none) {
     .note-row.has-kids > .nt-main.nt-fold:active {
-      background: color-mix(in srgb, currentColor 6%, transparent);
+      background: color-mix(in srgb, currentColor 4.5%, transparent);
     }
   }
   .note-row .nt-main {
@@ -928,7 +931,7 @@
   .note-row .nt-top {
     display: flex;
     align-items: center;
-    gap: .55rem;
+    gap: .4rem;
     min-width: 0;
     width: 100%;
   }
@@ -947,28 +950,26 @@
     margin-left: auto;
   }
   /*
-   * Count pill (RN CountPill) — replaces left ▸/▾ chevrons.
-   * Collapsed → filled chip (packed, “open me”).
-   * Expanded chapter → quiet tabular number (children already visible).
-   * Expanded book → no trailing count (subtitle “N notes” carries it).
+   * Count (RN CountPill) — only the trailing chip gets fill, never the row.
+   * Default / expanded: quiet tabular number.
+   * Collapsed: filled pill (“open me”).
    */
   .note-row .nt-count {
     box-sizing: border-box;
     font-family: -apple-system, system-ui, sans-serif;
-    font-size: .8125rem; /* 13px — RN CountPill */
-    font-weight: 700;
+    font-size: .8125rem;
+    font-weight: 500;
     font-variant-numeric: tabular-nums;
     letter-spacing: -.02em;
-    color: color-mix(in srgb, currentColor 78%, transparent);
-    min-width: 1.75rem;  /* ~28px */
-    height: 1.625rem;    /* ~26px */
-    padding: 0 .56rem;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    min-width: 1.15rem;
+    height: auto;
+    padding: 0 .05rem 0 0;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     border-radius: 999px;
-    /* fillStrong ≈ 8% ink */
-    background: color-mix(in srgb, currentColor 8.5%, transparent);
+    background: transparent;
     line-height: 1;
     transition:
       background .14s ease,
@@ -977,14 +978,15 @@
       height .14s ease,
       padding .14s ease;
   }
-  /* Expanded chapter/section: plain count */
-  .nt-node:not(.is-collapsed) > .note-row.has-kids .nt-count {
-    min-width: 1.25rem;
-    height: auto;
-    padding: 0 .12rem 0 0;
-    background: transparent;
-    font-weight: 500;
-    color: color-mix(in srgb, currentColor 40%, transparent);
+  /* Collapsed → small filled pill only (not a full-row grey bar) */
+  .nt-node.is-collapsed > .note-row.has-kids .nt-count {
+    min-width: 1.75rem;
+    height: 1.625rem;
+    padding: 0 .55rem;
+    justify-content: center;
+    font-weight: 700;
+    color: color-mix(in srgb, currentColor 78%, transparent);
+    background: color-mix(in srgb, currentColor 8%, transparent);
   }
   /* Book open: soft left rail (folderBookOpen) + subtitle; hide trailing count */
   .nt-node:not(.is-collapsed) > .note-row.is-folder:not(.is-chapter) > .nt-main.nt-fold {
@@ -2128,8 +2130,9 @@
       margin: .15rem 0;
     }
     .note-row.has-kids > .nt-main.nt-fold {
-      min-height: var(--tap-comfy);
-      padding: .75rem 1rem;
+      min-height: var(--tap);
+      padding: .55rem .25rem;
+      background: transparent;
     }
     .note-row.is-note {
       min-height: 0;
@@ -2165,8 +2168,8 @@
     .note-row.has-kids .ref {
       font-size: 1.06rem;
     }
-    /* Pill size only when collapsed — expanded stays a quiet number */
-    .nt-node.is-collapsed > .note-row .nt-count {
+    /* Pill size only when collapsed */
+    .nt-node.is-collapsed > .note-row.has-kids .nt-count {
       min-width: 1.85rem;
       height: 1.7rem;
       font-size: .88rem;
