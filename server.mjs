@@ -1755,12 +1755,13 @@ const CSS = `
    * ::before stays free for the has-notes left rail.
    */
   .verse.sel {
-    --sel-fill: color-mix(in srgb, currentColor 15%, Canvas);
-    --sel-edge: color-mix(in srgb, currentColor 22%, Canvas);
-    --sel-ring: color-mix(in srgb, currentColor 14%, transparent);
+    --sel-fill: color-mix(in srgb, #6b5a3e 18%, #f3efe6);
+    --sel-edge: color-mix(in srgb, #5c5330 22%, #e8e2d4);
+    --sel-ring: color-mix(in srgb, #5c5330 28%, transparent);
+    --sel-rail: color-mix(in srgb, #5c5330 55%, #8a7a55);
     --sel-x: .75rem;
-    --sel-y: .42rem;
-    --sel-radius: .65rem;
+    --sel-y: .45rem;
+    --sel-radius: .7rem;
     background: transparent;
     padding: 0;
     margin: 0;
@@ -1769,6 +1770,14 @@ const CSS = `
     box-shadow: none;
     position: relative;
     overflow: visible;
+  }
+  @media (prefers-color-scheme: dark) {
+    .verse.sel {
+      --sel-fill: color-mix(in srgb, #d4c4a0 16%, Canvas);
+      --sel-edge: color-mix(in srgb, #d4c4a0 28%, Canvas);
+      --sel-ring: color-mix(in srgb, #d4c4a0 32%, transparent);
+      --sel-rail: color-mix(in srgb, #e8d9b0 70%, transparent);
+    }
   }
   /* Continuous selection fill — scripture only */
   .verse.sel .vtext {
@@ -1786,7 +1795,9 @@ const CSS = `
     bottom: 0;
     z-index: -1;
     background-color: var(--sel-fill);
-    box-shadow: inset 0 0 0 1px var(--sel-ring);
+    box-shadow:
+      inset 3px 0 0 0 var(--sel-rail),
+      inset 0 0 0 1.5px var(--sel-ring);
     pointer-events: none;
     border-radius: 0;
   }
@@ -1835,21 +1846,21 @@ const CSS = `
   }
   .verse.sel .vnotes {
     background-color: #fff;
-    margin: .45rem 0 0;
+    margin: .55rem 0 0;
     padding: .55rem var(--sel-x) .65rem;
-    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
     border-radius: var(--sel-radius);
     box-shadow:
-      0 1px 2px color-mix(in srgb, #000 4%, transparent),
-      0 4px 12px color-mix(in srgb, #000 3%, transparent);
+      0 1px 3px color-mix(in srgb, #000 6%, transparent),
+      0 6px 16px color-mix(in srgb, #000 4%, transparent);
     position: relative;
     box-sizing: border-box;
     width: 100%;
   }
   @media (prefers-color-scheme: dark) {
     .verse.sel .vnotes {
-      background-color: color-mix(in srgb, Canvas 88%, #fff 12%);
-      border-color: color-mix(in srgb, currentColor 14%, transparent);
+      background-color: color-mix(in srgb, Canvas 82%, #fff 18%);
+      border-color: color-mix(in srgb, currentColor 16%, transparent);
     }
   }
   .verse.sel.sel-hi.notes-open .vnotes,
