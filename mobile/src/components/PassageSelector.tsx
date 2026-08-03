@@ -148,7 +148,7 @@ export function PassageSelector({
                 }}
                 returnKeyType="go"
                 accessibilityLabel="Passage search"
-                selectionColor={dark ? "rgba(255,255,255,0.35)" : color.sel}
+                selectionColor={dark ? "rgba(255,255,255,0.35)" : "rgba(22,22,22,0.18)"}
               />
             </View>
             <Pressable

@@ -769,34 +769,35 @@ function renderHomeTreeNode(node, depth = 0) {
     isChapter = scope.kind === "chapter";
   }
 
-  const chev = hasKids
-    ? `<button type="button" class="nt-chev" aria-label="Collapse" aria-expanded="true"></button>`
-    : `<span class="nt-chev is-leaf" aria-hidden="true"></span>`;
-
   const rowCls = [
     "note-row",
     node.kind === "folder" ? "is-folder" : "",
     isChapter ? "is-chapter" : "",
     hasKids ? "has-kids" : "",
+    !hasKids ? "is-note" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  // Meta sits top-right (icons left of modified stamp). Outside the fold button
-  // so we never nest links inside a button.
-  const meta = `<span class="nt-meta">
+  // No left chevron — trailing count pill (structure) or edit/read chrome (leaves).
+  const noteCount = hasKids
+    ? (node.kind === "folder" ? (node.count || countTreeNotes(node)) : countTreeNotes(node))
+    : 0;
+  const meta = hasKids
+    ? `<span class="nt-meta"><span class="nt-count" aria-hidden="true">${noteCount}</span></span>`
+    : `<span class="nt-meta">
       <a class="nt-act nt-open" href="${esc(noteHref)}" title="Open note" aria-label="Open note">${NT_ICON_EDIT}</a>
       <a class="nt-act nt-read" href="${esc(readHref)}" title="Read" aria-label="Read">${NT_ICON_READ}</a>
       ${timeIso ? `<span class="muted nt-time">${esc(relTime(timeIso))}</span>` : ""}
     </span>`;
+  const ex = hasKids ? "" : `<div class="nt-ex">${esc(sub)}</div>`;
   const mainInner = `
       <span class="nt-top">
         <span class="ref">${esc(ref)}</span>
         ${meta}
       </span>
-      <div class="muted nt-ex">${esc(sub)}</div>`;
-  // Parent rows: click main (except .nt-act) to fold.
-  // Leaf verse/passage rows: click main opens reader at that spot.
+      ${ex}`;
+  // Parent rows: click main to fold. Leaf: open reader.
   const main = hasKids
     ? `<div class="nt-main nt-fold" role="button" tabindex="0" aria-expanded="true">${mainInner}
     </div>`
@@ -809,7 +810,6 @@ function renderHomeTreeNode(node, depth = 0) {
 
   return `<div class="nt-node" data-id="${esc(id)}" data-depth="${depth}">
     <div class="${rowCls}" style="--depth:${depth}">
-      ${chev}
       ${main}
     </div>
     ${kidsHtml}
@@ -835,13 +835,11 @@ function renderHomeNoteTree(notes) {
     var collapsed = load();
     function setExpanded(node, expanded) {
       node.classList.toggle("is-collapsed", !expanded);
-      var chev = node.querySelector(":scope > .note-row .nt-chev");
-      if (chev && chev.tagName === "BUTTON") {
-        chev.setAttribute("aria-expanded", expanded ? "true" : "false");
-        chev.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
-      }
       var fold = node.querySelector(":scope > .note-row .nt-fold");
-      if (fold) fold.setAttribute("aria-expanded", expanded ? "true" : "false");
+      if (fold) {
+        fold.setAttribute("aria-expanded", expanded ? "true" : "false");
+        fold.setAttribute("aria-label", expanded ? "Collapse section" : "Expand section");
+      }
     }
     function toggleNode(node) {
       if (!node || !node.querySelector(":scope > .nt-kids")) return;
@@ -860,13 +858,6 @@ function renderHomeNoteTree(notes) {
     });
     root.addEventListener("click", function (e) {
       if (e.target.closest(".nt-act")) return; // open note / read icons
-      var chev = e.target.closest(".nt-chev");
-      if (chev && !chev.classList.contains("is-leaf") && chev.tagName === "BUTTON") {
-        e.preventDefault();
-        e.stopPropagation();
-        toggleNode(chev.closest(".nt-node"));
-        return;
-      }
       var fold = e.target.closest(".nt-fold");
       if (fold) {
         e.preventDefault();
@@ -1758,29 +1749,34 @@ const CSS = `
   }
   /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
   /*
-   * Multi-verse selection = one continuous surface.
-   * Fill is painted on ::after (not the box background) with an opaque Canvas mix
-   * so edges never double-stack transparency (that looked like dark seam bars).
+   * Passage mark — ink into paper (not link-blue UI selection). Mobile parity:
+   * wash lives on .vtext only so .vnotes is a sibling tool surface under the run,
+   * not painted as part of the mark. Opaque mix avoids transparency seam bars.
    * ::before stays free for the has-notes left rail.
-   * --sel-x is the single horizontal inset for scripture AND the passage note.
    */
   .verse.sel {
     --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
     --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
     --sel-x: .75rem;
-    --sel-y: .36rem;
-    --sel-radius: .45rem;
+    --sel-y: .4rem;
+    --sel-radius: .65rem;
     background: transparent;
-    padding: var(--sel-y) var(--sel-x);
+    padding: 0;
     margin: 0;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     position: relative;
-    isolation: isolate; /* keep z-index:-1 ::after inside this verse */
+    overflow: visible;
   }
-  /* Continuous selection fill */
-  .verse.sel::after {
+  /* Continuous selection fill — scripture only */
+  .verse.sel .vtext {
+    position: relative;
+    isolation: isolate;
+    padding: var(--sel-y) var(--sel-x);
+    margin: 0;
+  }
+  .verse.sel .vtext::after {
     content: "";
     position: absolute;
     left: 0;
@@ -1792,13 +1788,13 @@ const CSS = `
     pointer-events: none;
     border-radius: 0;
   }
-  .verse.sel.sel-lo::after {
+  .verse.sel.sel-lo .vtext::after {
     border-radius: var(--sel-radius) var(--sel-radius) 0 0;
   }
-  .verse.sel.sel-hi::after {
+  .verse.sel.sel-hi .vtext::after {
     border-radius: 0 0 var(--sel-radius) var(--sel-radius);
   }
-  .verse.sel.sel-lo.sel-hi::after {
+  .verse.sel.sel-lo.sel-hi .vtext::after {
     border-radius: var(--sel-radius);
   }
   /*
@@ -1806,36 +1802,41 @@ const CSS = `
    * so subpixel gaps cannot show page background as a seam. Collapse doubled
    * vertical padding between run members so the range reads as one block.
    */
-  .verse.sel:not(.sel-lo)::after {
+  .verse.sel:not(.sel-lo) .vtext::after {
     top: -4px;
   }
-  .verse.sel:not(.sel-lo) {
+  .verse.sel:not(.sel-lo) .vtext {
     padding-top: 0.12rem;
   }
-  .verse.sel:not(.sel-hi) {
+  .verse.sel:not(.sel-hi) .vtext {
     padding-bottom: 0.12rem;
   }
   .verse.sel + .verse.sel {
     margin-top: 0;
   }
   /*
-   * Note open on end verse: keep the *outer* bottom curve on .sel-hi and clip
-   * children to it — never zero the radius under a rounded tray (square shows through).
+   * Note tray open: scripture keeps full end radius; tray sits below as its
+   * own quiet card (not a continuation of the passage wash).
    */
   .verse.sel.sel-hi.notes-open,
   .verse.sel.sel-hi.editing {
-    padding-bottom: 0;
-    overflow: hidden;
+    overflow: visible;
   }
-  /* full-bleed within the card: cancel --sel-x, then re-apply so note text matches verse text */
   .verse.sel .vnotes {
-    background-color: var(--sel-fill);
-    margin: .28rem calc(-1 * var(--sel-x)) 0;
-    padding: .5rem var(--sel-x) .55rem;
-    border-top: 1px solid var(--sel-edge);
-    border-radius: 0; /* curve lives on .sel-hi only */
+    background-color: color-mix(in srgb, currentColor 5.5%, Canvas);
+    margin: .5rem 0 0;
+    padding: .55rem var(--sel-x) .6rem;
+    border-top: 0;
+    border-radius: var(--sel-radius);
     box-shadow: none;
     position: relative;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .verse.sel.sel-hi.notes-open .vnotes,
+  .verse.sel.sel-hi.editing .vnotes {
+    border-radius: var(--sel-radius);
+    padding-bottom: .65rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }
@@ -2635,6 +2636,16 @@ function mountOutliner(host, opts) {
   function hasChildren(i) {
     return i + 1 < blocks.length && blocks[i + 1].indent > blocks[i].indent;
   }
+  /** Direct child count for fold pill (not ▸/▾). */
+  function directChildCount(i) {
+    const base = blocks[i].indent;
+    let n = 0;
+    for (let j = i + 1; j < blocks.length; j++) {
+      if (blocks[j].indent <= base) break;
+      if (blocks[j].indent === base + 1) n++;
+    }
+    return n;
+  }
   function parentIndex(i) {
     const base = blocks[i].indent;
     if (base <= 0) return -1;
@@ -2769,8 +2780,15 @@ function mountOutliner(host, opts) {
       chev.type = "button";
       chev.className = "ochev";
       chev.tabIndex = -1;
-      chev.setAttribute("aria-label", b.collapsed ? "Expand" : "Collapse");
-      if (!kids) chev.style.visibility = "hidden";
+      chev.setAttribute("aria-label", b.collapsed ? "Expand nested lines" : "Collapse nested lines");
+      if (kids) {
+        const nKids = directChildCount(i);
+        chev.textContent = String(nKids);
+        chev.dataset.count = String(nKids);
+      } else {
+        chev.style.visibility = "hidden";
+        chev.textContent = "";
+      }
 
       const bullet = document.createElement("span");
       bullet.className = "obullet";
@@ -2914,6 +2932,13 @@ function mountOutliner(host, opts) {
     dirty = true;
     setStatus("\u2026");
     clearTimeout(timer);
+    // Live blocks for reader has-note rail (mobile onBlocksLive parity)
+    if (typeof opts.onBlocksChange === "function") {
+      try {
+        syncFromDom();
+        opts.onBlocksChange(blocks.map(serializeBlock));
+      } catch (e) { /* ignore */ }
+    }
     timer = setTimeout(save, 400);
   }
 
@@ -5482,6 +5507,10 @@ async function renderRead(scope) {
         document.querySelectorAll(".verse.sel").forEach((v) => {
           v.classList.remove("sel", "sel-lo", "sel-hi");
         });
+        // Restore verse-local groups hidden during multi-verse tray
+        document.querySelectorAll(".note-group.verse-local").forEach((g) => {
+          g.hidden = false;
+        });
         document.body.classList.remove("pick-range-end");
         pickRangeEnd = false;
       }
@@ -5675,11 +5704,24 @@ async function renderRead(scope) {
           compact: true,
           autofocus: true,
           placeholder: ph,
+          // Keep has-note rail in sync while typing (mobile onBlocksLive)
+          onBlocksChange(blocks) {
+            if (blocks.some((b) => (b.text || "").trim())) {
+              seeds[slug] = blocks;
+            } else {
+              delete seeds[slug];
+            }
+            syncAllHasNotes();
+          },
         });
         editors.set(slug, { api, noteEl });
       }
 
       function openVerseNoteEditor(verse) {
+        // Single-verse tray: show this verse's local note group again
+        verse.querySelectorAll(".note-group.verse-local").forEach((g) => {
+          g.hidden = false;
+        });
         let el = verse.querySelector('.note[data-kind="verse"]');
         if (!el) {
           // place under verse-local group when passage notes already exist
@@ -5814,6 +5856,13 @@ async function renderRead(scope) {
         for (const [slug] of [...editors.entries()]) {
           if (slug !== targetSlug) closeNoteEditor(slug);
         }
+        // Multi-verse owns the tray: hide end-verse local note (mobile rangeOnlyTray).
+        document.querySelectorAll(".note-group.verse-local").forEach((g) => {
+          g.hidden = false;
+        });
+        last.querySelectorAll(".note-group.verse-local").forEach((g) => {
+          g.hidden = true;
+        });
         last.classList.add("notes-open", "editing");
         const el = ensurePassageNoteEl(a, b);
         if (!el) return;

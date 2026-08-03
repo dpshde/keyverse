@@ -26,6 +26,7 @@ import {
   importLocalPackZip,
 } from "@/src/lib/packTransfer";
 import { b64ToArrayBuffer } from "@/src/lib/bytes";
+import { CountPill } from "@/src/components/CountPill";
 import { EnterSyncKey } from "@/src/components/EnterSyncKey";
 import { SyncKeyReveal } from "@/src/components/SyncKeyReveal";
 import {
@@ -394,10 +395,19 @@ export default function SettingsScreen() {
               hapticSelect();
               setAdvancedOpen((v) => !v);
             }}
-            style={styles.advancedHead}
+            style={[styles.advancedHead, advancedOpen && styles.advancedHeadOpen]}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: advancedOpen }}
+            accessibilityLabel={`Advanced, ${advancedOpen ? "expanded" : "collapsed"}`}
+            accessibilityHint={
+              advancedOpen ? "Collapses advanced settings" : "Expands host, pack, and passphrase"
+            }
           >
-            <Text style={type.section}>Advanced {advancedOpen ? "▴" : "▾"}</Text>
-            <Text style={type.meta}>Host, pack files, note passphrase</Text>
+            <View style={styles.advancedHeadText}>
+              <Text style={type.section}>Advanced</Text>
+              <Text style={type.meta}>Host, pack files, note passphrase</Text>
+            </View>
+            {!advancedOpen ? <CountPill label="More" /> : null}
           </Pressable>
 
           {advancedOpen ? (
@@ -567,7 +577,19 @@ const styles = StyleSheet.create({
     borderColor: color.lineSoft,
     overflow: "hidden",
   },
-  advancedHead: { gap: space[1] },
+  advancedHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space[2],
+    minHeight: 44,
+  },
+  advancedHeadOpen: {
+    borderLeftWidth: 2,
+    borderLeftColor: color.line,
+    paddingLeft: space[2],
+    marginLeft: -2,
+  },
+  advancedHeadText: { flex: 1, minWidth: 0, gap: 2 },
   pwActions: { flexDirection: "row", flexWrap: "wrap", gap: space[2], marginTop: space[1] },
   pwActionBtn: { flexGrow: 1, minWidth: 120 },
 });

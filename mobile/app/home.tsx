@@ -33,6 +33,7 @@ import {
   type SyncInviteState,
 } from "@/src/lib/syncInvite";
 import { hapticError, hapticLight, hapticSelect, hapticSuccess, hapticWarning } from "@/src/lib/haptics";
+import { CountPill } from "@/src/components/CountPill";
 import { color, fontRead, radius, space, tap, type, ui } from "@/src/theme";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
@@ -337,39 +338,60 @@ export default function HomeScreen() {
               const isCol = !!collapsed[f.id];
               const isBook = f.level === "book";
               const a11y = f.accessibilityLabel || f.label;
+              const noteWord = f.noteCount === 1 ? "note" : "notes";
+              /**
+               * Expand/collapse without left chevrons.
+               * State is carried by layout + trailing count:
+               * - Collapsed → filled count pill (packed, “open me”)
+               * - Expanded → plain count / open meta (children visible)
+               */
               return (
                 <Pressable
-                  style={[
+                  style={({ pressed }) => [
                     styles.folder,
                     isBook ? styles.folderBook : styles.folderChapter,
                     { marginLeft: item.depth * space[3] },
+                    !isBook && pressed && styles.folderChapterPressed,
+                    isBook && !isCol && styles.folderBookOpen,
                   ]}
                   onPress={() => toggle(f.id)}
                   accessibilityRole="button"
                   accessibilityState={{ expanded: !isCol }}
-                  accessibilityLabel={`${a11y}, ${f.noteCount} notes`}
+                  accessibilityLabel={`${a11y}, ${f.noteCount} ${noteWord}, ${
+                    isCol ? "collapsed" : "expanded"
+                  }`}
+                  accessibilityHint={isCol ? "Expands section" : "Collapses section"}
                 >
-                  <Text style={[styles.folderChev, isBook && styles.folderChevBook]}>
-                    {isCol ? "▸" : "▾"}
-                  </Text>
                   {isBook ? (
-                    <View style={styles.folderText}>
-                      <Text style={styles.folderTitleBook} numberOfLines={1}>
-                        {f.label}
-                      </Text>
-                      <Text style={styles.folderMeta}>
-                        {f.noteCount} {f.noteCount === 1 ? "note" : "notes"}
-                      </Text>
-                    </View>
+                    <>
+                      <View style={styles.folderText}>
+                        <Text
+                          style={[
+                            styles.folderTitleBook,
+                            isCol && styles.folderTitleBookCollapsed,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {f.label}
+                        </Text>
+                        {!isCol ? (
+                          <Text style={styles.folderMeta}>
+                            {f.noteCount} {noteWord}
+                          </Text>
+                        ) : null}
+                      </View>
+                      {isCol ? <CountPill label={f.noteCount} /> : null}
+                    </>
                   ) : (
-                    // Single quiet row — title left, count right (no gray chip)
                     <>
                       <Text style={styles.folderTitleChapter} numberOfLines={1}>
                         {f.label}
                       </Text>
-                      <Text style={styles.folderChapterCount}>
-                        {f.noteCount}
-                      </Text>
+                      {isCol ? (
+                        <CountPill label={f.noteCount} />
+                      ) : (
+                        <Text style={styles.folderChapterCount}>{f.noteCount}</Text>
+                      )}
                     </>
                   )}
                 </Pressable>
@@ -544,28 +566,27 @@ const styles = StyleSheet.create({
     paddingVertical: space[1],
     minHeight: 48,
   },
+  /** Soft left rail when a book is open — structure without chevrons */
+  folderBookOpen: {
+    borderLeftWidth: 2,
+    borderLeftColor: color.line,
+    paddingLeft: space[2],
+    marginLeft: 0,
+  },
   /**
-   * Chapter rows: HIG-sized hit target (44+) without becoming another card.
-   * Quiet fill + full-row press beats a skinny hairline label.
+   * Chapter rows: large hit target, no fill — sits on paper like book labels.
+   * Note cards carry the surface weight; chapter is structure, not a chip.
    */
   folderChapter: {
     minHeight: tap, // 44
-    paddingVertical: space[3],
-    paddingHorizontal: space[2],
+    paddingVertical: space[2],
+    paddingHorizontal: space[1],
     marginBottom: space[1],
     borderRadius: radius.sm,
+    backgroundColor: "transparent",
+  },
+  folderChapterPressed: {
     backgroundColor: color.fill,
-  },
-  folderChev: {
-    fontSize: 12,
-    color: color.faint,
-    width: 16,
-    textAlign: "center",
-  },
-  folderChevBook: {
-    fontSize: 13,
-    color: color.muted,
-    fontWeight: "600",
   },
   folderText: { flex: 1, minWidth: 0 },
   folderTitleBook: {
@@ -574,6 +595,10 @@ const styles = StyleSheet.create({
     color: color.ink,
     letterSpacing: -0.2,
   },
+  /** Collapsed books sit as a single dense line (count lives in the pill) */
+  folderTitleBookCollapsed: {
+    lineHeight: 22,
+  },
   folderTitleChapter: {
     flex: 1,
     fontSize: 15,
@@ -581,9 +606,10 @@ const styles = StyleSheet.create({
     color: color.inkSoft,
     letterSpacing: -0.1,
   },
+  /** Expanded: quiet tabular count — children already show the content */
   folderChapterCount: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "500",
     color: color.faint,
     fontVariant: ["tabular-nums"],
     minWidth: 20,

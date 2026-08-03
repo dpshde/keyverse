@@ -2,6 +2,27 @@
 
 **Local-first product client.** Scripture + notes work offline. Cloud is an optional multiword mirror.
 
+## TestFlight (via `asc`)
+
+**Full operator guide:** [../docs/DEPLOY.md](../docs/DEPLOY.md) · short path: [docs/TESTFLIGHT.md](./docs/TESTFLIGHT.md) · agents: [../AGENTS.md](../AGENTS.md)
+
+Prerequisites: `asc doctor` OK, Xcode, `mobile/.asc/env.local` with `ASC_APP_ID`.
+
+```bash
+cd mobile
+source .asc/env.local
+./scripts/testflight.sh          # archive → IPA → Internal Testers + notify
+```
+
+One-time app create (if needed):
+
+```bash
+asc web auth login --apple-id YOUR@EMAIL
+./scripts/asc-create-app.sh      # writes .asc/env.local
+```
+
+Bundle ID `dev.dpslabs.keyverse` · App ID `6797574306` · export: `.asc/export-options-app-store.plist`
+
 ## Defaults
 
 | Concern | Default |
@@ -50,12 +71,20 @@ Implementation: `src/lib/packTransfer.ts` (fflate). Scripture bundles are never 
 | `/settings` | Translation · cloud toggle · sync |
 | `/share` | Sync key management (pack door), not per-passage links |
 
-### Passage share (cloud)
+### Passage share + deep links (reader default)
 
-When cloud is on, **Share** on note and reader headers builds a **projected**
-deep link: `https://{host}/{door}/read/{slug}` (verse, range, or chapter).
-Same trust model as web: the URL includes the multiword door. See
-[ADR 0019](../docs/adr/0019-passage-deep-link-sharing.md) and
+**Share** on note and reader headers always targets the **projected reader**
+(ADR 0019 — verse, range, or chapter):
+
+| Mode | URL |
+|------|-----|
+| Local / app | `keyverse:///read/{slug}` |
+| Cloud on | `https://{host}/{door}/read/{slug}` (+ door-scoped app link) |
+
+**Inbound:** `DeepLinkHandler` opens cold-start and live links into `/read/[slug]`
+(or `/note/[slug]`). Door-scoped https/app URLs join that multiword pack when needed.
+
+See [ADR 0019](../docs/adr/0019-passage-deep-link-sharing.md), `src/lib/deepLink.ts`,
 `src/lib/shareUrl.ts`.
 
 ### Thumb-reach (mobile-first)

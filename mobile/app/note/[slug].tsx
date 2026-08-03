@@ -13,18 +13,18 @@ import {
   Text,
   View,
 } from "react-native";
-import { SymbolView } from "expo-symbols";
 import { useSession } from "@/src/context/SessionContext";
 import type { Attachment, Block, Note } from "@/src/api/types";
 import { hydrateBlocks } from "@/src/api/client";
 import { Outliner } from "@/src/components/Outliner";
 import { LocalAttachmentList } from "@/src/components/LocalAttachmentList";
+import { HeaderIconButton } from "@/src/components/HeaderIconButton";
 import { decryptPayload, encryptPayload } from "@/src/lib/crypto";
 import * as Local from "@/src/lib/localPack";
 import { blocksEqual } from "@/src/lib/blocksEqual";
 import { mirrorNoteIfCloud } from "@/src/lib/cloudSync";
 import { displayScope, resolveLocal } from "@/src/lib/resolveLocal";
-import { cloudReadUrl } from "@/src/lib/shareUrl";
+import { passageShareUrls } from "@/src/lib/shareUrl";
 import { hapticError, hapticLight, hapticSelect } from "@/src/lib/haptics";
 import { color, radius, space, tap, type, ui } from "@/src/theme";
 
@@ -251,19 +251,22 @@ export default function NoteScreen() {
 
   const sharePassage = useCallback(async () => {
     hapticSelect();
-    if (!cloudEnabled || !cloudDoor) {
-      Alert.alert(
-        "Sync required",
-        "Turn on sync in Share to get a cloud link for this passage."
-      );
-      return;
-    }
-    const url = cloudReadUrl(cloudHost, cloudDoor, slug);
+    // Default share target = projected reader (ADR 0019). App scheme works offline;
+    // cloud https included when sync is on.
+    const { primary, web, app } = passageShareUrls({
+      slug,
+      cloudEnabled,
+      cloudHost,
+      cloudDoor,
+    });
+    const message = web
+      ? `${pageTitle}\n${web}`
+      : `${pageTitle}\n${app}`;
     try {
       await Share.share(
         Platform.OS === "ios"
-          ? { url, message: pageTitle }
-          : { message: `${pageTitle}\n${url}`, title: pageTitle }
+          ? { url: primary, message: pageTitle }
+          : { message, title: pageTitle }
       );
     } catch {
       /* user cancelled */
@@ -271,41 +274,29 @@ export default function NoteScreen() {
   }, [cloudEnabled, cloudDoor, cloudHost, slug, pageTitle]);
 
   useLayoutEffect(() => {
+    const displayTitle =
+      pageTitle.length > 24 ? pageTitle.slice(0, 24) + "…" : pageTitle;
     navigation.setOptions({
-      title: pageTitle.length > 24 ? pageTitle.slice(0, 24) + "…" : pageTitle,
+      headerTitle: () => (
+        <Text style={styles.headerTitle} numberOfLines={1} accessibilityRole="header">
+          {displayTitle}
+        </Text>
+      ),
       headerTitleAlign: "center",
       headerRight: () => (
         <View style={styles.headerActions}>
-          <Pressable
-            onPress={sharePassage}
-            style={styles.headerIconBtn}
-            hitSlop={6}
-            accessibilityRole="button"
+          <HeaderIconButton
+            symbol="square.and.arrow.up"
             accessibilityLabel="Share passage link"
-          >
-            <SymbolView
-              name="square.and.arrow.up"
-              size={20}
-              weight="semibold"
-              tintColor={color.ink}
-              fallback={<Text style={styles.headerIconFallback}>{"\u2197"}</Text>}
-            />
-          </Pressable>
-          <Pressable
-            onPress={openReader}
-            style={styles.headerIconBtn}
-            hitSlop={6}
-            accessibilityRole="button"
+            onPress={sharePassage}
+            fallback={"\u2197"}
+          />
+          <HeaderIconButton
+            symbol="book"
             accessibilityLabel="Open in reader"
-          >
-            <SymbolView
-              name="book"
-              size={20}
-              weight="semibold"
-              tintColor={color.ink}
-              fallback={<Text style={styles.headerIconFallback}>{"\u{1F4D6}"}</Text>}
-            />
-          </Pressable>
+            onPress={openReader}
+            fallback={"\u{1F4D6}"}
+          />
         </View>
       ),
     });
@@ -460,20 +451,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    letterSpacing: -0.35,
+    lineHeight: 22,
+    color: color.ink,
+    maxWidth: 200,
+    textAlign: "center",
+    marginTop: -1,
+  },
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 2,
-  },
-  headerIconBtn: {
-    width: 40,
+    justifyContent: "flex-end",
     height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerIconFallback: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: color.ink,
+    gap: 0,
   },
 });

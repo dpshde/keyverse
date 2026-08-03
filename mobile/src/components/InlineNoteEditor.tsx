@@ -27,6 +27,11 @@ type Props = {
   lockedMessage?: string;
   /** Called after a successful local write (for index refresh) */
   onSaved?: (note: Note | { deleted: true; slug: string }) => void;
+  /**
+   * Live block edits (before debounce save). Reader uses this so the has-note
+   * rail clears as soon as content is emptied, not only after autosave.
+   */
+  onBlocksLive?: (blocks: Block[]) => void;
   compact?: boolean;
   /**
    * Offer a quiet text control to open the dedicated /note/[slug] page.
@@ -49,6 +54,7 @@ export function InlineNoteEditor({
   locked,
   lockedMessage = "Encrypted — set passphrase in Settings",
   onSaved,
+  onBlocksLive,
   compact = true,
   allowFullPage = true,
 }: Props) {
@@ -64,6 +70,8 @@ export function InlineNoteEditor({
   const dirtyRef = useRef(false);
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
+  const onBlocksLiveRef = useRef(onBlocksLive);
+  onBlocksLiveRef.current = onBlocksLive;
   blocksRef.current = blocks;
   attsRef.current = attachments;
 
@@ -144,13 +152,11 @@ export function InlineNoteEditor({
     }, 650);
   }, [save, clearTimer]);
 
-  const onBlocksChange = useCallback(
-    (next: Block[]) => {
-      dirtyRef.current = true;
-      setBlocks(next);
-    },
-    []
-  );
+  const onBlocksChange = useCallback((next: Block[]) => {
+    dirtyRef.current = true;
+    setBlocks(next);
+    onBlocksLiveRef.current?.(next);
+  }, []);
 
   const openFullPage = useCallback(async () => {
     hapticLight();

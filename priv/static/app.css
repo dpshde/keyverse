@@ -10,11 +10,20 @@
   body {
     font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
     max-width: 38rem; margin: 0 auto;
-    padding: 1.5rem 1.1rem calc(5rem + env(safe-area-inset-bottom, 0px));
+    padding: 1.15rem 1.1rem calc(5rem + env(safe-area-inset-bottom, 0px));
     padding-left: max(1.1rem, env(safe-area-inset-left, 0px));
     padding-right: max(1.1rem, env(safe-area-inset-right, 0px));
-    padding-top: max(1.5rem, env(safe-area-inset-top, 0px));
+    padding-top: max(1.15rem, env(safe-area-inset-top, 0px));
     line-height: 1.55; font-size: 1.05rem;
+    /* Warm paper field — note cards sit raised on top (mobile paper / paperRaised) */
+    background: #f6f5f2;
+    color: #161616;
+  }
+  @media (prefers-color-scheme: dark) {
+    body {
+      background: #121211;
+      color: #eceae4;
+    }
   }
   /* installed PWA (home-screen) */
   @media (display-mode: standalone), (display-mode: minimal-ui) {
@@ -277,25 +286,38 @@
   @media (pointer: coarse) and (min-width: 641px) {
     .reader-dock-item { min-height: 2.6rem; }
   }
-  /* Home: title left, multiword key right */
+  /* Home: brand left, multiword key right — tight chrome, not a second hero */
   .home-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: .5rem .75rem;
-    margin: 0 0 .35rem;
+    margin: 0 0 .65rem;
   }
   .home-head h1 {
     margin: 0;
     min-width: 0;
-    font-size: 1.45rem;
-    font-weight: 650;
-    letter-spacing: -.02em;
+    font-size: 1.28rem;
+    font-weight: 750;
+    letter-spacing: -.03em;
+    line-height: 1.15;
   }
   .home-head .door-share-wrap {
     flex: 0 1 auto;
     margin-left: auto;
-    max-width: min(16rem, 52%);
+    max-width: min(14rem, 48%);
+  }
+  /* Notes section — less air under search, quieter label */
+  .home-notes {
+    margin-top: .85rem;
+  }
+  .home-notes > h2 {
+    margin: 0 0 .45rem;
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 42%, transparent);
   }
   .ios-install-hint {
     display: none; margin: 1rem 0 0; padding: .75rem .85rem; border-radius: .5rem;
@@ -424,15 +446,24 @@
     border-color: color-mix(in srgb, currentColor 45%, transparent); }
   /* passage reference autocomplete (home search) — one composite radius + border */
   .ref-search {
-    --rs-radius: .45rem;
-    --rs-border: color-mix(in srgb, currentColor 18%, transparent);
+    --rs-radius: .65rem;
+    --rs-border: color-mix(in srgb, currentColor 12%, transparent);
     position: relative;
+    margin: 0;
   }
   .ref-search form { margin: 0; }
   .ref-search input[type=text] {
     margin: 0; display: block;
     border-color: var(--rs-border);
     border-radius: var(--rs-radius);
+    background: #fff;
+    padding: .7rem .85rem;
+    box-shadow: 0 1px 2px color-mix(in srgb, #000 3.5%, transparent);
+  }
+  @media (prefers-color-scheme: dark) {
+    .ref-search input[type=text] {
+      background: color-mix(in srgb, Canvas 90%, #fff 10%);
+    }
   }
   .ref-search input[aria-expanded="true"] {
     border-radius: var(--rs-radius) var(--rs-radius) 0 0;
@@ -774,89 +805,132 @@
   h2 { font-size: .9rem; font-weight: 600; margin: 1.75rem 0 .4rem;
        font-family: -apple-system, system-ui, sans-serif; }
   /*
-   * Home list — flat nested list (no branch rails / cards).
-   * Folder: [ chevron | title… ]
-   * Kids indent under the parent title column (and stack per nest level).
+   * Home list — flat nested list (mobile parity).
+   * Folders: title + trailing count pill (no left ▸/▾ chevrons).
+   * Expanded books: soft left rail + "N notes" under title.
    */
   .note-tree {
-    margin-top: .15rem;
-    --nt-gutter: 1.15rem;
-    --nt-gap: .4rem;
-    /* One nest step = chevron column + gap + a little extra so kids read nested */
-    --nt-indent: calc(var(--nt-gutter) + var(--nt-gap) + .55rem);
+    margin-top: 0;
+    --nt-indent: 1.1rem;
   }
   .nt-node {
     position: relative;
   }
   .note-row {
-    display: grid;
-    grid-template-columns: var(--nt-gutter) minmax(0, 1fr);
-    column-gap: var(--nt-gap);
-    align-items: start;
-    padding: .5rem 0;
+    display: block;
+    padding: .4rem 0;
     margin: 0;
     color: inherit;
     background: transparent;
     border: 0;
     border-radius: 0;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 9%, transparent);
   }
-  /* Folders: quiet group header wash (pseudo so nest indent stays aligned) */
+  /*
+   * Structure rows (chapter/book): quiet labels on paper — not chips.
+   * Padding lives on .nt-main (the real hit target) so the full painted
+   * row is clickable — not just the text metrics.
+   */
   .note-row.has-kids,
   .note-row.is-folder,
   .note-row.is-chapter.has-kids {
     position: relative;
     z-index: 0;
-    border-bottom-color: transparent;
-    margin: .4rem 0 .05rem;
-    padding: .5rem 0 .45rem;
-    border-radius: 0;
+    margin: .2rem 0 .08rem;
+    padding: 0;
+    border-radius: .55rem;
     background: transparent;
     border: 0;
+    min-height: 0;
   }
-  .note-row.has-kids::before,
-  .note-row.is-folder::before,
-  .note-row.is-chapter.has-kids::before {
+  .note-row.has-kids > .nt-main.nt-fold {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 2.85rem; /* ≥ 44px */
+    padding: .7rem .9rem;
+    border-radius: .55rem;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .note-row.has-kids > .nt-main.nt-fold:focus {
+    outline: none;
+  }
+  .note-row.has-kids > .nt-main.nt-fold:focus-visible {
+    outline: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+    outline-offset: 2px;
+  }
+  .note-row.is-folder:not(.is-chapter)::before {
     content: "";
     position: absolute;
     z-index: -1;
-    inset: 0 -.35rem;
-    border-radius: .7rem;
-    background: color-mix(in srgb, currentColor 5.5%, transparent);
+    inset: 0;
+    border-radius: .55rem;
+    background: color-mix(in srgb, currentColor 5%, transparent);
     pointer-events: none;
+  }
+  /* Leaf notes = raised content cards (mobile home card) */
+  .note-row.is-note {
+    display: block;
+    margin: .35rem 0 .5rem;
+    padding: .7rem .8rem .75rem;
+    border-radius: .75rem;
+    background: #fff;
+    border: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+    box-shadow: 0 1px 2px color-mix(in srgb, #000 4%, transparent),
+      0 6px 16px color-mix(in srgb, #000 3.5%, transparent);
+  }
+  @media (prefers-color-scheme: dark) {
+    .note-row.is-note {
+      background: color-mix(in srgb, Canvas 92%, #fff 8%);
+      border-color: color-mix(in srgb, currentColor 12%, transparent);
+      box-shadow: 0 1px 2px color-mix(in srgb, #000 35%, transparent);
+    }
   }
   /* Hover only on real pointers — iOS sticky :hover was painting “cards” */
   @media (hover: hover) and (pointer: fine) {
-    .note-row:hover {
-      background: color-mix(in srgb, currentColor 4%, transparent);
-      border-radius: .35rem;
+    .note-row.has-kids > .nt-main.nt-fold:hover {
+      background: color-mix(in srgb, currentColor 5%, transparent);
     }
-    .note-row.has-kids:hover::before,
-    .note-row.is-folder:hover::before,
-    .note-row.is-chapter.has-kids:hover::before {
-      background: color-mix(in srgb, currentColor 8.5%, transparent);
+    .note-row.is-folder:not(.is-chapter):hover::before {
+      background: color-mix(in srgb, currentColor 8%, transparent);
     }
-    .note-row.has-kids:hover,
-    .note-row.is-folder:hover,
-    .note-row.is-chapter.has-kids:hover {
-      background: transparent;
-      border-radius: 0;
+    .note-row.is-note:hover {
+      border-color: color-mix(in srgb, currentColor 14%, transparent);
+      box-shadow: 0 1px 2px color-mix(in srgb, #000 5%, transparent),
+        0 8px 20px color-mix(in srgb, #000 5%, transparent);
+    }
+  }
+  @media (hover: none) {
+    .note-row.has-kids > .nt-main.nt-fold:active {
+      background: color-mix(in srgb, currentColor 6%, transparent);
     }
   }
   .note-row .nt-main {
-    grid-column: 2;
     min-width: 0;
     color: inherit;
     display: block;
     text-align: left;
+  }
+  .note-row.is-note .nt-main {
+    display: block;
+    /* Card padding is on the row; main fills so the whole card opens reader */
+    margin: -.7rem -.8rem -.75rem;
+    padding: .7rem .8rem .75rem;
+    border-radius: inherit;
+    min-height: 100%;
+    box-sizing: content-box;
   }
   .note-row .nt-main.nt-fold,
   .note-row .nt-main.nt-open-read { cursor: pointer; }
   .note-row .nt-top {
     display: flex;
     align-items: center;
-    gap: .35rem;
+    gap: .55rem;
     min-width: 0;
+    width: 100%;
   }
   .note-row .nt-top .ref {
     flex: 1 1 auto;
@@ -869,74 +943,125 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: .12rem;
+    gap: .15rem;
     margin-left: auto;
   }
-  .note-row .nt-time { font-size: .8rem; margin-left: .2rem; white-space: nowrap; }
-  .note-row .nt-ex { margin-top: .12rem; }
-  .note-row.has-kids .nt-ex { margin-top: .1rem; margin-left: 0; }
-  .note-row.is-folder .ref,
-  .note-row.is-chapter .ref { font-weight: 600; }
-  .note-row.is-folder .nt-ex,
-  .note-row.is-chapter .nt-ex { font-size: .85rem; }
-  .nt-act {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 1.25rem; height: 1.25rem; border-radius: .2rem;
-    color: inherit; opacity: .38; text-decoration: none;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .nt-act:hover { opacity: .9; background: color-mix(in srgb, currentColor 8%, transparent); }
-  }
-  .nt-act svg { display: block; }
-
-  /* Chevron — plain disclosure in the gutter */
-  .nt-chev {
-    grid-column: 1;
+  /*
+   * Count pill (RN CountPill) — replaces left ▸/▾ chevrons.
+   * Collapsed → filled chip (packed, “open me”).
+   * Expanded chapter → quiet tabular number (children already visible).
+   * Expanded book → no trailing count (subtitle “N notes” carries it).
+   */
+  .note-row .nt-count {
     box-sizing: border-box;
-    width: 100%;
-    height: var(--nt-gutter);
-    margin: .2rem 0 0;
-    padding: 0;
-    border: 0;
-    background: transparent !important;
-    color: inherit;
-    cursor: pointer;
-    border-radius: .3rem;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .8125rem; /* 13px — RN CountPill */
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    color: color-mix(in srgb, currentColor 78%, transparent);
+    min-width: 1.75rem;  /* ~28px */
+    height: 1.625rem;    /* ~26px */
+    padding: 0 .56rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    opacity: .5;
-    font-size: .7rem;
+    border-radius: 999px;
+    /* fillStrong ≈ 8% ink */
+    background: color-mix(in srgb, currentColor 8.5%, transparent);
     line-height: 1;
-    transition: transform .14s ease, opacity .12s ease;
-    -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation;
-    position: relative;
+    transition:
+      background .14s ease,
+      color .14s ease,
+      min-width .14s ease,
+      height .14s ease,
+      padding .14s ease;
   }
-  .nt-chev.is-leaf {
-    visibility: hidden;
-    pointer-events: none;
-    cursor: default;
+  /* Expanded chapter/section: plain count */
+  .nt-node:not(.is-collapsed) > .note-row.has-kids .nt-count {
+    min-width: 1.25rem;
+    height: auto;
+    padding: 0 .12rem 0 0;
+    background: transparent;
+    font-weight: 500;
+    color: color-mix(in srgb, currentColor 40%, transparent);
   }
-  .nt-chev::before {
-    content: "\25BE"; /* ▾ */
-    display: block;
-    font-size: .9em;
-    line-height: 1;
+  /* Book open: soft left rail (folderBookOpen) + subtitle; hide trailing count */
+  .nt-node:not(.is-collapsed) > .note-row.is-folder:not(.is-chapter) > .nt-main.nt-fold {
+    border-left: 2px solid color-mix(in srgb, currentColor 12%, transparent);
+    padding-left: .85rem;
   }
+  .nt-node:not(.is-collapsed) > .note-row.is-folder:not(.is-chapter) .nt-count {
+    display: none;
+  }
+  .note-row .nt-ex-book {
+    margin-top: .08rem;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .75rem;
+    font-weight: 500;
+    color: color-mix(in srgb, currentColor 42%, transparent);
+  }
+  /* Collapsed book: single dense line — pill holds the count */
+  .nt-node.is-collapsed > .note-row .nt-ex-book {
+    display: none;
+  }
+  .nt-node.is-collapsed > .note-row.is-folder:not(.is-chapter) .ref {
+    line-height: 1.35;
+  }
+  .note-row .nt-time {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .75rem;
+    margin-left: .15rem;
+    white-space: nowrap;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  /* Chapter: single quiet structure row */
+  .note-row.is-chapter.has-kids .ref,
+  .note-row.has-kids .ref {
+    font-weight: 600;
+    font-size: .98rem;
+    letter-spacing: -.01em;
+    color: color-mix(in srgb, currentColor 82%, transparent);
+  }
+  .note-row.is-folder:not(.is-chapter) .ref {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: inherit;
+  }
+  /* Leaf card: title + body lead; chrome quiet */
+  .note-row.is-note .ref {
+    font-weight: 700;
+    font-size: .95rem;
+    letter-spacing: -.015em;
+  }
+  .note-row .nt-ex {
+    margin-top: .28rem;
+    font-size: .92rem;
+    line-height: 1.4;
+    color: color-mix(in srgb, currentColor 68%, transparent);
+  }
+  .note-row.is-note .nt-ex {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: .95rem;
+    line-height: 1.42;
+    color: color-mix(in srgb, currentColor 72%, transparent);
+  }
+  .nt-act {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.55rem; height: 1.55rem; border-radius: .35rem;
+    color: inherit; opacity: .32; text-decoration: none;
+  }
+  /* Desktop: icons wake on row hover; touch keeps them available but quiet */
   @media (hover: hover) and (pointer: fine) {
-    .nt-chev:not(.is-leaf):hover {
-      opacity: .95;
-      background: color-mix(in srgb, currentColor 8%, transparent) !important;
-    }
+    .note-row.is-note .nt-act { opacity: 0; }
+    .note-row.is-note:hover .nt-act,
+    .note-row.is-note:focus-within .nt-act { opacity: .45; }
+    .nt-act:hover { opacity: .95 !important; background: color-mix(in srgb, currentColor 8%, transparent); }
   }
-  .nt-chev:focus-visible {
-    outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
-    outline-offset: 1px;
-  }
-  .nt-node.is-collapsed > .note-row .nt-chev:not(.is-leaf) {
-    transform: rotate(-90deg);
-  }
+  .nt-act svg { display: block; }
+
+  /* Legacy .nt-chev hidden if any stale HTML remains */
+  .nt-chev { display: none !important; }
   .nt-node.is-collapsed > .nt-kids { display: none; }
 
   /* Nested kids — indented under parent, no branch lines. Levels stack. */
@@ -953,26 +1078,8 @@
     content: none !important;
     display: none !important;
   }
-  /*
-   * Leaf rows under a folder: drop the empty chevron gutter so the
-   * title sits cleanly at the nest indent (not double-guttered).
-   */
-  .nt-kids > .nt-node > .note-row:not(.has-kids) {
+  .nt-kids > .nt-node > .note-row {
     display: block;
-    grid-template-columns: none;
-    column-gap: 0;
-  }
-  .nt-kids > .nt-node > .note-row:not(.has-kids) > .nt-chev {
-    display: none;
-  }
-  .nt-kids > .nt-node > .note-row:not(.has-kids) > .nt-main {
-    display: block;
-  }
-  /* Nested folders keep a disclosure chevron; their kids nest another step */
-  .nt-kids > .nt-node > .note-row.has-kids {
-    display: grid;
-    grid-template-columns: var(--nt-gutter) minmax(0, 1fr);
-    column-gap: var(--nt-gap);
   }
 
   .ref { font-weight: 600; margin-right: .4rem; }
@@ -994,36 +1101,34 @@
   }
   /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
   /*
-   * Multi-verse selection = one continuous surface.
-   * Fill is painted on ::after (not the box background) with an opaque Canvas mix
-   * so edges never double-stack transparency (that looked like dark seam bars).
+   * Passage mark — ink into paper (not link-blue UI selection). Mobile parity:
+   * wash lives on .vtext only so .vnotes is a sibling tool surface under the run,
+   * not painted as part of the mark. Opaque mix avoids transparency seam bars.
    * ::before stays free for the has-notes left rail.
-   *
-   * Horizontal inset lives on .vtext / .vnotes — NOT on .verse padding — so the
-   * note tray can be full-bleed without negative margins. (iOS clips negative
-   * margin children when the parent uses overflow:hidden.)
    */
   .verse.sel {
     --sel-fill: color-mix(in srgb, currentColor 7.5%, Canvas);
     --sel-edge: color-mix(in srgb, currentColor 14%, Canvas);
     --sel-x: .75rem;
-    --sel-y: .36rem;
-    --sel-radius: .55rem;
+    --sel-y: .4rem;
+    --sel-radius: .65rem;
     background: transparent;
-    padding: var(--sel-y) 0;
+    padding: 0;
     margin: 0;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     position: relative;
-    isolation: isolate; /* keep z-index:-1 ::after inside this verse */
+    overflow: visible;
   }
+  /* Continuous selection fill — scripture only */
   .verse.sel .vtext {
-    padding-left: var(--sel-x);
-    padding-right: var(--sel-x);
+    position: relative;
+    isolation: isolate;
+    padding: var(--sel-y) var(--sel-x);
+    margin: 0;
   }
-  /* Continuous selection fill */
-  .verse.sel::after {
+  .verse.sel .vtext::after {
     content: "";
     position: absolute;
     left: 0;
@@ -1035,13 +1140,13 @@
     pointer-events: none;
     border-radius: 0;
   }
-  .verse.sel.sel-lo::after {
+  .verse.sel.sel-lo .vtext::after {
     border-radius: var(--sel-radius) var(--sel-radius) 0 0;
   }
-  .verse.sel.sel-hi::after {
+  .verse.sel.sel-hi .vtext::after {
     border-radius: 0 0 var(--sel-radius) var(--sel-radius);
   }
-  .verse.sel.sel-lo.sel-hi::after {
+  .verse.sel.sel-lo.sel-hi .vtext::after {
     border-radius: var(--sel-radius);
   }
   /*
@@ -1049,42 +1154,32 @@
    * so subpixel gaps cannot show page background as a seam. Collapse doubled
    * vertical padding between run members so the range reads as one block.
    */
-  .verse.sel:not(.sel-lo)::after {
+  .verse.sel:not(.sel-lo) .vtext::after {
     top: -4px;
   }
-  .verse.sel:not(.sel-lo) {
+  .verse.sel:not(.sel-lo) .vtext {
     padding-top: 0.12rem;
   }
-  .verse.sel:not(.sel-hi) {
+  .verse.sel:not(.sel-hi) .vtext {
     padding-bottom: 0.12rem;
   }
   .verse.sel + .verse.sel {
     margin-top: 0;
   }
   /*
-   * Note tray open: one card. Top radius stays on ::after; bottom radius moves
-   * to .vnotes. No overflow:hidden (clips tray on iOS) and no negative margins.
+   * Note tray open: scripture keeps full end radius; tray sits below as its
+   * own quiet card (not a continuation of the passage wash).
    */
   .verse.sel.sel-hi.notes-open,
   .verse.sel.sel-hi.editing {
-    padding-bottom: 0;
     overflow: visible;
   }
-  .verse.sel.sel-hi.notes-open::after,
-  .verse.sel.sel-hi.editing::after {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-  }
-  .verse.sel.sel-lo.sel-hi.notes-open::after,
-  .verse.sel.sel-lo.sel-hi.editing::after {
-    border-radius: var(--sel-radius) var(--sel-radius) 0 0;
-  }
   .verse.sel .vnotes {
-    background-color: var(--sel-fill);
-    margin: .22rem 0 0;
-    padding: .5rem var(--sel-x) .55rem;
-    border-top: 1px solid var(--sel-edge);
-    border-radius: 0;
+    background-color: color-mix(in srgb, currentColor 5.5%, Canvas);
+    margin: .5rem 0 0;
+    padding: .55rem var(--sel-x) .6rem;
+    border-top: 0;
+    border-radius: var(--sel-radius);
     box-shadow: none;
     position: relative;
     box-sizing: border-box;
@@ -1092,8 +1187,8 @@
   }
   .verse.sel.sel-hi.notes-open .vnotes,
   .verse.sel.sel-hi.editing .vnotes {
-    border-radius: 0 0 var(--sel-radius) var(--sel-radius);
-    padding-bottom: .6rem;
+    border-radius: var(--sel-radius);
+    padding-bottom: .65rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }
@@ -1194,7 +1289,7 @@
     border: 0 !important;
   }
 
-  /* Reader tray outline: flat list — all lines always visible; no fold chevrons.
+  /* Reader tray outline: flat list — all lines always visible; no fold pills.
      Nest indent via --depth only. Tray open/closed is the sole collapse control. */
   .vnotes .outline {
     --chev-w: 0px;
@@ -1493,11 +1588,12 @@
 
   /*
    * One indent geometry everywhere (read outline + edit outliner):
-   *   chevron | bullet | text; depth via margin-left.
+   *   count-pill | bullet | text; depth via margin-left.
+   * Fold state = child-count pill (collapsed filled / expanded quiet), not ▸/▾.
    */
   .outline, .outliner {
     --note-gutter: 1.25rem;
-    --chev-w: 0.95rem;
+    --chev-w: 1.55rem;
     --bullet: 0.4375rem;
     --row-h: 1.55em;
   }
@@ -1515,19 +1611,48 @@
     position: relative;
   }
   .oline .ochev {
-    width: var(--chev-w); height: var(--row-h);
-    display: flex; align-items: center; justify-content: center;
-    opacity: 0; pointer-events: none;
-    color: color-mix(in srgb, currentColor 40%, transparent);
-    font-size: .65rem; user-select: none;
+    box-sizing: border-box;
+    width: auto;
+    min-width: 1.4rem;
+    height: 1.35rem;
+    margin: .1rem 0 0;
+    padding: 0 .35rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    color: color-mix(in srgb, currentColor 72%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .7rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    line-height: 1;
+    user-select: none;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    cursor: default;
   }
   .oline.has-kids .ochev { pointer-events: auto; cursor: pointer; }
-  .oline.has-kids:hover .ochev,
-  .oline.collapsed .ochev,
-  .oline.has-kids .ochev:focus-visible { opacity: 1; }
-  .oline .ochev::before { content: "\25B8"; transition: transform .12s ease; }
-  .oline.collapsed .ochev::before { content: "\25B8"; }
-  .oline:not(.collapsed).has-kids .ochev::before { content: "\25BE"; }
+  /* Collapsed: filled count pill always visible */
+  .oline.collapsed .ochev {
+    opacity: 1;
+  }
+  /* Expanded: quiet / hover-reveal (children already show structure) */
+  .oline.has-kids:not(.collapsed) .ochev {
+    opacity: 0;
+    background: transparent;
+    font-weight: 500;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  .oline.has-kids:not(.collapsed):hover .ochev,
+  .oline.has-kids .ochev:focus-visible {
+    opacity: .85;
+  }
+  /* No triangle glyphs — count text is set in JS (data-count / textContent) */
+  .oline .ochev::before { content: none !important; }
   .oline .odot {
     box-sizing: border-box;
     width: var(--note-gutter);
@@ -1629,19 +1754,40 @@
   }
   .oblock.dragging { opacity: .35; }
   .oblock .ochev {
-    width: var(--chev-w); height: var(--row-h);
-    display: flex; align-items: center; justify-content: center;
-    opacity: 0; border: 0; background: transparent; padding: 0;
-    color: color-mix(in srgb, currentColor 45%, transparent);
-    font-size: .65rem; cursor: pointer;
+    box-sizing: border-box;
+    width: auto;
+    min-width: 1.4rem;
+    height: 1.35rem;
+    margin: .1rem 0 0;
+    padding: 0 .35rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    color: color-mix(in srgb, currentColor 72%, transparent);
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: .7rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    line-height: 1;
+    cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
   .oblock.has-kids .ochev { pointer-events: auto; }
-  .oblock.has-kids:hover .ochev,
-  .oblock.collapsed .ochev,
-  .oblock.has-kids .ochev:focus-visible { opacity: 1; }
-  .oblock .ochev::before { content: "\25BE"; }
-  .oblock.collapsed .ochev::before { content: "\25B8"; }
+  .oblock.collapsed .ochev { opacity: 1; }
+  .oblock.has-kids:not(.collapsed) .ochev {
+    opacity: 0;
+    background: transparent;
+    font-weight: 500;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  .oblock.has-kids:not(.collapsed):hover .ochev,
+  .oblock.has-kids .ochev:focus-visible { opacity: .85; }
+  .oblock .ochev::before { content: none !important; }
   .obullet {
     width: var(--note-gutter);
     height: calc(1em * 1.45);
@@ -1961,99 +2107,88 @@
       padding: .35rem 0;
     }
 
-    /* Home list action chips */
+    /* Home list action chips — keep tappable without ballooning the card chrome */
     .nt-act {
-      width: var(--tap) !important;
-      height: var(--tap) !important;
-      min-width: var(--tap);
-      min-height: var(--tap);
+      width: 2.25rem !important;
+      height: 2.25rem !important;
+      min-width: 2.25rem;
+      min-height: 2.25rem;
       display: inline-flex !important;
       align-items: center;
       justify-content: center;
-      border-radius: .55rem;
+      border-radius: .5rem;
       touch-action: manipulation;
-    }
-    .note-row {
-      min-height: var(--tap-comfy);
-      padding-top: .65rem;
-      padding-bottom: .65rem;
+      opacity: .4;
     }
     .note-row.has-kids,
     .note-row.is-folder,
     .note-row.is-chapter.has-kids {
-      padding: .55rem 0 .5rem;
-      margin: .35rem 0 .05rem;
-      border-radius: 0;
-      background: transparent;
-      border: 0;
+      min-height: 0;
+      padding: 0;
+      margin: .15rem 0;
     }
-    .note-row.has-kids::before,
-    .note-row.is-folder::before,
-    .note-row.is-chapter.has-kids::before {
-      inset: 0 -.4rem;
-      border-radius: .8rem;
+    .note-row.has-kids > .nt-main.nt-fold {
+      min-height: var(--tap-comfy);
+      padding: .75rem 1rem;
+    }
+    .note-row.is-note {
+      min-height: 0;
+      padding: .85rem .95rem .9rem;
+      margin: .4rem 0 .55rem;
+    }
+    .note-row.is-note .nt-main {
+      margin: -.85rem -.95rem -.9rem;
+      padding: .85rem .95rem .9rem;
+    }
+    .note-row.is-folder:not(.is-chapter)::before {
+      inset: 0;
+      border-radius: .55rem;
       background: color-mix(in srgb, currentColor 6.5%, transparent);
     }
     .note-tree {
-      --nt-gutter: 1.25rem;
-      --nt-gap: .45rem;
-      --nt-indent: calc(var(--nt-gutter) + var(--nt-gap) + .65rem);
+      --nt-indent: 1.15rem;
     }
-    .nt-kids > .nt-node > .note-row {
-      min-height: var(--tap-comfy);
-      padding-top: .6rem;
-      padding-bottom: .6rem;
+    .nt-kids > .nt-node > .note-row.is-note {
+      min-height: 0;
+      padding: .85rem .95rem .9rem;
     }
-    .note-row .nt-main {
-      min-height: var(--tap);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      padding: .05rem 0;
-    }
-    /* Chevron: 44px hit box; layout gutter stays compact */
-    .nt-chev:not(.is-leaf) {
-      width: var(--tap) !important;
-      height: var(--tap) !important;
-      min-width: var(--tap);
-      min-height: var(--tap);
-      margin-left: calc((var(--nt-gutter) - var(--tap)) / 2);
-      margin-right: calc((var(--nt-gutter) - var(--tap)) / 2);
-      margin-top: calc((var(--nt-gutter) - var(--tap)) / 2 + .05rem);
-      margin-bottom: calc((var(--nt-gutter) - var(--tap)) / 2);
-      font-size: .95rem;
-      opacity: .65;
-      border-radius: .45rem;
-      background: transparent !important;
+    .nt-kids > .nt-node > .note-row.is-note .nt-main {
+      margin: -.85rem -.95rem -.9rem;
+      padding: .85rem .95rem .9rem;
     }
     .note-row.has-kids .nt-ex {
       margin-left: 0;
     }
     .note-row.has-kids .nt-top {
-      min-height: 1.4rem;
-      gap: .35rem;
+      gap: .55rem;
     }
     .note-row.has-kids .ref {
       font-size: 1.06rem;
     }
+    /* Pill size only when collapsed — expanded stays a quiet number */
+    .nt-node.is-collapsed > .note-row .nt-count {
+      min-width: 1.85rem;
+      height: 1.7rem;
+      font-size: .88rem;
+    }
 
-    /* Outline fold chevrons + bullets */
+    /* Outline fold count-pills + bullets — large tap targets */
     .oblock .ochev,
     .oline .ochev {
-      min-width: var(--tap);
-      min-height: var(--tap);
-      width: var(--tap) !important;
-      height: var(--tap) !important;
+      min-width: 1.75rem;
+      min-height: 1.75rem;
+      width: auto !important;
+      height: auto !important;
+      padding: 0 .4rem;
       display: inline-flex !important;
       align-items: center;
       justify-content: center;
-      margin-left: calc((var(--tap) - var(--chev-w, 1rem)) / -2);
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
     .oblock.has-kids .ochev,
     .oline.has-kids .ochev {
-      opacity: .75;
+      opacity: 1;
     }
     .obullet {
       /* Keep a tall hit target, but pin the glyph to the first line box */

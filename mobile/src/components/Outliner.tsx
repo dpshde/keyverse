@@ -23,15 +23,23 @@ type Props = {
   /** @deprecated Collapse is disabled — prop ignored for API compat */
   honorCollapse?: boolean;
   onDirty?: () => void;
-  /** Hide Nest/Unnest toolbar — for mini inline reader trays */
+  /**
+   * Compact reader tray: tighter type/indent step; toolbar is nest/unnest only
+   * (full editor also gets Add line / Delete line).
+   */
   compact?: boolean;
 };
 
 type Selection = { start: number; end: number };
 
 /**
- * Flat outline: nest/unnest, multi-line edit, Enter new line, Backspace merge.
- * Newline path is optimized to avoid keyboard bounce / list remount stutter.
+ * Flat outline: nest/unnest, multi-line wrap, Enter new row, Backspace merge.
+ *
+ * Enter must never paint a soft-break inside a bullet (that multi-line height
+ * flash is the reader outliner glitch). RN 0.73+ `submitBehavior="submit"`
+ * makes Return fire onSubmitEditing without inserting "\n"; we still guard
+ * onKeyPress + onChangeText as a safety net for hardware keyboards / older
+ * paths. Never remount rows on split — remount was a worse flicker source.
  */
 export const Outliner = React.memo(function Outliner({
   blocks,
@@ -47,6 +55,10 @@ export const Outliner = React.memo(function Outliner({
   const inputRefs = useRef(new Map<string, TextInput>());
   /** Last known selection per block — used for caret after merge without re-focus thrash. */
   const selectionById = useRef(new Map<string, Selection>());
+  /** Swallow late "\n" onChangeText after we already split. */
+  const suppressNewline = useRef(new Set<string>());
+  /** One split at a time (Enter key + submit + changeText can all fire). */
+  const splitting = useRef(false);
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const onChangeRef = useRef(onChange);
@@ -130,28 +142,52 @@ export const Outliner = React.memo(function Outliner({
     };
   }, [blocks, focusId]);
 
-  const updateText = useCallback((id: string, text: string) => {
-    const list = blocksRef.current;
-    const i = list.findIndex((b) => b.id === id);
-    if (i < 0) return;
-    if (list[i].text === text) return;
-    const next = list.map((b, idx) => (idx === i ? { ...b, text } : b));
-    commit(next);
-  }, [commit]);
-
-  const splitAtNewline = useCallback(
+  const updateText = useCallback(
     (id: string, text: string) => {
       const list = blocksRef.current;
       const i = list.findIndex((b) => b.id === id);
       if (i < 0) return;
-      const cur = list[i];
-      const nl = text.indexOf("\n");
-      const first = nl >= 0 ? text.slice(0, nl) : text;
-      const rest = nl >= 0 ? text.slice(nl + 1).replace(/\n/g, "") : "";
+      if (list[i].text === text) return;
+      const next = list.map((b, idx) => (idx === i ? { ...b, text } : b));
+      commit(next);
+    },
+    [commit]
+  );
 
-      // Strip the native newline immediately so the controlled value doesn't flash "…\n".
-      const input = inputRefs.current.get(id);
-      input?.setNativeProps?.({ text: first });
+  /**
+   * Split one outline row into two at caret (or at first newline if provided).
+   * Never remounts the source row — remount was a flicker source.
+   */
+  const splitRow = useCallback(
+    (id: string, rawText?: string) => {
+      if (splitting.current) return;
+      const list = blocksRef.current;
+      const i = list.findIndex((b) => b.id === id);
+      if (i < 0) return;
+      const cur = list[i];
+      const baseText = cur.text || "";
+
+      let first: string;
+      let rest: string;
+      if (rawText != null && /[\r\n]/.test(rawText)) {
+        const nl = rawText.search(/[\r\n]/);
+        first = rawText.slice(0, nl);
+        rest = rawText.slice(nl).replace(/^[\r\n]+/, "").replace(/[\r\n]/g, "");
+      } else {
+        const text = rawText != null ? rawText.replace(/[\r\n]/g, "") : baseText;
+        const sel = selectionById.current.get(id);
+        const start = sel ? Math.min(sel.start, text.length) : text.length;
+        const end = sel ? Math.min(Math.max(sel.end, start), text.length) : start;
+        first = text.slice(0, start);
+        rest = text.slice(end);
+      }
+
+      splitting.current = true;
+      suppressNewline.current.add(id);
+
+      // Pin native text to first half immediately (no multi-line paint linger).
+      const src = inputRefs.current.get(id);
+      src?.setNativeProps?.({ text: first });
 
       const base = cur.indent | 0;
       const nb: Block = { id: newBlockId(), indent: base, text: rest };
@@ -163,6 +199,12 @@ export const Outliner = React.memo(function Outliner({
       ];
       commit(next);
       requestFocusNew(nb.id, { start: rest.length, end: rest.length });
+
+      // Late onChangeText("…\n") from some keyboards; keep suppress briefly.
+      setTimeout(() => {
+        suppressNewline.current.delete(id);
+        splitting.current = false;
+      }, 100);
     },
     [commit, requestFocusNew]
   );
@@ -224,7 +266,6 @@ export const Outliner = React.memo(function Outliner({
       const caret = prevText.length;
       const merged = { ...prev, text: prevText + curText };
 
-      // Native-side update before React re-render so merge feels instant.
       inputRefs.current.get(prev.id)?.setNativeProps?.({
         text: merged.text,
         selection: { start: caret, end: caret },
@@ -238,7 +279,17 @@ export const Outliner = React.memo(function Outliner({
 
   const onKeyPress = useCallback(
     (id: string, e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-      if (e.nativeEvent.key !== "Backspace") return;
+      const key = e.nativeEvent.key;
+
+      // Hardware / soft Enter that still delivers a key event.
+      // Prefer submitBehavior path; this is backup. preventDefault is best-effort.
+      if (key === "Enter") {
+        e.preventDefault?.();
+        splitRow(id);
+        return;
+      }
+
+      if (key !== "Backspace") return;
       const list = blocksRef.current;
       const i = list.findIndex((b) => b.id === id);
       if (i < 0) return;
@@ -254,7 +305,7 @@ export const Outliner = React.memo(function Outliner({
         mergeIntoPrev(i);
       }
     },
-    [mergeIntoPrev]
+    [mergeIntoPrev, splitRow]
   );
 
   const onSelectionChange = useCallback(
@@ -275,25 +326,36 @@ export const Outliner = React.memo(function Outliner({
 
   const onRowChangeText = useCallback(
     (id: string, t: string) => {
-      if (t.includes("\n")) {
-        splitAtNewline(id, t);
+      if (/[\r\n]/.test(t)) {
+        // Already split from submit/key — strip native residue, no second row.
+        if (suppressNewline.current.has(id) || splitting.current) {
+          const expected =
+            blocksRef.current.find((b) => b.id === id)?.text ?? t.replace(/[\r\n]/g, "");
+          inputRefs.current.get(id)?.setNativeProps?.({ text: expected });
+          return;
+        }
+        // Soft path that only injected "\n" (no key event).
+        splitRow(id, t);
         return;
       }
       updateText(id, t);
     },
-    [splitAtNewline, updateText]
+    [splitRow, updateText]
   );
 
+  /** Primary Enter path when submitBehavior="submit" — no "\n" ever lands. */
   const onRowSubmit = useCallback(
     (id: string) => {
-      const i = blocksRef.current.findIndex((b) => b.id === id);
-      if (i >= 0) addAfter(i);
+      splitRow(id);
     },
-    [addAfter]
+    [splitRow]
   );
 
   const fi = focusIndex(blocks, focusId);
   const indentStep = compact ? 12 : 16;
+  // Empty-state hint only — not on every blank row after Enter ("Write Write Write…").
+  const soloEmpty =
+    blocks.length === 1 && !(blocks[0]?.text || "").trim();
 
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
@@ -306,6 +368,7 @@ export const Outliner = React.memo(function Outliner({
           indentStep={indentStep}
           compact={compact}
           editable={editable}
+          placeholder={soloEmpty ? "Write…" : ""}
           onChangeText={onRowChangeText}
           onFocus={onRowFocus}
           onSelectionChange={onSelectionChange}
@@ -314,32 +377,38 @@ export const Outliner = React.memo(function Outliner({
           setRowRef={setRowRef}
         />
       ))}
-      {editable && !compact ? (
-        <View style={styles.tools}>
+      {editable ? (
+        <View style={[styles.tools, compact && styles.toolsCompact]}>
           <ToolIcon
             symbol="decrease.indent"
             fallback="⇤"
             label="Unnest"
+            compact={compact}
             onPress={() => indent(fi, -1)}
           />
           <ToolIcon
             symbol="increase.indent"
             fallback="⇥"
             label="Nest"
+            compact={compact}
             onPress={() => indent(fi, 1)}
           />
-          <ToolIcon
-            symbol="plus"
-            fallback="+"
-            label="Add line"
-            onPress={() => addAfter(fi)}
-          />
-          <ToolIcon
-            symbol="trash"
-            fallback="⌫"
-            label="Delete line"
-            onPress={() => removeAt(fi)}
-          />
+          {!compact ? (
+            <>
+              <ToolIcon
+                symbol="plus"
+                fallback="+"
+                label="Add line"
+                onPress={() => addAfter(fi)}
+              />
+              <ToolIcon
+                symbol="trash"
+                fallback="⌫"
+                label="Delete line"
+                onPress={() => removeAt(fi)}
+              />
+            </>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -353,6 +422,8 @@ type BlockRowProps = {
   indentStep: number;
   compact: boolean;
   editable: boolean;
+  /** Empty-state only; omit on multi-row blanks */
+  placeholder: string;
   onChangeText: (id: string, t: string) => void;
   onFocus: (id: string) => void;
   onSelectionChange: (
@@ -372,6 +443,7 @@ const BlockRow = React.memo(
     indentStep,
     compact,
     editable,
+    placeholder,
     onChangeText,
     onFocus,
     onSelectionChange,
@@ -395,10 +467,13 @@ const BlockRow = React.memo(
             onFocus={() => onFocus(id)}
             onSelectionChange={(e) => onSelectionChange(id, e)}
             multiline
+            // Return inserts a new outline row — never a soft line break inside the bullet.
+            // (RN 0.73+; without this, multiline paints "…\n" for one frame = the flicker.)
+            submitBehavior="submit"
             blurOnSubmit={false}
             onSubmitEditing={() => onSubmitEditing(id)}
             onKeyPress={(e) => onKeyPress(id, e)}
-            placeholder="Write…"
+            placeholder={placeholder}
             placeholderTextColor="#999"
             autoCorrect
             scrollEnabled={false}
@@ -417,7 +492,8 @@ const BlockRow = React.memo(
     prev.indent === next.indent &&
     prev.indentStep === next.indentStep &&
     prev.compact === next.compact &&
-    prev.editable === next.editable
+    prev.editable === next.editable &&
+    prev.placeholder === next.placeholder
 );
 
 function clampIndents(blocks: Block[]): Block[] {
@@ -444,11 +520,13 @@ function ToolIcon({
   fallback,
   label,
   onPress,
+  compact = false,
 }: {
   symbol: string;
   fallback: string;
   label: string;
   onPress: () => void;
+  compact?: boolean;
 }) {
   return (
     <Pressable
@@ -456,16 +534,22 @@ function ToolIcon({
         hapticSelect();
         onPress();
       }}
-      style={({ pressed }) => [styles.toolIcon, pressed && styles.toolIconPressed]}
+      style={({ pressed }) => [
+        styles.toolIcon,
+        compact && styles.toolIconCompact,
+        pressed && styles.toolIconPressed,
+      ]}
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={4}
     >
       <SymbolView
         name={symbol as any}
-        size={18}
+        size={compact ? 17 : 18}
         weight="semibold"
         tintColor={color.inkSoft}
+        // Same optical lift as header glyphs — SF Symbols sit low in the hit box
+        style={styles.toolGlyph}
         fallback={<Text style={styles.toolFallback}>{fallback}</Text>}
       />
     </Pressable>
@@ -527,6 +611,16 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(0,0,0,0.1)",
   },
+  /** Reader tray: nest/unnest only, left-aligned cluster */
+  toolsCompact: {
+    justifyContent: "flex-start",
+    gap: 4,
+    marginTop: 4,
+    paddingTop: 4,
+    paddingBottom: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(0,0,0,0.08)",
+  },
   toolIcon: {
     width: 40,
     height: 40,
@@ -534,8 +628,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
   },
+  toolIconCompact: {
+    width: 40,
+    height: 40,
+  },
   toolIconPressed: {
     backgroundColor: "rgba(0,0,0,0.06)",
+  },
+  toolGlyph: {
+    transform: [{ translateY: -1 }],
   },
   toolFallback: {
     fontSize: 16,

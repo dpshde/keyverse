@@ -92,15 +92,18 @@ See [docs/API.md](docs/API.md) and [PROTOCOL.md](PROTOCOL.md).
 
 | Doc | Contents |
 |-----|----------|
+| [AGENTS.md](AGENTS.md) | **Agent conventions** — map, non‑negotiables, commands |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | **Update/deploy** host (Railway) + iOS TestFlight (`asc`) |
 | [llms.txt](llms.txt) | Machine/LLM index |
 | [docs/API.md](docs/API.md) | HTTP status/body matrix |
 | [schemas/](schemas/) | JSON Schema |
 | [PROTOCOL.md](PROTOCOL.md) | Pack format + HTTP door |
 | [docs/SELF_HOST.md](docs/SELF_HOST.md) | Install, env, backup |
-| [docs/PRODUCTION.md](docs/PRODUCTION.md) | Deploy guidance |
+| [docs/PRODUCTION.md](docs/PRODUCTION.md) | Host production hardening |
 | [docs/SCALING.md](docs/SCALING.md) | Why BEAM for multipack host |
 | [docs/USAGE.md](docs/USAGE.md) | Day-to-day web UI |
 | [mobile/README.md](mobile/README.md) | React Native product client |
+| [mobile/docs/TESTFLIGHT.md](mobile/docs/TESTFLIGHT.md) | iOS TestFlight short path |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |
 
 ## Project layout
@@ -119,8 +122,9 @@ mix.exs
 | | |
 |--|--|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `mix test` + smoke boot on PR/`main` |
-| **Production** | Railway **auto-deploy from `main`** (no GitHub Actions deploy job) |
-| **Start** | `MIX_ENV=prod mix run --no-halt` (see `railway.json`) |
+| **Host production** | Railway **auto-deploy from `main`** (RAILPACK OTP release; see `railway.json`) |
+| **iOS TestFlight** | Manual from `mobile/` via `asc` — [docs/DEPLOY.md](docs/DEPLOY.md) |
+| **Full guide** | [docs/DEPLOY.md](docs/DEPLOY.md) · agent notes in [AGENTS.md](AGENTS.md) |
 
 ## Legacy Node door
 

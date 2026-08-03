@@ -5,6 +5,8 @@ still the v0.1 **demo** server: multipack by multiword key, single writer per
 pack. Optional client-side note encryption exists (ADR 0012); server-side
 encryption at rest / blob encryption does not.
 
+**Operator update path (Railway + TestFlight):** [DEPLOY.md](./DEPLOY.md).
+
 ## When this is appropriate
 
 | OK for | Not OK for |

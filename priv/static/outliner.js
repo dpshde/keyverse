@@ -284,6 +284,16 @@ function mountOutliner(host, opts) {
   function hasChildren(i) {
     return i + 1 < blocks.length && blocks[i + 1].indent > blocks[i].indent;
   }
+  /** Direct child count for fold pill (not ▸/▾). */
+  function directChildCount(i) {
+    var base = blocks[i].indent;
+    var n = 0;
+    for (var j = i + 1; j < blocks.length; j++) {
+      if (blocks[j].indent <= base) break;
+      if (blocks[j].indent === base + 1) n++;
+    }
+    return n;
+  }
   function parentIndex(i) {
     const base = blocks[i].indent;
     if (base <= 0) return -1;
@@ -418,8 +428,15 @@ function mountOutliner(host, opts) {
       chev.type = "button";
       chev.className = "ochev";
       chev.tabIndex = -1;
-      chev.setAttribute("aria-label", b.collapsed ? "Expand" : "Collapse");
-      if (!kids) chev.style.visibility = "hidden";
+      chev.setAttribute("aria-label", b.collapsed ? "Expand nested lines" : "Collapse nested lines");
+      if (kids) {
+        var nKids = directChildCount(i);
+        chev.textContent = String(nKids);
+        chev.dataset.count = String(nKids);
+      } else {
+        chev.style.visibility = "hidden";
+        chev.textContent = "";
+      }
 
       const bullet = document.createElement("span");
       bullet.className = "obullet";
@@ -563,6 +580,13 @@ function mountOutliner(host, opts) {
     dirty = true;
     setStatus("…");
     clearTimeout(timer);
+    // Live blocks for reader has-note rail (mobile onBlocksLive parity)
+    if (typeof opts.onBlocksChange === "function") {
+      try {
+        syncFromDom();
+        opts.onBlocksChange(blocks.map(serializeBlock));
+      } catch (e) { /* ignore */ }
+    }
     timer = setTimeout(save, 400);
   }
 

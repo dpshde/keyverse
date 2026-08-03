@@ -37,7 +37,14 @@ export const color = {
   warnSoft: "#f5efd9",
   warnInk: "#5c5330",
   link: "#2c4a6e",
-  sel: "rgba(44,74,110,0.10)",
+  /**
+   * Passage selection wash — ink into paper (web: color-mix currentColor 7.5% Canvas).
+   * Not link-blue: a reading mark on warm stock, not a UI chrome selection.
+   * Opaque so adjacent verse rows stitch without dark transparency seams.
+   */
+  sel: "#e5e4e1",
+  /** Hairline at selection → note tray (web --sel-edge ≈ 14% ink into paper) */
+  selEdge: "#d6d5d1",
 } as const;
 
 export const radius = {
@@ -45,6 +52,8 @@ export const radius = {
   md: 12,
   lg: 14,
   pill: 999,
+  /** Outer corners of a multi-verse selection run (web --sel-radius ≈ .65rem) */
+  sel: 10,
 } as const;
 
 /** UI chrome — system sans */

@@ -9,7 +9,14 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.dpslabs.keyverse"
+      "bundleIdentifier": "dev.dpslabs.keyverse",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDisplayName": "keyverse",
+        "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+        "CFBundleShortVersionString": "$(MARKETING_VERSION)"
+      }
     },
     "android": {
       "package": "dev.dpslabs.keyverse",

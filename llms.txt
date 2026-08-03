@@ -2,6 +2,14 @@
 
 > Pack format for OSIS-addressed scripture notes. Frictionlessness > portability > permanence.
 > The pack directory is the product; the HTTP door is an optional access surface.
+> Mobile (Expo RN) is the product client; web door is the multipack mirror.
+
+## Agents & deploy
+
+- Agent conventions: AGENTS.md
+- Host (Railway) + iOS TestFlight: docs/DEPLOY.md
+- TestFlight short path: mobile/docs/TESTFLIGHT.md
+- Host hardening: docs/PRODUCTION.md · self-host: docs/SELF_HOST.md
 
 ## Protocol
 

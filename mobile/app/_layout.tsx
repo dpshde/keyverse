@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { SessionProvider } from "@/src/context/SessionContext";
 import { StackBackButton } from "@/src/components/StackBackButton";
+import { DeepLinkHandler } from "@/src/components/DeepLinkHandler";
 
 export { ErrorBoundary } from "expo-router";
 
@@ -22,6 +23,7 @@ export default function RootLayout() {
         <SessionProvider>
           <ThemeProvider value={scheme === "dark" ? DarkTheme : DefaultTheme}>
             <StatusBar style="auto" />
+            <DeepLinkHandler />
             <Stack
               screenOptions={{
                 headerBackTitle: "Back",
