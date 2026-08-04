@@ -347,7 +347,9 @@ defmodule Keyverse.Activity do
 
   defp collect_events(pack_dir, from, to) do
     op_events = events_from_ops(pack_dir, from, to)
-    slugs_with_ops = MapSet.new(op_events, & &1.slug)
+    # Use all slugs that have an op log, not only those with events in-range,
+    # so remapped bootstrap ops don't also emit note created_at duplicates.
+    slugs_with_ops = all_op_slugs(pack_dir)
     note_events = events_from_notes(pack_dir, from, to, slugs_with_ops)
     op_events ++ note_events
   end
@@ -373,12 +375,11 @@ defmodule Keyverse.Activity do
   defp slug_op_events(pack_dir, slug, from, to) do
     records = OpLog.list(pack_dir, slug)
     lin = Fold.linearize(records)
-    # Prefer note.created_at for empty→content bootstrap ops already on disk
-    # (bulk mirror after ops shipped stamped every slug with "now").
     created_at = note_created_at(pack_dir, slug)
 
-    {events, _state} =
-      Enum.reduce(lin, {[], Fold.empty_state()}, fn %{hash: hash, record: rec}, {acc, state} ->
+    {events, _state, _} =
+      Enum.reduce(lin, {[], Fold.empty_state(), true}, fn %{hash: hash, record: rec},
+                                                           {acc, state, is_first} ->
         before_mat = Fold.materialize(state)
         ops = List.wrap(rec["ops"])
 
@@ -388,28 +389,31 @@ defmodule Keyverse.Activity do
         after_mat = Fold.materialize(state_after)
 
         at =
-          bootstrap_at(rec["at"], created_at, before_mat, after_mat)
+          bootstrap_at(rec["at"], created_at, before_mat, after_mat, is_first, rec)
 
         date = iso_date(at)
 
-        if date && in_range?(date, from, to) do
-          event = %{
-            kind: "edit",
-            slug: slug,
-            hash: hash,
-            at: at || "",
-            date: date,
-            implicit: rec["implicit"] == true,
-            ops: ops,
-            before_state: before_mat,
-            after_state: after_mat,
-            label: label_for_slug(slug, pack_dir)
-          }
+        acc =
+          if date && in_range?(date, from, to) do
+            event = %{
+              kind: "edit",
+              slug: slug,
+              hash: hash,
+              at: at || "",
+              date: date,
+              implicit: rec["implicit"] == true,
+              ops: ops,
+              before_state: before_mat,
+              after_state: after_mat,
+              label: label_for_slug(slug, pack_dir)
+            }
 
-          {[event | acc], state_after}
-        else
-          {acc, state_after}
-        end
+            [event | acc]
+          else
+            acc
+          end
+
+        {acc, state_after, false}
       end)
 
     Enum.reverse(events)
@@ -422,18 +426,43 @@ defmodule Keyverse.Activity do
     end
   end
 
-  # Empty outline → content bootstrap (first write / log seed): prefer created_at
-  # so bulk mirror after ops shipped does not pile every note onto "today".
-  defp bootstrap_at(rec_at, created_at, before_state, after_state)
+  # Prefer note.created_at for log-seed / first-write ops so bulk mirror after
+  # ops shipped does not pile every note onto "today".
+  defp bootstrap_at(rec_at, created_at, before_state, after_state, is_first, rec)
        when is_binary(created_at) and created_at != "" do
-    if empty_outline_state?(before_state) and not empty_outline_state?(after_state) do
-      created_at
-    else
-      rec_at
+    cond do
+      # Classic empty→content first write
+      empty_outline_state?(before_state) and not empty_outline_state?(after_state) ->
+        created_at
+
+      # First record in log, implicit seed, or no parents (root)
+      is_first and (rec["implicit"] == true or List.wrap(rec["parents"]) == []) and
+          not empty_outline_state?(after_state) ->
+        created_at
+
+      true ->
+        rec_at
     end
   end
 
-  defp bootstrap_at(rec_at, _created_at, _before, _after), do: rec_at
+  defp bootstrap_at(rec_at, _created_at, _before, _after, _first, _rec), do: rec_at
+
+  # Slugs that have *any* ops on disk (not just ops in the date window).
+  # Prevents double-counting created_at note events when ops exist but fall
+  # outside the queried day after remapping.
+  defp all_op_slugs(pack_dir) do
+    root = OpLog.ops_root(pack_dir)
+
+    case File.ls(root) do
+      {:ok, names} ->
+        names
+        |> Enum.reject(&String.starts_with?(&1, "."))
+        |> MapSet.new()
+
+      _ ->
+        MapSet.new()
+    end
+  end
 
   defp events_from_notes(pack_dir, from, to, slugs_with_ops) do
     Note.list(pack_dir)
