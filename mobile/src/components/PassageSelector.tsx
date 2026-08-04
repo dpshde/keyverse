@@ -16,7 +16,7 @@ import { SymbolView } from "expo-symbols";
 import type { SuggestItem } from "../api/types";
 import { useTheme } from "../context/ThemeContext";
 import { hapticLight, hapticSelect } from "../lib/haptics";
-import { radius, space, tap, tapComfy } from "../theme";
+import { space, tap, tapComfy } from "../theme";
 import { LiquidGlassShell } from "./LiquidGlassShell";
 import { PassagePickerSheet } from "./PassagePickerSheet";
 
@@ -100,6 +100,8 @@ export function PassageSelector({
   }, [liftAnim, restPad, onKeyboardHeightChange]);
 
   const shown = suggestions.slice(0, 5);
+  const open = shown.length > 0;
+  // Capsule radius — composite (suggest + field) shares one shell like web .ref-search
   const r = 28;
 
   return (
@@ -113,32 +115,34 @@ export function PassageSelector({
         },
       ]}
     >
-      {shown.length > 0 ? (
-        <LiquidGlassShell borderRadius={radius.lg} style={styles.sugOuter}>
-          {shown.map((s, i) => (
-            <Pressable
-              key={s.canonical + s.label}
-              style={[
-                styles.sugRow,
-                i < shown.length - 1 && {
-                  borderBottomWidth: StyleSheet.hairlineWidth,
-                  borderBottomColor: g.sugRowBorder,
-                },
-              ]}
-              onPress={() => {
-                hapticSelect();
-                onSubmit(s.insertText || s.canonical);
-              }}
-            >
-              <Text style={[styles.sugTxt, { color: c.ink }]} numberOfLines={1}>
-                {s.label}
-              </Text>
-            </Pressable>
-          ))}
-        </LiquidGlassShell>
-      ) : null}
+      <LiquidGlassShell borderRadius={r} elevated>
+        {open ? (
+          <View style={styles.sugBlock}>
+            {shown.map((s, i) => (
+              <Pressable
+                key={s.canonical + s.label}
+                style={[
+                  styles.sugRow,
+                  i < shown.length - 1 && {
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: g.sugRowBorder,
+                  },
+                ]}
+                onPress={() => {
+                  hapticSelect();
+                  onSubmit(s.insertText || s.canonical);
+                }}
+              >
+                <Text style={[styles.sugTxt, { color: c.ink }]} numberOfLines={1}>
+                  {s.label}
+                </Text>
+              </Pressable>
+            ))}
+            {/* Soft inner seam — matches web inset divider, not a gap */}
+            <View style={[styles.sugSeam, { backgroundColor: g.sugRowBorder }]} />
+          </View>
+        ) : null}
 
-      <LiquidGlassShell borderRadius={r}>
         <View style={styles.capsuleInner}>
           {enablePicker ? (
             <Pressable
@@ -222,7 +226,9 @@ export function passageSelectorListPad(
 ): number {
   const safe = keyboardHeight > 0 ? space[2] : Math.max(bottomInset, space[3]);
   const base = 72 + safe + space[3] + keyboardHeight;
-  const sug = suggestionCount > 0 ? Math.min(suggestionCount, 5) * 44 + 12 : 0;
+  // Suggestions share the capsule shell; extra top pad when open
+  const sug =
+    suggestionCount > 0 ? Math.min(suggestionCount, 5) * 44 + space[2] + space[1] : 0;
   return base + sug;
 }
 
@@ -233,26 +239,28 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     paddingHorizontal: space[3],
-    gap: space[2],
   },
-  sugOuter: {
-    // slightly tighter shadow than the main capsule
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
+  /** Sits above the field row inside the same glass shell */
+  sugBlock: {
+    zIndex: 1,
+    // Extra air under the top rounded edge (was cramped against the rim)
+    paddingTop: space[2],
   },
   sugRow: {
     minHeight: tap,
     paddingHorizontal: space[4],
     paddingVertical: space[3],
     justifyContent: "center",
-    zIndex: 1,
   },
   sugTxt: {
     fontSize: 16,
     fontWeight: "500",
     letterSpacing: -0.2,
+  },
+  /** Hairline between last suggestion and the input row (web inset seam) */
+  sugSeam: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: space[3],
   },
   capsuleInner: {
     flexDirection: "row",
