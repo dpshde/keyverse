@@ -52,7 +52,11 @@ defmodule Keyverse.Activity do
     # Never start before year start when defaulting; if days is set, allow it.
     span_days = Date.diff(today, from) + 1
 
-    events = collect_events(pack_dir, from, today)
+    events =
+      pack_dir
+      |> collect_events(from, today)
+      |> drop_empty_net_sessions()
+
     counts = Enum.reduce(events, %{}, fn e, acc -> Map.update(acc, e.date, 1, &(&1 + 1)) end)
 
     cells =
@@ -83,7 +87,9 @@ defmodule Keyverse.Activity do
       if Date.compare(from, ytd_from) == :eq do
         events
       else
-        collect_events(pack_dir, ytd_from, today)
+        pack_dir
+        |> collect_events(ytd_from, today)
+        |> drop_empty_net_sessions()
       end
 
     notes_taken_ytd = count_notes_taken(ytd_events)
@@ -159,6 +165,10 @@ defmodule Keyverse.Activity do
   `after_text` is the outline after the last — so a type-then-edit session
   (`"t"` → `"123"`) shows as one net diff, not two micro-cards.
 
+  Net empty sessions (open tray → type → wipe / delete empty note) are omitted:
+  both the day's first before-state and last after-state are empty (no text and
+  no attachments).
+
   Each event may include `before_text` / `after_text` (outline form) for diffs.
   """
   def day(pack_dir, date_iso) when is_binary(date_iso) do
@@ -169,6 +179,7 @@ defmodule Keyverse.Activity do
           |> collect_events(date, date)
           |> Enum.map(&enrich_event/1)
           |> coalesce_by_slug()
+          |> Enum.reject(&empty_net_session?/1)
           |> Enum.sort_by(& &1.at, :desc)
 
         %{
@@ -218,6 +229,31 @@ defmodule Keyverse.Activity do
         net_content_summary(Map.get(base, :before_state), Map.get(base, :after_state))
       )
     end)
+  end
+
+  # Drop slug-day groups whose *net* change is empty → empty (tray noise / wiped drafts).
+  # Used by heatmap so open-type-delete doesn't paint a contribution cell.
+  defp drop_empty_net_sessions(events) do
+    events
+    |> Enum.group_by(fn e -> {Map.get(e, :slug), Map.get(e, :date)} end)
+    |> Enum.flat_map(fn {_key, group} ->
+      ordered = Enum.sort_by(group, &Map.get(&1, :at, ""), :asc)
+      first = hd(ordered)
+      last = List.last(ordered)
+
+      if empty_net_session?(%{
+           before_state: Map.get(first, :before_state),
+           after_state: Map.get(last, :after_state)
+         }) do
+        []
+      else
+        group
+      end
+    end)
+  end
+
+  defp empty_net_session?(e) do
+    empty_note_state?(Map.get(e, :before_state)) and empty_note_state?(Map.get(e, :after_state))
   end
 
   # Human summary: block text changes + attachment/link changes (separate).

@@ -98,22 +98,23 @@ export const colorsLight: ThemeColors = {
   hairline: "rgba(0,0,0,0.1)",
   verseNum: "rgba(22,22,22,0.32)",
   glass: {
-    capsule: Platform.select({
-      ios: "rgba(255,255,255,0.94)",
-      default: "rgba(255,255,255,0.97)",
-    }) as string,
-    capsuleBorder: "rgba(255,255,255,0.92)",
-    capsuleBorderBottom: "rgba(22,22,22,0.12)",
-    glow: "rgba(255,255,255,0.55)",
-    specular: "rgba(255,255,255,0.55)",
     /**
-     * Field sits flush on the capsule — keep transparent so we never paint a
-     * second nested pill inside the liquid-glass shell.
+     * iOS: UIVisualEffectView supplies fill (no wash).
+     * Android: solid-ish frost fill (blur optional / experimental).
      */
+    capsule: Platform.select({
+      ios: "transparent",
+      default: "rgba(255,255,255,0.88)",
+    }) as string,
+    capsuleBorder: "rgba(255,255,255,0.55)",
+    capsuleBorderBottom: "rgba(22,22,22,0.12)",
+    glow: "rgba(255,255,255,0.35)",
+    specular: "rgba(255,255,255,0.65)",
+    /** Field flush on glass — never a nested pill */
     field: "transparent",
     fieldBorder: "transparent",
-    sugBg: "rgba(255,255,255,0.94)",
-    sugBorder: "rgba(255,255,255,0.9)",
+    sugBg: "transparent",
+    sugBorder: "rgba(255,255,255,0.55)",
     sugRowBorder: "rgba(22,22,22,0.08)",
     placeholder: "rgba(22,22,22,0.38)",
     selection: "rgba(22,22,22,0.18)",
@@ -147,24 +148,27 @@ export const colorsDark: ThemeColors = {
   hairline: "rgba(255,255,255,0.12)",
   verseNum: "rgba(236,234,228,0.38)",
   glass: {
-    // Single frosted shell — no inner “black hole” field
+    /**
+     * Dark: iOS uses systemChromeMaterialDark at full intensity (no wash).
+     * Android: charcoal frost fill only.
+     */
     capsule: Platform.select({
-      ios: "rgba(36,38,44,0.92)",
-      default: "rgba(32,34,40,0.96)",
+      ios: "transparent",
+      default: "rgba(42,44,52,0.88)",
     }) as string,
-    capsuleBorder: "rgba(255,255,255,0.14)",
-    capsuleBorderBottom: "rgba(0,0,0,0.35)",
-    glow: "rgba(90,100,140,0.18)",
-    specular: "rgba(255,255,255,0.08)",
+    capsuleBorder: "rgba(255,255,255,0.18)",
+    capsuleBorderBottom: "rgba(0,0,0,0.45)",
+    glow: "rgba(140,150,180,0.16)",
+    specular: "rgba(255,255,255,0.22)",
     field: "transparent",
     fieldBorder: "transparent",
-    sugBg: "rgba(28,30,36,0.94)",
+    sugBg: "transparent",
     sugBorder: "rgba(255,255,255,0.16)",
     sugRowBorder: "rgba(255,255,255,0.1)",
-    placeholder: "rgba(255,255,255,0.38)",
+    placeholder: "rgba(255,255,255,0.42)",
     selection: "rgba(255,255,255,0.35)",
-    dockSeg: "rgba(255,255,255,0.1)",
-    dockSegBorder: "rgba(255,255,255,0.14)",
+    dockSeg: "rgba(255,255,255,0.14)",
+    dockSegBorder: "rgba(255,255,255,0.22)",
   },
 };
 

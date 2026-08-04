@@ -16,6 +16,7 @@ import type { SuggestItem } from "../api/types";
 import { useTheme } from "../context/ThemeContext";
 import { hapticLight, hapticSelect } from "../lib/haptics";
 import { radius, space, tap, tapComfy } from "../theme";
+import { LiquidGlassShell } from "./LiquidGlassShell";
 
 type Props = {
   value: string;
@@ -28,8 +29,7 @@ type Props = {
 
 /**
  * Thumb-zone passage control: floating liquid-glass capsule.
- * Pure RN (no expo-blur). Keyboard lift is Animated in sync with system
- * keyboard (absolute bottom docks ignore KeyboardAvoidingView).
+ * Uses shared BlurView shell (same material as LiquidGlassBar).
  */
 export function PassageSelector({
   value,
@@ -91,6 +91,7 @@ export function PassageSelector({
   }, [liftAnim, restPad, onKeyboardHeightChange]);
 
   const shown = suggestions.slice(0, 5);
+  const r = 28;
 
   return (
     <Animated.View
@@ -104,18 +105,7 @@ export function PassageSelector({
       ]}
     >
       {shown.length > 0 ? (
-        <View
-          style={[
-            styles.sugOuter,
-            {
-              backgroundColor: g.sugBg,
-              borderColor: g.sugBorder,
-              borderBottomColor: g.capsuleBorderBottom,
-            },
-          ]}
-        >
-          <View style={[styles.glassFill, { backgroundColor: g.field }]} />
-          <View style={[styles.glassHighlight, { backgroundColor: g.specular }]} />
+        <LiquidGlassShell borderRadius={radius.lg} style={styles.sugOuter}>
           {shown.map((s, i) => (
             <Pressable
               key={s.canonical + s.label}
@@ -136,64 +126,50 @@ export function PassageSelector({
               </Text>
             </Pressable>
           ))}
-        </View>
+        </LiquidGlassShell>
       ) : null}
 
-      <View style={styles.capsuleOuter}>
-        {/* Soft outer lift only — no scaled “halo” that reads as a second rim */}
-        <View
-          style={[
-            styles.capsule,
-            {
-              backgroundColor: g.capsule,
-              borderColor: g.capsuleBorder,
-              borderBottomColor: g.capsuleBorderBottom,
-            },
-          ]}
-        >
-          <View
-            style={[styles.specular, { backgroundColor: g.specular }]}
-            pointerEvents="none"
+      <LiquidGlassShell borderRadius={r}>
+        <View style={styles.capsuleInner}>
+          <TextInput
+            style={[styles.field, { color: c.ink }]}
+            value={value}
+            onChangeText={onChangeText}
+            placeholder="John 3:16 · psa 33"
+            placeholderTextColor={g.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={() => {
+              hapticLight();
+              onSubmit();
+            }}
+            returnKeyType="go"
+            accessibilityLabel="Passage search"
+            selectionColor={g.selection}
           />
-          <View style={styles.capsuleInner}>
-            {/* Field is flush with the glass — no nested fieldShell pill */}
-            <TextInput
-              style={[styles.field, { color: c.ink }]}
-              value={value}
-              onChangeText={onChangeText}
-              placeholder="John 3:16 · psa 33"
-              placeholderTextColor={g.placeholder}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onSubmitEditing={() => {
-                hapticLight();
-                onSubmit();
-              }}
-              returnKeyType="go"
-              accessibilityLabel="Passage search"
-              selectionColor={g.selection}
-            />
-            <Pressable
-              style={({ pressed }) => [
-                styles.go,
-                {
-                  backgroundColor: c.primaryFill,
-                  borderColor: "transparent",
-                },
-                pressed && styles.goPressed,
-              ]}
-              onPress={() => {
-                hapticLight();
-                onSubmit();
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Go to passage"
-            >
-              <Text style={[styles.goTxt, { color: c.primaryOn }]}>Go</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.go,
+              {
+                backgroundColor: c.primaryFill,
+                borderTopColor: "rgba(255,255,255,0.28)",
+                borderBottomColor: "rgba(0,0,0,0.14)",
+                borderLeftColor: "transparent",
+                borderRightColor: "transparent",
+              },
+              pressed && styles.goPressed,
+            ]}
+            onPress={() => {
+              hapticLight();
+              onSubmit();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Go to passage"
+          >
+            <Text style={[styles.goTxt, { color: c.primaryOn }]}>Go</Text>
+          </Pressable>
         </View>
-      </View>
+      </LiquidGlassShell>
     </Animated.View>
   );
 }
@@ -220,24 +196,11 @@ const styles = StyleSheet.create({
     gap: space[2],
   },
   sugOuter: {
-    borderRadius: radius.lg,
-    overflow: "hidden",
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.14,
+    // slightly tighter shadow than the main capsule
+    shadowOpacity: 0.18,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
-  },
-  glassFill: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  glassHighlight: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    height: 1,
   },
   sugRow: {
     minHeight: tap,
@@ -250,29 +213,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "500",
     letterSpacing: -0.2,
-  },
-  capsuleOuter: {
-    borderRadius: 28,
-    shadowColor: "#000",
-    shadowOpacity: 0.22,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 14,
-  },
-  capsule: {
-    borderRadius: 28,
-    overflow: "hidden",
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  specular: {
-    position: "absolute",
-    left: 14,
-    right: 14,
-    top: 0,
-    height: 12,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    opacity: 0.9,
   },
   capsuleInner: {
     flexDirection: "row",
@@ -289,7 +229,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "500",
     letterSpacing: -0.2,
-    // Transparent field on glass — no nested bg/border
     backgroundColor: "transparent",
   },
   go: {
@@ -299,6 +238,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space[4],
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
   },
   goPressed: {
     opacity: 0.88,

@@ -1,43 +1,24 @@
 /**
  * Reader header glyphs (Phosphor-style paths, currentColor via stroke/fill).
- * Matches web inline SVGs for share / chapter note / expand-all.
+ * Share = web `ph-export`; note/list match web inline SVGs in html.ex.
  */
-import Svg, { Circle, Line, Path, Polygon, Polyline } from "react-native-svg";
+import Svg, { Circle, Line, Path, Polygon } from "react-native-svg";
 
 type IconProps = {
   size?: number;
   color: string;
 };
 
-/** Phosphor export — share passage */
+/**
+ * Phosphor `export` — same glyph as web `ph-export` / ico("export")
+ * (tray + up arrow). Used for passage share on reader + note headers.
+ */
 export function IconShare({ size = 22, color }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 256 256" accessibilityElementsHidden>
       <Path
-        d="M176,152v56a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V88a8,8,0,0,1,8-8h56"
-        fill="none"
-        stroke={color}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={16}
-      />
-      <Polyline
-        points="120 136 216 40 216 96"
-        fill="none"
-        stroke={color}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={16}
-      />
-      <Line
-        x1="216"
-        y1="40"
-        x2="152"
-        y2="40"
-        stroke={color}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={16}
+        d="M216,112v96a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V112A16,16,0,0,1,56,96H80a8,8,0,0,1,0,16H56v96H200V112H176a8,8,0,0,1,0-16h24A16,16,0,0,1,216,112ZM93.66,69.66,120,43.31V136a8,8,0,0,0,16,0V43.31l26.34,26.35a8,8,0,0,0,11.32-11.32l-40-40a8,8,0,0,0-11.32,0l-40,40A8,8,0,0,0,93.66,69.66Z"
+        fill={color}
       />
     </Svg>
   );

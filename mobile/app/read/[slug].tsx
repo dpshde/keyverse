@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ActivityIndicator,
   Animated,
+  Dimensions,
   FlatList,
   Keyboard,
   Platform,
@@ -180,54 +181,89 @@ export default function ReaderScreen() {
   );
 
   /**
-   * Scroll so the open note tray sits in the upper portion of the visible
-   * list (above the keyboard). Uses scrollToIndex + generous bottom padding.
+   * iOS: apply keyboard inset via setNativeProps — do NOT change FlatList
+   * contentContainerStyle. React padding thrash remounts the open tray row
+   * and instantly dismisses the keyboard.
+   */
+  const applyKeyboardInset = useCallback((h: number) => {
+    kbHeightRef.current = h;
+    if (Platform.OS === "ios") {
+      flatListRef.current?.setNativeProps?.({
+        contentInset: { top: 0, left: 0, bottom: h, right: 0 },
+        scrollIndicatorInsets: { top: 0, left: 0, bottom: h, right: 0 },
+      });
+    }
+  }, []);
+
+  /**
+   * Scroll so the open note tray sits above the keyboard — only when the
+   * verse is actually covered. Aggressive scrollToIndex on every keyboard
+   * show was recycling the focused row and killing the keyboard.
    */
   const ensureVerseVisible = useCallback((v: number, animated = true) => {
     const list = versesRef.current;
     const index = list.findIndex((row) => row.v === v);
     if (index < 0) return;
-    // Defer until tray layout / keyboard padding have applied
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        try {
-          flatListRef.current?.scrollToIndex({
-            index,
-            // Keep verse + tray near top of remaining viewport (not under keys)
-            viewPosition: 0.12,
-            animated,
-          });
-        } catch {
-          // Unknown layout: fall back to approximate offset
-          flatListRef.current?.scrollToOffset({
-            offset: Math.max(0, index * 72),
-            animated,
-          });
-        }
+
+    const runScroll = () => {
+      try {
+        flatListRef.current?.scrollToIndex({
+          index,
+          // Keep verse + tray near top of remaining viewport (not under keys)
+          viewPosition: 0.15,
+          animated,
+        });
+      } catch {
+        flatListRef.current?.scrollToOffset({
+          offset: Math.max(0, index * 72),
+          animated,
+        });
+      }
+    };
+
+    const node = verseRefs.current.get(v);
+    if (node && typeof node.measureInWindow === "function") {
+      node.measureInWindow((_x, y, _w, h) => {
+        const kb = kbHeightRef.current;
+        const winH = Dimensions.get("window").height;
+        // Leave headroom so the tray sits above keys
+        const safeBottom = winH - kb - 32;
+        // Already fully above the keyboard — leave focus alone
+        if (y + Math.min(h, 120) < safeBottom) return;
+        runScroll();
       });
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(runScroll);
     });
   }, []);
 
-  // Keyboard: pad list bottom + pin open tray into view
+  // Keyboard: native contentInset (iOS) / padding state (Android) + gentle pin
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
     const onShow = (e: KeyboardEvent) => {
       const h = e.endCoordinates?.height ?? 0;
+      applyKeyboardInset(h);
+      // Track for dock hide. On iOS, list bottom *padding* stays stable (inset
+      // handles room under keys). Android still uses contentContainer padding.
       setKbHeight(h);
       setDockVisible(false);
       const v = focusVerseRef.current;
       if (v != null) {
-        // Match keyboard animation so the tray rides up with the keys
+        // After keys settle — avoid mid-animation scroll that blurs the input
         const delay =
           Platform.OS === "ios" && e.duration != null && e.duration > 0
-            ? Math.min(e.duration, 120)
-            : 40;
+            ? Math.min(Math.max(e.duration - 20, 80), 280)
+            : 100;
         setTimeout(() => ensureVerseVisible(v, true), delay);
       }
     };
     const onHide = () => {
+      applyKeyboardInset(0);
       setKbHeight(0);
     };
 
@@ -237,7 +273,7 @@ export default function ReaderScreen() {
       subShow.remove();
       subHide.remove();
     };
-  }, [ensureVerseVisible, setDockVisible]);
+  }, [applyKeyboardInset, ensureVerseVisible, setDockVisible]);
 
   const bookChapter = useMemo(() => {
     const m = /^([a-z0-9]+)\.(\d+)/i.exec(slug);
@@ -749,12 +785,20 @@ export default function ReaderScreen() {
     return { byEnd, cover };
   }, [notesBySlug, bookChapter, pendingRange, slugHasContent]);
   const dockH = liquidGlassBarListPad(insets.bottom, true);
-  /** Extra room so the open tray can scroll above the keyboard */
+  /**
+   * Stable list padding on iOS (keyboard room via contentInset). Android still
+   * grows padding with the keyboard. Changing padding on iOS remounts trays.
+   */
   const listBottomPad =
-    space[4] + (kbHeight > 0 ? kbHeight + space[3] : dockH);
+    space[4] +
+    (Platform.OS === "android" && kbHeight > 0 ? kbHeight + space[3] : dockH);
   const listContentStyle = useMemo(
     () => ({ padding: space[4], paddingBottom: listBottomPad }),
     [listBottomPad]
+  );
+  const anyTrayOpen = useMemo(
+    () => Object.values(open).some(Boolean) || !!pendingRange,
+    [open, pendingRange]
   );
   const dockSlide = dockAnim.interpolate({
     inputRange: [0, 1],
@@ -927,18 +971,15 @@ export default function ReaderScreen() {
           scrollEventThrottle={16}
           scrollEnabled={!rangeDragging}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          windowSize={7}
+          // Never auto-dismiss while a tray is open — interactive scroll was
+          // racing focus and closing the keyboard on open.
+          keyboardDismissMode={anyTrayOpen || kbHeight > 0 ? "none" : "interactive"}
+          windowSize={anyTrayOpen || kbHeight > 0 ? 15 : 7}
           maxToRenderPerBatch={8}
           initialNumToRender={12}
           updateCellsBatchingPeriod={50}
           removeClippedSubviews={Platform.OS === "android"}
-          // Only while keyboard up — height thrash with expand-all previews is costly
-          maintainVisibleContentPosition={
-            Platform.OS === "ios" && kbHeight > 0
-              ? { minIndexForVisible: 0 }
-              : undefined
-          }
+          // maintainVisibleContentPosition + keyboard = focus thrash; leave off
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             flatListRef.current?.scrollToOffset({
               offset: Math.max(0, index * (averageItemLength || 80)),

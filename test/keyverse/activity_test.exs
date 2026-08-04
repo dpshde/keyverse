@@ -172,4 +172,83 @@ defmodule Keyverse.ActivityTest do
     assert Enum.any?(ev.after_attachments, &(&1.label == "Example article"))
     assert ev.summary =~ ~r/attachment|Added|attached/i
   end
+
+  test "empty note deletion does not appear as activity diff", %{pack: pack} do
+    today = Date.utc_today()
+    today_iso = Date.to_iso8601(today)
+    yesterday = Date.add(today, -1)
+    yesterday_at = DateTime.new!(yesterday, ~T[12:00:00], "Etc/UTC") |> DateTime.to_iso8601()
+
+    # Never had content: put empty (no-op delete path)
+    scope0 = Scope.parse("Psalm 10:1")
+
+    assert {:deleted, true} =
+             Note.put_note(pack, scope0, %{
+               "blocks" => [%{"id" => "b1", "indent" => 0, "text" => ""}]
+             })
+
+    # Prior-day content deleted today — real removal, should still show
+    scope1 = Scope.parse("Psalm 10:2")
+    content_state = %{
+      "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "had content"}],
+      "attachments" => []
+    }
+
+    note1 = %{
+      "id" => "n_prior",
+      "scope" => Note.scope_map(scope1),
+      "blocks" => content_state["blocks"],
+      "attachments" => [],
+      "created_at" => yesterday_at,
+      "updated_at" => yesterday_at
+    }
+
+    Note.write!(pack, note1)
+
+    Keyverse.Pack.Writer.call(pack, fn ->
+      Keyverse.OpLog.record_transition!(
+        pack,
+        scope1.slug,
+        %{"blocks" => [], "attachments" => []},
+        content_state,
+        at: yesterday_at
+      )
+    end)
+
+    assert {:deleted, true} =
+             Note.put_note(pack, scope1, %{
+               "blocks" => [%{"id" => "b1", "indent" => 0, "text" => ""}]
+             })
+
+    # Open tray → type → wipe/delete: net empty→empty, must not card
+    scope3 = Scope.parse("Psalm 10:4")
+
+    {:ok, _} =
+      Note.put_note(pack, scope3, %{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "draft"}]
+      })
+
+    assert {:deleted, true} =
+             Note.put_note(pack, scope3, %{
+               "blocks" => [%{"id" => "b1", "indent" => 0, "text" => ""}]
+             })
+
+    detail = Activity.day(pack, today_iso)
+
+    refute Enum.any?(detail.events, &(&1.slug == scope0.slug))
+    refute Enum.any?(detail.events, &(&1.slug == scope3.slug))
+
+    # Deleting yesterday's content today still surfaces as a removal
+    rem = Enum.find(detail.events, &(&1.slug == scope1.slug))
+    assert rem
+    assert rem.has_diff
+    assert rem.summary =~ ~r/Removed|removed/i
+
+    heat = Activity.heatmap(pack)
+    cell = Enum.find(heat.days, &(&1.date == today_iso))
+    # Draft wipe excluded; prior-content delete still counts
+    assert cell.count >= 1
+    # Wiped draft does not count as a note taken; prior-day create does
+    assert heat.notes_taken_ytd == 1
+  end
 end

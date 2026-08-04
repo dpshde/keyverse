@@ -10,9 +10,10 @@ config.resolver.assetExts = [...new Set([...(config.resolver.assetExts || []), "
 config.resolver.nodeModulesPaths = [nm];
 config.resolver.disableHierarchicalLookup = true;
 config.watchFolders = [projectRoot];
-// Explicit pins for packages Metro has failed to resolve from Expo Go
+// Explicit pins for packages Metro has failed to resolve (Expo Go / pnpm)
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
+  "expo-blur": path.resolve(nm, "expo-blur"),
   "expo-haptics": path.resolve(nm, "expo-haptics"),
   "phosphor-react-native": path.resolve(nm, "phosphor-react-native"),
   "react-native-svg": path.resolve(nm, "react-native-svg"),

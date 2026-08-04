@@ -91,7 +91,7 @@ See [ADR 0019](../docs/adr/0019-passage-deep-link-sharing.md), `src/lib/deepLink
 
 Primary actions stay in the **lower third / bottom dock**, not top-only desktop chrome:
 
-- **Passage search** is a floating **liquid-glass** capsule (`PassageSelector`: frosted fill, specular rim, soft field well — pure RN, no `expo-blur`).
+- **Passage search** is a floating **liquid-glass** capsule (`PassageSelector` / `LiquidGlassShell`: `expo-blur` + light wash + top rim, shared with reader dock).
 - Suggestions stack as a glass sheet **above** the capsule in the thumb zone.
 - Secondary chrome (pack status, passphrase, Settings/Share) can live at the top.
 

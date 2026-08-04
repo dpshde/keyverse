@@ -1,6 +1,6 @@
 /**
- * Contribution graph + day detail (GET /api/activity).
- * Day events are simple expandable cards; body shows a plain outline line-diff.
+ * Contribution graph + week-by-week day folders (GET /api/activity).
+ * Matches mobile: graph is YTD overview; drill-down is week nav + day folders.
  */
 (function () {
   "use strict";
@@ -8,11 +8,21 @@
   var BASE = window.BASE || "";
   var graphEl = document.getElementById("activity-graph");
   var leadEl = document.getElementById("activity-lead");
-  var daySec = document.getElementById("activity-day");
-  var dayTitle = document.getElementById("activity-day-title");
-  var dayBody = document.getElementById("activity-day-body");
-  var dayClose = document.getElementById("activity-day-close");
-  var selectedDate = null;
+  var foldersEl = document.getElementById("activity-day-folders");
+  var weekTitleEl = document.getElementById("activity-week-title");
+  var weekPrevBtn = document.getElementById("activity-week-prev");
+  var weekNextBtn = document.getElementById("activity-week-next");
+  var weekJumpBtn = document.getElementById("activity-week-jump");
+  var weekBadgeEl = document.getElementById("activity-week-badge");
+
+  /** @type {{ days: any[], from: string, to: string, ytd_from?: string, ytd_to?: string, notes_taken_ytd?: number, total?: number } | null} */
+  var heat = null;
+  /** Sunday (UTC) of the visible week */
+  var weekStart = null;
+  /** date → day payload | "loading" | "error" */
+  var dayCache = {};
+  /** date → true when expanded */
+  var dayOpen = {};
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -37,21 +47,6 @@
     if (s.charAt(s.length - 1) !== "Z" && s.charAt(s.length - 1) !== "z") s = s + "Z";
     var t2 = Date.parse(s);
     return isNaN(t2) ? null : new Date(t2);
-  }
-
-  function formatDayLabel(iso) {
-    try {
-      var d = parseBackendTime(iso);
-      if (!d) return iso;
-      return d.toLocaleDateString(undefined, {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
-    } catch (e) {
-      return iso;
-    }
   }
 
   function formatTime(iso) {
@@ -111,16 +106,15 @@
     return tip;
   }
 
-  function showTip(btn, text) {
+  function showTip(el, text) {
     var tip = ensureTip();
     tip.textContent = text;
     tip.hidden = false;
-    var rect = btn.getBoundingClientRect();
+    var rect = el.getBoundingClientRect();
     var tw = tip.offsetWidth || 120;
     var th = tip.offsetHeight || 28;
     var left = rect.left + rect.width / 2 - tw / 2;
     var top = rect.top - th - 8;
-    // Keep on screen
     left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
     if (top < 8) top = rect.bottom + 8;
     tip.style.left = left + "px";
@@ -132,10 +126,127 @@
     if (tip) tip.hidden = true;
   }
 
-  /** GitHub-style: columns = weeks, rows = Sun–Sat; month labels on top */
-  function renderGraph(data) {
-    if (!graphEl) return;
-    var cells = data.days || [];
+  // --- week calendar helpers (UTC, matches door heat day keys) ----------------
+
+  function addDays(iso, n) {
+    var d = new Date(iso + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function weekStartOf(iso) {
+    var d = new Date(iso + "T12:00:00Z");
+    var dow = d.getUTCDay(); // 0 = Sun
+    d.setUTCDate(d.getUTCDate() - dow);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function weekDates(start) {
+    var out = [];
+    for (var i = 0; i < 7; i++) out.push(addDays(start, i));
+    return out;
+  }
+
+  /** "Aug 3 – 9" or "Dec 29 – Jan 4" */
+  function formatWeekRange(start) {
+    var end = addDays(start, 6);
+    try {
+      var a = new Date(start + "T12:00:00Z");
+      var b = new Date(end + "T12:00:00Z");
+      var left = a.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      });
+      if (a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth()) {
+        return left + " – " + b.getUTCDate();
+      }
+      var right = b.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      });
+      return left + " – " + right;
+    } catch (e) {
+      return start + " – " + end;
+    }
+  }
+
+  /** "Tuesday · Aug 4" */
+  function formatDayFolderLabel(iso) {
+    try {
+      var d = new Date(iso + "T12:00:00Z");
+      var weekday = d.toLocaleDateString(undefined, { weekday: "long", timeZone: "UTC" });
+      var rest = d.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      });
+      return weekday + " · " + rest;
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function formatRange(from, to) {
+    try {
+      var a = new Date(from + "T12:00:00Z");
+      var b = new Date(to + "T12:00:00Z");
+      var opts = { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" };
+      return a.toLocaleDateString(undefined, opts) + " – " + b.toLocaleDateString(undefined, opts);
+    } catch (e) {
+      return from + " – " + to;
+    }
+  }
+
+  function heatFrom() {
+    return (heat && (heat.from || heat.ytd_from)) || "";
+  }
+
+  function heatTo() {
+    return (heat && (heat.to || heat.ytd_to)) || "";
+  }
+
+  function todayKey() {
+    return (heat && (heat.ytd_to || heat.to)) || "";
+  }
+
+  function inRange(date) {
+    var from = heatFrom();
+    var to = heatTo();
+    return !!date && date >= from && date <= to;
+  }
+
+  function countByDate(date) {
+    if (!heat || !heat.days) return 0;
+    for (var i = 0; i < heat.days.length; i++) {
+      if (heat.days[i].date === date) return heat.days[i].count | 0;
+    }
+    return 0;
+  }
+
+  function weekIntersectsRange(start) {
+    var end = addDays(start, 6);
+    var from = heatFrom();
+    var to = heatTo();
+    return end >= from && start <= to;
+  }
+
+  function canGoPrev() {
+    if (!heat || !weekStart) return false;
+    return weekIntersectsRange(addDays(weekStart, -7));
+  }
+
+  function canGoNext() {
+    if (!heat || !weekStart) return false;
+    return weekIntersectsRange(addDays(weekStart, 7));
+  }
+
+  // --- graph (overview only) -------------------------------------------------
+
+  function renderGraph() {
+    if (!graphEl || !heat) return;
+    var cells = heat.days || [];
     if (!cells.length) {
       graphEl.innerHTML = "";
       return;
@@ -166,7 +277,8 @@
       if (weeks.length > 60) break;
     }
 
-    // Month label for the first in-range day of each week; blank if same month as previous label
+    var weekEnd = weekStart ? addDays(weekStart, 6) : "";
+
     var monthHtml = '<div class="ag-months" aria-hidden="true">';
     var lastMonthKey = null;
     for (var w = 0; w < weeks.length; w++) {
@@ -174,7 +286,7 @@
       for (var r = 0; r < 7; r++) {
         var day = weeks[w][r];
         if (day.empty) continue;
-        var mk = day.date.slice(0, 7); // YYYY-MM
+        var mk = day.date.slice(0, 7);
         if (mk !== lastMonthKey) {
           mLabel = monthShort(day.date);
           lastMonthKey = mk;
@@ -194,14 +306,17 @@
       for (r = 0; r < 7; r++) {
         var c = weeks[w][r];
         var out = c.empty ? " ag-out" : "";
-        var sel = selectedDate === c.date ? " is-selected" : "";
+        var inWeek =
+          weekStart && c.date >= weekStart && c.date <= weekEnd ? " is-week" : "";
+        var dim = !c.empty && weekStart && !(c.date >= weekStart && c.date <= weekEnd) ? " is-dim" : "";
         var level = c.empty ? 0 : c.level | 0;
         var tip = cellTipText(c);
-        // div[role=button] — avoids global button min-height / padding rules
+        // Visual overview — click jumps to that week (not day-pick)
         html +=
           '<div class="ag-cell' +
           out +
-          sel +
+          inWeek +
+          dim +
           '" role="button" tabindex="' +
           (c.empty ? "-1" : "0") +
           '" data-level="' +
@@ -213,7 +328,7 @@
           '" data-tip="' +
           esc(tip) +
           '" aria-label="' +
-          esc(tip) +
+          esc(tip + (c.empty ? "" : " · open week")) +
           '"' +
           (c.empty ? ' aria-disabled="true"' : "") +
           "></div>";
@@ -226,7 +341,7 @@
     graphEl.querySelectorAll(".ag-cell[data-date]:not([aria-disabled])").forEach(function (btn) {
       function activate() {
         hideTip();
-        openDay(btn.getAttribute("data-date"));
+        setWeekStart(weekStartOf(btn.getAttribute("data-date")));
       }
       btn.addEventListener("click", activate);
       btn.addEventListener("keydown", function (e) {
@@ -247,44 +362,16 @@
       });
       btn.addEventListener("blur", hideTip);
     });
-    // Hide tip when scrolling the graph strip
+
     var wrap = document.getElementById("activity-graph-wrap");
     if (wrap && !wrap._tipScrollBound) {
       wrap.addEventListener("scroll", hideTip, { passive: true });
       wrap._tipScrollBound = true;
     }
 
-    // Graph is left-aligned to ~1 year ago; activity is usually on the right.
-    // Scroll so the latest week (or selected day) is in view.
-    scrollGraphToDate(selectedDate || last);
-
-    if (leadEl) {
-      var notes =
-        data.notes_taken_ytd != null
-          ? data.notes_taken_ytd | 0
-          : data.lines_added_ytd != null
-            ? data.lines_added_ytd | 0
-            : data.total | 0;
-      var yFrom = data.ytd_from || data.from;
-      var yTo = data.ytd_to || data.to;
-      var noteWord = notes === 1 ? "note" : "notes";
-      leadEl.textContent =
-        notes + " " + noteWord + " taken YTD · " + formatRange(yFrom, yTo);
-    }
+    scrollGraphToDate(weekStart || last);
   }
 
-  function formatRange(from, to) {
-    try {
-      var a = new Date(from + "T12:00:00Z");
-      var b = new Date(to + "T12:00:00Z");
-      var opts = { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" };
-      return a.toLocaleDateString(undefined, opts) + " – " + b.toLocaleDateString(undefined, opts);
-    } catch (e) {
-      return from + " – " + to;
-    }
-  }
-
-  /** Keep the target day (or right edge) visible in the horizontal graph strip. */
   function scrollGraphToDate(iso) {
     var wrap = document.getElementById("activity-graph-wrap");
     if (!wrap) return;
@@ -292,24 +379,254 @@
       (iso && graphEl && graphEl.querySelector('.ag-cell[data-date="' + iso + '"]')) ||
       (graphEl && graphEl.querySelector(".ag-week:last-child .ag-cell:not(.ag-out)"));
     if (!btn) {
-      // fallback: pin to end
       wrap.scrollLeft = wrap.scrollWidth;
       return;
     }
     var wr = wrap.getBoundingClientRect();
     var br = btn.getBoundingClientRect();
-    // Center the week column if possible
     var delta = br.left + br.width / 2 - (wr.left + wr.width / 2);
     wrap.scrollLeft = Math.max(0, wrap.scrollLeft + delta);
   }
 
-  /**
-   * Outline text from the server uses 2 spaces per indent level
-   * (Keyverse.Activity.outline_text). Parse into { indent, text }.
-   */
+  // --- week nav + day folders -----------------------------------------------
+
+  function setWeekStart(next) {
+    if (!heat || !next) return;
+    if (!weekIntersectsRange(next)) return;
+    weekStart = next;
+    dayOpen = {};
+    updateWeekNav();
+    renderGraph();
+    renderDayFolders();
+  }
+
+  function updateWeekNav() {
+    if (!weekStart) return;
+    if (weekTitleEl) weekTitleEl.textContent = formatWeekRange(weekStart);
+    var isThis = weekStart === weekStartOf(todayKey());
+    if (weekJumpBtn) {
+      weekJumpBtn.hidden = isThis;
+      weekJumpBtn.textContent = "This week";
+    }
+    if (weekBadgeEl) {
+      weekBadgeEl.hidden = !isThis;
+      weekBadgeEl.textContent = "This week";
+    }
+    if (weekPrevBtn) {
+      weekPrevBtn.disabled = !canGoPrev();
+      weekPrevBtn.classList.toggle("is-disabled", !canGoPrev());
+    }
+    if (weekNextBtn) {
+      weekNextBtn.disabled = !canGoNext();
+      weekNextBtn.classList.toggle("is-disabled", !canGoNext());
+    }
+  }
+
+  function renderDayFolders() {
+    if (!foldersEl || !weekStart) return;
+    var days = weekDates(weekStart);
+    var active = days.filter(function (date) {
+      if (!inRange(date)) return false;
+      var cached = dayCache[date];
+      if (cached && cached !== "loading" && cached !== "error") {
+        return (cached.events || []).length > 0;
+      }
+      return countByDate(date) > 0;
+    });
+
+    if (!active.length) {
+      foldersEl.innerHTML =
+        '<p class="muted activity-week-empty" id="activity-week-empty">No activity this week.</p>';
+      return;
+    }
+
+    var today = todayKey();
+    var html = "";
+    for (var i = 0; i < active.length; i++) {
+      var date = active[i];
+      var open = !!dayOpen[date];
+      var isToday = date === today;
+      var cached = dayCache[date];
+      var eventCount =
+        cached && cached !== "loading" && cached !== "error"
+          ? (cached.events || []).length
+          : countByDate(date);
+      var pillLabel = String(eventCount);
+      var pillCls = open ? " activity-count-pill is-ghost" : " activity-count-pill";
+
+      html +=
+        '<div class="activity-day-block" data-date="' +
+        esc(date) +
+        '">' +
+        '<button type="button" class="activity-day-folder' +
+        (isToday ? " is-today" : "") +
+        (open ? " is-open" : "") +
+        '" aria-expanded="' +
+        (open ? "true" : "false") +
+        '" data-date="' +
+        esc(date) +
+        '">' +
+        '<span class="activity-day-folder-text">' +
+        '<span class="activity-day-folder-title">' +
+        esc(formatDayFolderLabel(date)) +
+        (isToday ? " · Today" : "") +
+        "</span>" +
+        "</span>" +
+        '<span class="' +
+        pillCls.trim() +
+        '" aria-hidden="true">' +
+        esc(pillLabel) +
+        "</span>" +
+        "</button>";
+
+      if (open) {
+        html += '<div class="activity-day-folder-body">';
+        html += renderDayBody(date, cached);
+        html += "</div>";
+      }
+      html += "</div>";
+    }
+    foldersEl.innerHTML = html;
+
+    foldersEl.querySelectorAll(".activity-day-folder").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        toggleDay(btn.getAttribute("data-date"));
+      });
+    });
+    bindEventToggles(foldersEl);
+  }
+
+  function renderDayBody(date, cached) {
+    if (cached == null || cached === "loading") {
+      return '<p class="muted activity-day-loading">Loading…</p>';
+    }
+    if (cached === "error") {
+      return '<p class="muted login-error">Couldn’t load this day.</p>';
+    }
+    var events = cached.events || [];
+    if (!events.length) {
+      return '<p class="muted">No changes this day.</p>';
+    }
+    var html = '<ul class="activity-event-list">';
+    for (var i = 0; i < events.length; i++) {
+      html += eventCardHtml(events[i], i === 0);
+    }
+    html += "</ul>";
+    return html;
+  }
+
+  function eventCardHtml(e, openFirst) {
+    var canExpand = !e.encrypted && (e.has_diff || !!e.after_text);
+    var open = openFirst && canExpand;
+    var noteHref = esc(BASE) + "/note/" + esc(e.slug);
+    var meta = esc(formatTime(e.at)) + (e.summary ? " · " + esc(e.summary) : "");
+    var html = '<li class="activity-event' + (open ? " is-open" : "") + '">';
+
+    if (canExpand) {
+      html +=
+        '<button type="button" class="activity-event-toggle" aria-expanded="' +
+        (open ? "true" : "false") +
+        '">' +
+        '<span class="activity-event-chev" aria-hidden="true"></span>' +
+        '<span class="activity-event-head-text">' +
+        '<span class="activity-event-label">' +
+        esc(e.label || e.slug) +
+        "</span>" +
+        '<span class="muted activity-event-meta">' +
+        meta +
+        "</span>" +
+        "</span>" +
+        "</button>";
+    } else {
+      html +=
+        '<div class="activity-event-static">' +
+        '<span class="activity-event-label">' +
+        esc(e.label || e.slug) +
+        "</span>" +
+        '<span class="muted activity-event-meta">' +
+        meta +
+        "</span>" +
+        "</div>";
+    }
+
+    html +=
+      '<div class="activity-event-body"' +
+      (open || !canExpand ? "" : " hidden") +
+      ">";
+
+    if (e.encrypted) {
+      html += '<p class="muted activity-event-sealed">Sealed note — content not shown.</p>';
+    } else if (e.has_diff) {
+      html += outlineDiffHtml(e.before_text || "", e.after_text || "");
+    } else if (e.after_text) {
+      html += outlineSnapshotHtml(e.after_text);
+    } else {
+      html += '<p class="muted activity-diff-empty">No text available.</p>';
+    }
+
+    html +=
+      '<a class="activity-event-open" href="' + noteHref + '">Open note</a>';
+    html += "</div></li>";
+    return html;
+  }
+
+  function bindEventToggles(root) {
+    root.querySelectorAll(".activity-event-toggle").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var card = btn.closest(".activity-event");
+        if (!card) return;
+        var open = card.classList.toggle("is-open");
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        var body = card.querySelector(".activity-event-body");
+        if (body) body.hidden = !open;
+      });
+    });
+  }
+
+  function toggleDay(date) {
+    if (!date || !inRange(date)) return;
+    if (dayOpen[date]) {
+      delete dayOpen[date];
+      renderDayFolders();
+      return;
+    }
+    dayOpen[date] = true;
+    loadDay(date);
+    renderDayFolders();
+  }
+
+  function loadDay(date) {
+    if (dayCache[date] && dayCache[date] !== "loading" && dayCache[date] !== "error") {
+      return;
+    }
+    dayCache[date] = "loading";
+    renderDayFolders();
+
+    fetch(BASE + "/api/activity?date=" + encodeURIComponent(date), {
+      credentials: "same-origin",
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        dayCache[date] = {
+          date: data.date || date,
+          count: data.count | 0,
+          events: data.events || [],
+        };
+        // If expand revealed zero events, folder list will drop the empty day
+        renderDayFolders();
+      })
+      .catch(function () {
+        dayCache[date] = "error";
+        renderDayFolders();
+      });
+  }
+
+  // --- outline diff (unchanged presentation) --------------------------------
+
   function parseOutlineLines(text) {
     var raw = String(text || "").split("\n");
-    // Drop trailing blanks (outliner caret line)
     while (raw.length && String(raw[raw.length - 1]).trim() === "") raw.pop();
     if (raw.length === 1 && raw[0] === "") raw = [];
     return raw.map(function (line) {
@@ -325,7 +642,6 @@
     return block.indent + "\0" + block.text;
   }
 
-  /** Block-level LCS unified diff on outline rows. */
   function outlineDiffRows(beforeText, afterText) {
     var a = parseOutlineLines(beforeText);
     var b = parseOutlineLines(afterText);
@@ -362,7 +678,6 @@
     return rows;
   }
 
-  /** One outline row: +/- rail · bullet · text (reader-style indent). */
   function outlineRowHtml(kind, block) {
     var cls = "activity-oline apd-" + kind;
     if (!(block.text && String(block.text).trim())) cls += " is-blank";
@@ -386,10 +701,6 @@
     );
   }
 
-  /**
-   * Preview the outline with unified diff coloring.
-   * Single-row diffs stay flat (no nested bordered panel).
-   */
   function outlineDiffHtml(before, after) {
     var rows = outlineDiffRows(before, after);
     if (!rows.length) {
@@ -428,138 +739,62 @@
     );
   }
 
-  function openDay(date) {
-    selectedDate = date;
-    if (graphEl) {
-      graphEl.querySelectorAll(".ag-cell.is-selected").forEach(function (el) {
-        el.classList.remove("is-selected");
-      });
-      var btn = graphEl.querySelector('.ag-cell[data-date="' + date + '"]');
-      if (btn) {
-        btn.classList.add("is-selected");
-        scrollGraphToDate(date);
-      }
-    }
-    if (daySec) daySec.hidden = false;
-    if (dayTitle) dayTitle.textContent = formatDayLabel(date);
-    if (dayBody) dayBody.innerHTML = '<p class="muted">Loading…</p>';
+  // --- wire nav -------------------------------------------------------------
 
-    fetch(BASE + "/api/activity?date=" + encodeURIComponent(date), { credentials: "same-origin" })
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (data) {
-        renderDay(data);
-      })
-      .catch(function () {
-        if (dayBody) dayBody.innerHTML = '<p class="login-error">Couldn’t load that day.</p>';
-      });
+  if (weekPrevBtn) {
+    weekPrevBtn.addEventListener("click", function () {
+      if (!canGoPrev()) return;
+      setWeekStart(addDays(weekStart, -7));
+    });
   }
-
-  function renderDay(data) {
-    if (!dayBody) return;
-    var events = data.events || [];
-    if (!events.length) {
-      dayBody.innerHTML = '<p class="muted">No changes this day.</p>';
-      return;
-    }
-
-    var html = '<ul class="activity-event-list">';
-    for (var i = 0; i < events.length; i++) {
-      var e = events[i];
-      var canExpand = !e.encrypted && (e.has_diff || !!e.after_text);
-      var openFirst = i === 0 && canExpand;
-      var noteHref = esc(BASE) + "/note/" + esc(e.slug);
-      var meta =
-        esc(formatTime(e.at)) + (e.summary ? " · " + esc(e.summary) : "");
-
-      html += '<li class="activity-event' + (openFirst ? " is-open" : "") + '">';
-
-      if (canExpand) {
-        html +=
-          '<button type="button" class="activity-event-toggle" aria-expanded="' +
-          (openFirst ? "true" : "false") +
-          '" data-idx="' +
-          i +
-          '">' +
-          '<span class="activity-event-chev" aria-hidden="true"></span>' +
-          '<span class="activity-event-head-text">' +
-          '<span class="activity-event-label">' +
-          esc(e.label || e.slug) +
-          "</span>" +
-          '<span class="muted activity-event-meta">' +
-          meta +
-          "</span>" +
-          "</span>" +
-          "</button>";
-      } else {
-        html +=
-          '<div class="activity-event-static">' +
-          '<span class="activity-event-label">' +
-          esc(e.label || e.slug) +
-          "</span>" +
-          '<span class="muted activity-event-meta">' +
-          meta +
-          "</span>" +
-          "</div>";
-      }
-
-      html += '<div class="activity-event-body"' + (openFirst || !canExpand ? "" : " hidden") + ">";
-
-      if (e.encrypted) {
-        html += '<p class="muted activity-event-sealed">Sealed note — content not shown.</p>';
-      } else if (e.has_diff) {
-        html += outlineDiffHtml(e.before_text || "", e.after_text || "");
-      } else if (e.after_text) {
-        html += outlineSnapshotHtml(e.after_text);
-      } else {
-        html += '<p class="muted activity-diff-empty">No text available.</p>';
-      }
-
-      html +=
-        '<a class="activity-event-open" href="' +
-        noteHref +
-        '">Open note</a>';
-      html += "</div></li>";
-    }
-    html += "</ul>";
-    dayBody.innerHTML = html;
-
-    dayBody.querySelectorAll(".activity-event-toggle").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var card = btn.closest(".activity-event");
-        if (!card) return;
-        var open = card.classList.toggle("is-open");
-        btn.setAttribute("aria-expanded", open ? "true" : "false");
-        var body = card.querySelector(".activity-event-body");
-        if (body) body.hidden = !open;
-      });
+  if (weekNextBtn) {
+    weekNextBtn.addEventListener("click", function () {
+      if (!canGoNext()) return;
+      setWeekStart(addDays(weekStart, 7));
+    });
+  }
+  if (weekJumpBtn) {
+    weekJumpBtn.addEventListener("click", function () {
+      var t = todayKey();
+      if (!t) return;
+      setWeekStart(weekStartOf(t));
+      scrollGraphToDate(t);
     });
   }
 
-  if (dayClose) {
-    dayClose.addEventListener("click", function () {
-      selectedDate = null;
-      if (daySec) daySec.hidden = true;
-      if (graphEl) {
-        graphEl.querySelectorAll(".ag-cell.is-selected").forEach(function (el) {
-          el.classList.remove("is-selected");
-        });
-      }
-    });
-  }
-
-  // YTD heatmap (Jan 1 → today); open today by default
+  // YTD heatmap → land on this week
   fetch(BASE + "/api/activity", { credentials: "same-origin" })
     .then(function (r) {
       return r.json();
     })
     .then(function (data) {
-      renderGraph(data);
+      heat = data;
       var today = data.ytd_to || data.to;
-      if (today) openDay(today);
+      weekStart = weekStartOf(today || new Date().toISOString().slice(0, 10));
+
+      if (leadEl) {
+        var notes =
+          data.notes_taken_ytd != null
+            ? data.notes_taken_ytd | 0
+            : data.lines_added_ytd != null
+              ? data.lines_added_ytd | 0
+              : data.total | 0;
+        var yFrom = data.ytd_from || data.from;
+        var yTo = data.ytd_to || data.to;
+        var noteWord = notes === 1 ? "note" : "notes";
+        leadEl.textContent =
+          notes + " " + noteWord + " taken YTD · " + formatRange(yFrom, yTo);
+      }
+
+      updateWeekNav();
+      renderGraph();
+      renderDayFolders();
     })
     .catch(function () {
       if (leadEl) leadEl.textContent = "Couldn’t load activity.";
+      if (foldersEl) {
+        foldersEl.innerHTML =
+          '<p class="muted login-error">Couldn’t load activity.</p>';
+      }
     });
 })();

@@ -9,7 +9,6 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from "react-native";
@@ -19,6 +18,7 @@ import { hydrateBlocks } from "@/src/api/client";
 import { Outliner } from "@/src/components/Outliner";
 import { LocalAttachmentList } from "@/src/components/LocalAttachmentList";
 import { HeaderIconButton } from "@/src/components/HeaderIconButton";
+import { IconShare } from "@/src/components/HeaderIcons";
 import { decryptPayload, encryptPayload } from "@/src/lib/crypto";
 import * as Local from "@/src/lib/localPack";
 import { blocksEqual } from "@/src/lib/blocksEqual";
@@ -290,9 +290,9 @@ export default function NoteScreen() {
       headerRight: () => (
         <View style={styles.headerActions}>
           <HeaderIconButton
-            symbol="square.and.arrow.up"
             accessibilityLabel="Share passage link"
             onPress={sharePassage}
+            icon={(c) => <IconShare color={c} size={22} />}
             fallback={"\u2197"}
           />
           <HeaderIconButton
@@ -360,25 +360,69 @@ export default function NoteScreen() {
             </View>
 
             {cloudEnabled ? (
-              <View style={styles.encryptRow}>
-                <View style={styles.encryptCopy}>
-                  <Text style={type.bodyStrong}>Encrypt for cloud</Text>
+              <View
+                style={styles.sealCard}
+                accessibilityRole="summary"
+                accessibilityLabel={
+                  wantEncrypt
+                    ? "Note sealed for cloud. Host stores ciphertext only."
+                    : "Note is plain on the host. Anyone with your door can read it."
+                }
+              >
+                <View style={styles.sealCopy}>
+                  <Text style={type.bodyStrong}>
+                    {wantEncrypt ? "Sealed for cloud" : "Plain on host"}
+                  </Text>
                   <Text style={type.caption}>
-                    Host stores ciphertext only. Passphrase never leaves this device.
+                    {wantEncrypt
+                      ? "Host stores ciphertext only. Passphrase stays on this device."
+                      : "Anyone with your door can read this note on the host."}
                   </Text>
                 </View>
-                <Switch
-                  value={wantEncrypt}
-                  onValueChange={(v) => {
-                    hapticSelect();
-                    setWantEncrypt(v);
-                  }}
-                  disabled={!hasPassphrase}
-                />
+                {!hasPassphrase ? (
+                  <Pressable
+                    style={ui.ghostBtnSm}
+                    onPress={() => {
+                      hapticLight();
+                      pushOnce(router, "/settings");
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Set passphrase in Settings"
+                  >
+                    <Text style={ui.ghostBtnSmTxt}>Set passphrase</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={ui.ghostBtnSm}
+                    onPress={() => {
+                      hapticSelect();
+                      const next = !wantEncrypt;
+                      setWantEncrypt(next);
+                      // Seal preference is part of the note write — persist now,
+                      // not only after the next keystroke.
+                      dirtyRef.current = true;
+                      if (timer.current) clearTimeout(timer.current);
+                      timer.current = setTimeout(() => {
+                        timer.current = null;
+                        void saveRef.current();
+                      }, 200);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      wantEncrypt ? "Unseal note for cloud" : "Seal note for cloud"
+                    }
+                    accessibilityHint={
+                      wantEncrypt
+                        ? "Saves this note as plain text on the host"
+                        : "Encrypts this note so the host only sees ciphertext"
+                    }
+                  >
+                    <Text style={ui.ghostBtnSmTxt}>
+                      {wantEncrypt ? "Unseal" : "Seal"}
+                    </Text>
+                  </Pressable>
+                )}
               </View>
-            ) : null}
-            {cloudEnabled && !hasPassphrase ? (
-              <Text style={styles.hint}>Set a passphrase in Settings to enable encryption.</Text>
             ) : null}
           </>
         )}
@@ -424,7 +468,8 @@ function makeNoteStyles(color: ThemeColors) {
   section: {
     gap: space[1],
   },
-  encryptRow: {
+  /** Cloud seal status + explicit Seal / Unseal action (not a Switch). */
+  sealCard: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -434,19 +479,13 @@ function makeNoteStyles(color: ThemeColors) {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: color.lineSoft,
     paddingHorizontal: space[3],
-    paddingVertical: space[2],
+    paddingVertical: space[3],
     gap: space[3],
   },
-  encryptCopy: {
+  sealCopy: {
     flex: 1,
-    paddingRight: space[2],
+    minWidth: 0,
     gap: 2,
-  },
-  hint: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: color.faint,
-    paddingHorizontal: space[1],
   },
   warn: {
     backgroundColor: color.warnSoft,

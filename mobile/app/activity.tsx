@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -30,6 +31,15 @@ import {
   type DiffRow,
   type HeatCell,
 } from "@/src/lib/activity";
+import {
+  activityScope,
+  getDayMem,
+  getHeatMem,
+  loadDayCached,
+  loadHeatCached,
+  setDayCached,
+  setHeatCached,
+} from "@/src/lib/activityCache";
 import { CountPill } from "@/src/components/CountPill";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
 import { radius, space, type ThemeColors } from "@/src/theme";
@@ -91,20 +101,27 @@ export default function ActivityScreen() {
   const styles = useMemo(() => makeStyles(color), [color]);
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { cloudEnabled, client } = useSession();
+  const { cloudEnabled, client, cloudHost, cloudDoor } = useSession();
 
-  const [heat, setHeat] = useState<ActivityHeatmap | null>(null);
-  const [busy, setBusy] = useState(true);
+  const scope = useMemo(
+    () => activityScope({ cloudEnabled, host: cloudHost, door: cloudDoor }),
+    [cloudEnabled, cloudHost, cloudDoor]
+  );
+
+  const [heat, setHeat] = useState<ActivityHeatmap | null>(() => getHeatMem(scope));
+  const [busy, setBusy] = useState(() => !getHeatMem(scope));
   const [err, setErr] = useState<string | null>(null);
 
   /** Sunday of the visible week. */
   const [weekStart, setWeekStart] = useState(() => weekStartOf(localDateKey(new Date())));
   /** Day folders: true = collapsed (home default). */
   const [dayCollapsed, setDayCollapsed] = useState<Record<string, boolean>>({});
-  /** Cached day payloads when a folder is opened. */
+  /** Day payloads in this session (seeded from activityCache on open). */
   const [dayCache, setDayCache] = useState<Record<string, ActivityDay | "loading" | "error">>({});
   /** Event cards expanded inside a day. */
   const [eventExpanded, setEventExpanded] = useState<Record<string, boolean>>({});
+  /** Week range title → jump to any week in the heat range. */
+  const [weekPickerOpen, setWeekPickerOpen] = useState(false);
 
   const graphScrollRef = useRef<ScrollView>(null);
   const scrollGraphToEnd = useCallback((animated = false) => {
@@ -113,57 +130,103 @@ export default function ActivityScreen() {
     });
   }, []);
 
+  const applyHeat = useCallback(
+    async (next: ActivityHeatmap) => {
+      setHeat(next);
+      await setHeatCached(scope, next);
+    },
+    [scope]
+  );
+
   const loadLocalHeat = useCallback(async () => {
     const notes = await Local.listNotes();
-    setHeat(heatmapFromNotes(notes));
-  }, []);
+    const local = heatmapFromNotes(notes);
+    await applyHeat(local);
+    return local;
+  }, [applyHeat]);
 
-  const loadHeat = useCallback(async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      if (cloudEnabled && client) {
-        try {
-          const remote = await client.activityHeatmap();
-          setHeat({
-            days: remote.days.map((d) => ({
-              date: d.date,
-              count: d.count,
-              level: Math.min(4, Math.max(0, d.level | 0)) as HeatCell["level"],
-            })),
-            total: remote.total,
-            notes_taken_ytd: remote.notes_taken_ytd ?? remote.lines_added_ytd ?? 0,
-            ytd_from: remote.ytd_from || remote.from,
-            ytd_to: remote.ytd_to || remote.to,
-            from: remote.from,
-            to: remote.to,
-            source: remote.source || "ops",
-          });
-          return;
-        } catch (e) {
-          const status = (e as { status?: number })?.status;
-          const msg = String((e as { message?: string })?.message || e);
-          await loadLocalHeat();
-          setErr(
-            status === 404 || /not found|HTTP 404/i.test(msg)
-              ? "Door activity API isn’t on this host yet — showing on-device note stamps."
-              : `Couldn’t reach activity on your key (${msg}). Showing on-device note stamps.`
-          );
-          return;
-        }
+  /**
+   * Stale-while-revalidate heatmap.
+   * `force` = user Retry (show spinner only if no cache).
+   */
+  const loadHeat = useCallback(
+    async (opts?: { force?: boolean }) => {
+      const force = !!opts?.force;
+      setErr(null);
+
+      // Hydrate from disk if memory empty
+      let cached = getHeatMem(scope);
+      if (!cached) {
+        cached = await loadHeatCached(scope);
+        if (cached) setHeat(cached);
       }
-      await loadLocalHeat();
-    } catch (e) {
-      setHeat(null);
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [cloudEnabled, client, loadLocalHeat]);
 
+      // Only block UI when we have nothing to show
+      if (!cached || force) setBusy(!cached);
+
+      try {
+        if (cloudEnabled && client) {
+          try {
+            const remote = await client.activityHeatmap();
+            const next: ActivityHeatmap = {
+              days: remote.days.map((d) => ({
+                date: d.date,
+                count: d.count,
+                level: Math.min(4, Math.max(0, d.level | 0)) as HeatCell["level"],
+              })),
+              total: remote.total,
+              notes_taken_ytd: remote.notes_taken_ytd ?? remote.lines_added_ytd ?? 0,
+              ytd_from: remote.ytd_from || remote.from,
+              ytd_to: remote.ytd_to || remote.to,
+              from: remote.from,
+              to: remote.to,
+              source: remote.source || "ops",
+            };
+            await applyHeat(next);
+            return;
+          } catch (e) {
+            const status = (e as { status?: number })?.status;
+            const msg = String((e as { message?: string })?.message || e);
+            // Keep showing cached remote heat if we have it
+            if (!cached || cached.source === "notes") {
+              await loadLocalHeat();
+            }
+            setErr(
+              status === 404 || /not found|HTTP 404/i.test(msg)
+                ? "Door activity API isn’t on this host yet — showing on-device note stamps."
+                : `Couldn’t reach activity on your key (${msg}). Showing on-device note stamps.`
+            );
+            return;
+          }
+        }
+        await loadLocalHeat();
+      } catch (e) {
+        if (!cached) {
+          setHeat(null);
+          setErr(String(e));
+        } else {
+          setErr(String(e));
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [cloudEnabled, client, scope, applyHeat, loadLocalHeat]
+  );
+
+  const scopeRef = useRef(scope);
   useEffect(() => {
-    loadHeat();
-  }, [loadHeat]);
+    // Door / local scope change — drop day UI for the previous key
+    if (scopeRef.current !== scope) {
+      scopeRef.current = scope;
+      setDayCache({});
+      setEventExpanded({});
+      const mem = getHeatMem(scope);
+      setHeat(mem);
+      setBusy(!mem);
+    }
+    void loadHeat();
+  }, [scope, loadHeat]);
 
   // Land on this week + scroll graph to today when heat arrives
   useEffect(() => {
@@ -234,33 +297,99 @@ export default function ActivityScreen() {
     scrollGraphToEnd(true);
   }, [heat, scrollGraphToEnd]);
 
+  /** Sunday-start weeks that intersect [from, to], newest first. */
+  const weekOptions = useMemo(() => {
+    if (!heat) return [] as { start: string; end: string; count: number; isCurrent: boolean }[];
+    const from = heat.from || heat.ytd_from;
+    const to = heat.to || heat.ytd_to;
+    const today = heat.ytd_to || heat.to || localDateKey(new Date());
+    const thisWeek = weekStartOf(today);
+    const first = weekStartOf(from);
+    let cursor = weekStartOf(to);
+    // Walk backward so the list reads recent → older
+    const out: { start: string; end: string; count: number; isCurrent: boolean }[] = [];
+    let guard = 0;
+    while (cursor >= first && guard < 80) {
+      const end = addDays(cursor, 6);
+      if (end >= from && cursor <= to) {
+        let count = 0;
+        for (let i = 0; i < 7; i++) {
+          const d = addDays(cursor, i);
+          if (d >= from && d <= to) count += countByDate.get(d) || 0;
+        }
+        out.push({
+          start: cursor,
+          end,
+          count,
+          isCurrent: cursor === thisWeek,
+        });
+      }
+      cursor = addDays(cursor, -7);
+      guard++;
+    }
+    return out;
+  }, [heat, countByDate]);
+
+  const pickWeek = useCallback(
+    (start: string) => {
+      hapticSelect();
+      setWeekStart(start);
+      setEventExpanded({});
+      setWeekPickerOpen(false);
+      // Keep heatmap overview scrolled toward recent when picking "this week"
+      const today = heat?.ytd_to || heat?.to || localDateKey(new Date());
+      if (start === weekStartOf(today)) scrollGraphToEnd(true);
+    },
+    [heat, scrollGraphToEnd]
+  );
+
+  const openWeekPicker = useCallback(() => {
+    hapticSelect();
+    setWeekPickerOpen(true);
+  }, []);
+
   const loadDay = useCallback(
     async (date: string) => {
-      setDayCache((prev) => ({ ...prev, [date]: "loading" }));
+      // Memory / disk first — no spinner flash on revisit
+      let cached = getDayMem(scope, date);
+      if (!cached) cached = await loadDayCached(scope, date);
+      if (cached) {
+        setDayCache((prev) => ({ ...prev, [date]: cached! }));
+      } else {
+        setDayCache((prev) => {
+          // Don't clobber a good payload if re-entering mid-fetch
+          if (prev[date] && prev[date] !== "loading" && prev[date] !== "error") return prev;
+          return { ...prev, [date]: "loading" };
+        });
+      }
+
       try {
         if (cloudEnabled && client) {
           try {
             const remote = await client.activityDay(date);
-            setDayCache((prev) => ({
-              ...prev,
-              [date]: {
-                date: remote.date,
-                count: remote.count,
-                events: remote.events as ActivityEvent[],
-              },
-            }));
+            const day: ActivityDay = {
+              date: remote.date,
+              count: remote.count,
+              events: remote.events as ActivityEvent[],
+            };
+            setDayCache((prev) => ({ ...prev, [date]: day }));
+            await setDayCached(scope, day);
             return;
           } catch {
-            /* fall through */
+            /* fall through to local */
           }
         }
         const notes = await Local.listNotes();
-        setDayCache((prev) => ({ ...prev, [date]: dayFromNotes(notes, date) }));
+        const day = dayFromNotes(notes, date);
+        setDayCache((prev) => ({ ...prev, [date]: day }));
+        await setDayCached(scope, day);
       } catch {
-        setDayCache((prev) => ({ ...prev, [date]: "error" }));
+        if (!cached) {
+          setDayCache((prev) => ({ ...prev, [date]: "error" }));
+        }
       }
     },
-    [cloudEnabled, client]
+    [cloudEnabled, client, scope]
   );
 
   const toggleDay = useCallback(
@@ -269,14 +398,14 @@ export default function ActivityScreen() {
       setDayCollapsed((prev) => {
         const wasCollapsed = prev[date] !== false; // default collapsed
         const nextCollapsed = !wasCollapsed;
-        // Opening → ensure we load
-        if (wasCollapsed && dayCache[date] == null) {
+        // Opening → load (cache hit is instant; network revalidates)
+        if (wasCollapsed) {
           void loadDay(date);
         }
         return { ...prev, [date]: nextCollapsed };
       });
     },
-    [dayCache, loadDay]
+    [loadDay]
   );
 
   const isDayCollapsed = useCallback(
@@ -326,7 +455,7 @@ export default function ActivityScreen() {
       ) : err && !heat ? (
         <View style={{ marginTop: space[2], gap: space[2] }}>
           <Text style={[type.body, { color: color.danger }]}>{err}</Text>
-          <Pressable style={ui.secondaryBtn} onPress={() => void loadHeat()}>
+          <Pressable style={ui.secondaryBtn} onPress={() => void loadHeat({ force: true })}>
             <Text style={ui.secondaryBtnTxt}>Retry</Text>
           </Pressable>
         </View>
@@ -406,16 +535,33 @@ export default function ActivityScreen() {
               </Pressable>
 
               <View style={styles.weekNavCenter}>
-                <Text style={[type.section, styles.weekTitle]} numberOfLines={1}>
-                  {formatWeekRange(weekStart)}
-                </Text>
+                <Pressable
+                  onPress={openWeekPicker}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Week of ${formatWeekRange(weekStart)}. Choose week.`}
+                  accessibilityHint="Opens a list of weeks with activity"
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.weekTitleHit, pressed && { opacity: 0.7 }]}
+                >
+                  <Text style={[type.section, styles.weekTitle]} numberOfLines={1}>
+                    {formatWeekRange(weekStart)}
+                  </Text>
+                  {isThisWeek ? (
+                    <Text style={[type.caption, { color: color.muted, marginTop: 2 }]}>
+                      Tap to pick week
+                    </Text>
+                  ) : null}
+                </Pressable>
                 {!isThisWeek ? (
-                  <Pressable onPress={jumpToThisWeek} hitSlop={6} accessibilityRole="button">
+                  <Pressable
+                    onPress={jumpToThisWeek}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel="Jump to this week"
+                  >
                     <Text style={[type.caption, { color: color.link, marginTop: 2 }]}>This week</Text>
                   </Pressable>
-                ) : (
-                  <Text style={[type.caption, { color: color.muted, marginTop: 2 }]}>This week</Text>
-                )}
+                ) : null}
               </View>
 
               <Pressable
@@ -546,6 +692,73 @@ export default function ActivityScreen() {
               });
             })()}
           </View>
+          <Modal
+            visible={weekPickerOpen}
+            animationType="slide"
+            presentationStyle="pageSheet"
+            onRequestClose={() => setWeekPickerOpen(false)}
+          >
+            <View style={[styles.pickerRoot, { paddingBottom: insets.bottom + space[4] }]}>
+              <View style={styles.pickerHead}>
+                <Text style={[type.title, styles.pickerTitle]}>Choose week</Text>
+                <Pressable
+                  onPress={() => setWeekPickerOpen(false)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close week picker"
+                  style={({ pressed }) => [styles.pickerClose, pressed && { opacity: 0.65 }]}
+                >
+                  <Text style={[type.bodyStrong, { color: color.ink }]}>Done</Text>
+                </Pressable>
+              </View>
+              <ScrollView
+                style={styles.pickerList}
+                contentContainerStyle={styles.pickerListInner}
+                keyboardShouldPersistTaps="handled"
+              >
+                {weekOptions.map((w) => {
+                  const selected = w.start === weekStart;
+                  return (
+                    <Pressable
+                      key={w.start}
+                      onPress={() => pickWeek(w.start)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`${formatWeekRange(w.start)}${
+                        w.isCurrent ? ", this week" : ""
+                      }, ${w.count} ${w.count === 1 ? "change" : "changes"}`}
+                      style={({ pressed }) => [
+                        styles.pickerRow,
+                        selected && styles.pickerRowSelected,
+                        pressed && styles.pickerRowPressed,
+                      ]}
+                    >
+                      <View style={styles.pickerRowText}>
+                        <Text
+                          style={[
+                            styles.pickerRowTitle,
+                            selected && styles.pickerRowTitleSelected,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {formatWeekRange(w.start)}
+                        </Text>
+                        {w.isCurrent ? (
+                          <Text style={[type.caption, { color: color.muted, marginTop: 2 }]}>
+                            This week
+                          </Text>
+                        ) : null}
+                      </View>
+                      <CountPill
+                        label={w.count}
+                        variant={selected ? "ghost" : "filled"}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </Modal>
         </>
       ) : null}
     </ScrollView>
@@ -779,8 +992,66 @@ function makeStyles(color: ThemeColors) {
       flex: 1,
       alignItems: "center",
       minWidth: 0,
+      paddingVertical: space[1],
+    },
+    weekTitleHit: {
+      alignItems: "center",
+      alignSelf: "stretch",
     },
     weekTitle: { textAlign: "center" },
+    pickerRoot: {
+      flex: 1,
+      backgroundColor: color.paper,
+    },
+    pickerHead: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: space[4],
+      paddingTop: space[4],
+      paddingBottom: space[3],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: color.lineSoft,
+    },
+    pickerTitle: { flex: 1 },
+    pickerClose: {
+      minHeight: 44,
+      justifyContent: "center",
+      paddingHorizontal: space[2],
+    },
+    pickerList: { flex: 1 },
+    pickerListInner: {
+      paddingHorizontal: space[4],
+      paddingTop: space[2],
+      paddingBottom: space[8],
+      gap: space[1],
+    },
+    pickerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+      paddingVertical: space[3],
+      paddingHorizontal: space[3],
+      borderRadius: radius.md,
+      backgroundColor: color.paperRaised,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.lineSoft,
+      minHeight: 52,
+    },
+    pickerRowSelected: {
+      borderColor: color.line,
+      backgroundColor: color.fill,
+    },
+    pickerRowPressed: { opacity: 0.85 },
+    pickerRowText: { flex: 1, minWidth: 0 },
+    pickerRowTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: color.ink,
+    },
+    pickerRowTitleSelected: {
+      fontWeight: "700",
+    },
     dayBlock: {
       marginBottom: space[1],
     },

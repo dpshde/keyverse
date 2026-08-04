@@ -407,23 +407,30 @@ defmodule Keyverse.Html do
         <p class="muted activity-lead" id="activity-lead">Loading…</p>
       </div>
       <div class="activity-graph-wrap" id="activity-graph-wrap">
-        <div class="activity-graph" id="activity-graph" role="grid" aria-label="Note activity"></div>
-        <div class="activity-legend" id="activity-legend" aria-hidden="true">
-          <span>Less</span>
-          <span class="ag-cell" data-level="0"></span>
-          <span class="ag-cell" data-level="1"></span>
-          <span class="ag-cell" data-level="2"></span>
-          <span class="ag-cell" data-level="3"></span>
-          <span class="ag-cell" data-level="4"></span>
-          <span>More</span>
-        </div>
+        <div class="activity-graph" id="activity-graph" role="img" aria-label="Note activity overview"></div>
       </div>
-      <section class="activity-day" id="activity-day" hidden>
-        <div class="activity-day-head">
-          <h3 class="ui activity-day-title" id="activity-day-title"></h3>
-          <button type="button" class="activity-day-close ui" id="activity-day-close" aria-label="Close day">#{ico("x")}</button>
+      <div class="activity-legend" id="activity-legend" aria-hidden="true">
+        <span>Less</span>
+        <span class="ag-cell" data-level="0"></span>
+        <span class="ag-cell" data-level="1"></span>
+        <span class="ag-cell" data-level="2"></span>
+        <span class="ag-cell" data-level="3"></span>
+        <span class="ag-cell" data-level="4"></span>
+        <span>More</span>
+      </div>
+      <section class="activity-week" id="activity-week" aria-label="Week activity">
+        <div class="activity-week-nav" id="activity-week-nav">
+          <button type="button" class="activity-week-btn" id="activity-week-prev" aria-label="Previous week">‹</button>
+          <div class="activity-week-center">
+            <h3 class="ui activity-week-title" id="activity-week-title"></h3>
+            <button type="button" class="activity-week-jump muted" id="activity-week-jump" hidden>This week</button>
+            <span class="activity-week-badge muted" id="activity-week-badge" hidden>This week</span>
+          </div>
+          <button type="button" class="activity-week-btn" id="activity-week-next" aria-label="Next week">›</button>
         </div>
-        <div class="activity-day-body" id="activity-day-body"></div>
+        <div class="activity-day-folders" id="activity-day-folders">
+          <p class="muted activity-week-empty" id="activity-week-empty">Loading…</p>
+        </div>
       </section>
     </section>
     <footer class="site-foot home-foot ui">
