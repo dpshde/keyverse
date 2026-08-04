@@ -177,8 +177,8 @@
   .offline-page h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .5rem; }
   .offline-page p { color: color-mix(in srgb, currentColor 55%, transparent); }
   .site-foot {
-    margin: 2.25rem 0 0;
-    padding-top: .9rem;
+    margin: 1.25rem 0 0;
+    padding-top: .75rem;
     border-top: 1px solid var(--line-soft);
     font-family: -apple-system, system-ui, sans-serif;
     font-size: .78rem;
@@ -188,6 +188,12 @@
     flex-wrap: wrap;
     gap: .4rem .75rem;
     align-items: center;
+  }
+  /* When pack-own sits above: one divider only (pack owns the top rule) */
+  .pack-own + .site-foot {
+    margin-top: .65rem;
+    padding-top: .55rem;
+    border-top: 0;
   }
   .site-foot a {
     color: inherit;
@@ -3108,59 +3114,62 @@
     .reader-dock-item { min-height: var(--tap-comfy); }
   }
 
-/* Pack ownership / export-import — one quiet row */
+/* Pack backup — Export · Import only (no counts, icons, or Replace chrome) */
 .pack-own{
-  margin:1.35rem 0 0;
-  max-width:none;
-  padding:.7rem 0 0;
-  border:0;
+  margin:1.5rem 0 0;
+  padding:.65rem 0 0;
   border-top:1px solid var(--line-soft);
-  border-radius:0;
   font-family:-apple-system, system-ui, sans-serif;
 }
 .pack-own-row{
-  display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;
-  font-size:.85rem;
-  color:var(--muted);
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:.15rem .45rem;
+  font-size:.82rem;
 }
-.pack-own-sum{margin:0;color:var(--muted)}
-.pack-own-dot{opacity:.4;user-select:none}
+.pack-own-dot{
+  color:var(--faint);
+  user-select:none;
+}
 .pack-own-link{
-  color:var(--ink-soft);
-  text-decoration:underline;
-  text-decoration-color:color-mix(in srgb, var(--ink) 20%, transparent);
-  text-underline-offset:.12em;
+  color:var(--muted);
+  text-decoration:none;
   cursor:pointer;
   font:inherit;
   font-weight:500;
-  background:none;border:0;padding:0;
-}
-.pack-own-link:hover{
-  color:var(--ink);
-  text-decoration-color:color-mix(in srgb, var(--ink) 45%, transparent);
-}
-.pack-own-import{
-  display:inline-flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;margin:0;
-}
-.pack-own-file{display:inline;cursor:pointer}
-.pack-own-file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.pack-own-replace{
-  display:inline-flex;align-items:center;gap:.35rem;
-  font-size:.82rem;
-  color:var(--muted);
-  cursor:pointer;user-select:none;
+  background:none;
+  border:0;
   padding:.15rem 0;
 }
-.pack-own-replace input{
-  margin:0;
-  width:1rem;height:1rem;
-  accent-color:var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .pack-own-link:hover{ color:var(--ink); }
 }
-.pack-own-status{margin:.35rem 0 0;font-size:.85rem;color:var(--muted)}
-/* legacy btn class unused on home; keep minimal so nothing breaks */
-.pack-own-btn{display:none}
-.pack-own-hint{display:none}
-.pack-own h2{display:none}
+.pack-own-import{ display:inline; margin:0; }
+.pack-own-file{ display:inline; cursor:pointer; }
+.pack-own-file input{
+  position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;
+}
+.pack-own-status{
+  margin:.4rem 0 0;
+  font-size:.82rem;
+  color:var(--muted);
+}
+.pack-own-sum,
+.pack-own-replace,
+.pack-own-btn,
+.pack-own-hint,
+.pack-own h2{ display:none; }
+
+/* Home foot: install only when offered — no brand line clutter */
+.site-foot:empty{ display:none; }
+.site-foot:not(:has(*)){ display:none; }
+.site-foot.site-foot-tagline{
+  justify-content:center;
+  border-top:0;
+  margin-top:1.5rem;
+  padding-top:0;
+}
 
 
 /* Local pack mount (ADR 0017 read-only) */

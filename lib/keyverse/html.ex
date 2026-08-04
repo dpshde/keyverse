@@ -97,8 +97,15 @@ defmodule Keyverse.Html do
         ""
       end
 
+    # Home keeps a quiet strip; login/setup still get the keyline via site_footer_tagline/0
     """
-    <footer class="site-foot ui">#{install}<span class="muted">#{ico("key")} no account · just your key</span></footer>
+    <footer class="site-foot ui">#{install}</footer>
+    """
+  end
+
+  def site_footer_tagline do
+    """
+    <footer class="site-foot ui site-foot-tagline"><span class="muted">#{ico("key")} no account · just your key</span></footer>
     """
   end
 
@@ -134,7 +141,7 @@ defmodule Keyverse.Html do
           (e.g. <code>…/quiet-river-lantern-notes/</code>). Bookmark it. Anyone with the link can open the same notes.
           A different key is a different pack.</p>
       </details>
-      #{site_footer(false)}
+      #{site_footer_tagline()}
     </div>
     <script>
     (function () {
@@ -398,47 +405,35 @@ defmodule Keyverse.Html do
     """
   end
 
-  defp pack_ownership_html(base, man) do
-    notes = man.notes || 0
-    atts = man.attachments || 0
-
-    note_bit = "#{notes} note#{if notes == 1, do: "", else: "s"}"
-    file_bit = "#{atts} file#{if atts == 1, do: "", else: "s"}"
-
+  defp pack_ownership_html(base, _man) do
+    # Quiet backup strip: Export · Import only (merge). No counts, icons, or Replace chrome.
     """
     <section class="pack-own ui" id="pack-own" aria-label="Backup">
       <div class="pack-own-row">
-        <span class="muted pack-own-sum">#{ico("stack")} #{note_bit} · #{file_bit}</span>
-        <span class="pack-own-dot muted" aria-hidden="true">·</span>
-        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>#{ico_label("export", "Export")}</a>
-        <span class="pack-own-dot muted" aria-hidden="true">·</span>
+        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>Export</a>
+        <span class="pack-own-dot" aria-hidden="true">·</span>
         <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
           <label class="pack-own-link pack-own-file">
-            #{ico_label("upload-simple", "Import")}
+            Import
             <input type="file" name="pack" accept=".zip,application/zip" required hidden>
-          </label>
-          <label class="pack-own-replace muted" title="Clear existing notes before import">
-            <input type="checkbox" id="pack-import-replace"> Replace
           </label>
         </form>
       </div>
-      <p id="pack-import-status" class="muted pack-own-status" role="status" hidden></p>
+      <p id="pack-import-status" class="pack-own-status" role="status" hidden></p>
     </section>
     <script>
     (function () {
       var form = document.getElementById("pack-import-form");
       var status = document.getElementById("pack-import-status");
-      var replace = document.getElementById("pack-import-replace");
       if (!form) return;
       var file = form.querySelector('input[type=file]');
       file.addEventListener("change", function () {
         if (!file.files || !file.files[0]) return;
-        var mode = replace && replace.checked ? "replace" : "merge";
         var fd = new FormData();
         fd.append("pack", file.files[0]);
         status.hidden = false;
         status.textContent = "Importing…";
-        fetch(BASE + "/api/pack/import?mode=" + mode, { method: "POST", body: fd, credentials: "same-origin" })
+        fetch(BASE + "/api/pack/import?mode=merge", { method: "POST", body: fd, credentials: "same-origin" })
           .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
           .then(function (x) {
             if (x.ok) {
@@ -448,7 +443,7 @@ defmodule Keyverse.Html do
               status.textContent = (x.j && x.j.error) ? x.j.error : "Import failed";
             }
           })
-          .catch(function (e) { status.textContent = "Import failed"; });
+          .catch(function () { status.textContent = "Import failed"; });
         file.value = "";
       });
     })();
