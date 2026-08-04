@@ -14,12 +14,14 @@ import { useSession } from "@/src/context/SessionContext";
 import { useTheme } from "@/src/context/ThemeContext";
 import * as Local from "@/src/lib/localPack";
 import {
+  addDays,
   dayFromNotes,
   formatDayLabel,
   formatTime,
   formatYtdLead,
   heatmapFromNotes,
   lineDiff,
+  localDateKey,
   outlineAsRows,
   weeksFromHeatmap,
   type ActivityDay,
@@ -37,8 +39,52 @@ import { pushOnce } from "@/src/lib/nav";
 /** Indent step matches Outliner compact tray (~18px). */
 const OUTLINE_STEP = 16;
 
+/** Graph cells — same size/spacing as original (11×11, 3px gap). Visual only. */
 const CELL = 11;
 const GAP = 3;
+
+/** Sunday-start week containing `iso` (local calendar). */
+function weekStartOf(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d, 12, 0, 0, 0);
+  return addDays(iso, -dt.getDay());
+}
+
+function weekDates(weekStart: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+}
+
+/** "Aug 3 – 9" or "Dec 29 – Jan 4" */
+function formatWeekRange(weekStart: string): string {
+  const end = addDays(weekStart, 6);
+  try {
+    const [y1, m1, d1] = weekStart.split("-").map(Number);
+    const [y2, m2, d2] = end.split("-").map(Number);
+    const a = new Date(y1, m1 - 1, d1, 12);
+    const b = new Date(y2, m2 - 1, d2, 12);
+    const left = a.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    if (y1 === y2 && m1 === m2) {
+      return `${left} – ${d2}`;
+    }
+    const right = b.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${left} – ${right}`;
+  } catch {
+    return `${weekStart} – ${end}`;
+  }
+}
+
+/** "Tuesday · Aug 4" */
+function formatDayFolderLabel(iso: string): string {
+  try {
+    const [y, m, d] = iso.split("-").map(Number);
+    const dt = new Date(y, m - 1, d, 12, 0, 0, 0);
+    const weekday = dt.toLocaleDateString(undefined, { weekday: "long" });
+    const rest = dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${weekday} · ${rest}`;
+  } catch {
+    return formatDayLabel(iso);
+  }
+}
 
 export default function ActivityScreen() {
   const { color, type, ui } = useTheme();
@@ -48,18 +94,20 @@ export default function ActivityScreen() {
   const { cloudEnabled, client } = useSession();
 
   const [heat, setHeat] = useState<ActivityHeatmap | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [day, setDay] = useState<ActivityDay | null>(null);
   const [busy, setBusy] = useState(true);
-  const [dayBusy, setDayBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  /** Which event cards are expanded (collapsed by default). */
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  /** Horizontal graph: latest weeks are on the right. */
-  const graphScrollRef = useRef<ScrollView>(null);
 
+  /** Sunday of the visible week. */
+  const [weekStart, setWeekStart] = useState(() => weekStartOf(localDateKey(new Date())));
+  /** Day folders: true = collapsed (home default). */
+  const [dayCollapsed, setDayCollapsed] = useState<Record<string, boolean>>({});
+  /** Cached day payloads when a folder is opened. */
+  const [dayCache, setDayCache] = useState<Record<string, ActivityDay | "loading" | "error">>({});
+  /** Event cards expanded inside a day. */
+  const [eventExpanded, setEventExpanded] = useState<Record<string, boolean>>({});
+
+  const graphScrollRef = useRef<ScrollView>(null);
   const scrollGraphToEnd = useCallback((animated = false) => {
-    // rAF helps after layout; contentSizeChange is the reliable path.
     requestAnimationFrame(() => {
       graphScrollRef.current?.scrollToEnd({ animated });
     });
@@ -74,10 +122,8 @@ export default function ActivityScreen() {
     setBusy(true);
     setErr(null);
     try {
-      // Prefer door GET /api/activity (ops/) when sync is on.
       if (cloudEnabled && client) {
         try {
-          // Door default is YTD (Jan 1 → today) when host supports it
           const remote = await client.activityHeatmap();
           setHeat({
             days: remote.days.map((d) => ({
@@ -95,8 +141,6 @@ export default function ActivityScreen() {
           });
           return;
         } catch (e) {
-          // Production may not ship /api/activity yet → 404 "not found".
-          // Fall back to on-device stamps and explain (don't blank the screen).
           const status = (e as { status?: number })?.status;
           const msg = String((e as { message?: string })?.message || e);
           await loadLocalHeat();
@@ -108,7 +152,6 @@ export default function ActivityScreen() {
           return;
         }
       }
-      // Sync off: device has no ops/ — note stamps only.
       await loadLocalHeat();
     } catch (e) {
       setHeat(null);
@@ -122,54 +165,124 @@ export default function ActivityScreen() {
     loadHeat();
   }, [loadHeat]);
 
-  const openDay = useCallback(
-    async (date: string) => {
+  // Land on this week + scroll graph to today when heat arrives
+  useEffect(() => {
+    if (!heat) return;
+    const today = heat.ytd_to || heat.to || localDateKey(new Date());
+    setWeekStart(weekStartOf(today));
+    scrollGraphToEnd(false);
+  }, [heat, scrollGraphToEnd]);
+
+  const weeks = useMemo(() => (heat ? weeksFromHeatmap(heat.days) : []), [heat]);
+
+  useEffect(() => {
+    if (!weeks.length) return;
+    scrollGraphToEnd(false);
+  }, [weeks.length, heat?.to, scrollGraphToEnd]);
+
+  const countByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!heat) return m;
+    for (const d of heat.days) m.set(d.date, d.count);
+    return m;
+  }, [heat]);
+
+  const daysInWeek = useMemo(() => weekDates(weekStart), [weekStart]);
+
+  const weekEnd = addDays(weekStart, 6);
+
+  const shiftWeek = useCallback(
+    (deltaWeeks: number) => {
+      if (!heat) return;
+      const next = addDays(weekStart, deltaWeeks * 7);
+      const nextEnd = addDays(next, 6);
+      const from = heat.from || heat.ytd_from;
+      const to = heat.to || heat.ytd_to;
+      // Allow week if it intersects [from, to]
+      if (nextEnd < from || next > to) return;
       hapticSelect();
-      setSelected(date);
-      setExpanded({}); // collapse all when switching day
-      setDayBusy(true);
-      setDay(null);
+      setWeekStart(next);
+      setEventExpanded({});
+    },
+    [heat, weekStart]
+  );
+
+  const canGoPrev = useMemo(() => {
+    if (!heat) return false;
+    const next = addDays(weekStart, -7);
+    const nextEnd = addDays(next, 6);
+    const from = heat.from || heat.ytd_from;
+    const to = heat.to || heat.ytd_to;
+    return nextEnd >= from && next <= to;
+  }, [heat, weekStart]);
+
+  const canGoNext = useMemo(() => {
+    if (!heat) return false;
+    const next = addDays(weekStart, 7);
+    const nextEnd = addDays(next, 6);
+    const from = heat.from || heat.ytd_from;
+    const to = heat.to || heat.ytd_to;
+    return nextEnd >= from && next <= to;
+  }, [heat, weekStart]);
+
+  const jumpToThisWeek = useCallback(() => {
+    if (!heat) return;
+    hapticSelect();
+    const today = heat.ytd_to || heat.to || localDateKey(new Date());
+    setWeekStart(weekStartOf(today));
+    setEventExpanded({});
+    scrollGraphToEnd(true);
+  }, [heat, scrollGraphToEnd]);
+
+  const loadDay = useCallback(
+    async (date: string) => {
+      setDayCache((prev) => ({ ...prev, [date]: "loading" }));
       try {
         if (cloudEnabled && client) {
           try {
             const remote = await client.activityDay(date);
-            setDay({
-              date: remote.date,
-              count: remote.count,
-              events: remote.events as ActivityEvent[],
-            });
+            setDayCache((prev) => ({
+              ...prev,
+              [date]: {
+                date: remote.date,
+                count: remote.count,
+                events: remote.events as ActivityEvent[],
+              },
+            }));
             return;
           } catch {
-            /* host without day API — local stamps */
+            /* fall through */
           }
         }
         const notes = await Local.listNotes();
-        setDay(dayFromNotes(notes, date));
-      } catch (e) {
-        setDay(null);
-        setErr(String(e));
-      } finally {
-        setDayBusy(false);
+        setDayCache((prev) => ({ ...prev, [date]: dayFromNotes(notes, date) }));
+      } catch {
+        setDayCache((prev) => ({ ...prev, [date]: "error" }));
       }
     },
     [cloudEnabled, client]
   );
 
-  // Open today once the YTD graph loads; pin graph to the right (today).
-  useEffect(() => {
-    if (!heat || selected) return;
-    const today = heat.ytd_to || heat.to;
-    if (today) openDay(today);
-    scrollGraphToEnd(false);
-  }, [heat, selected, openDay, scrollGraphToEnd]);
+  const toggleDay = useCallback(
+    (date: string) => {
+      hapticSelect();
+      setDayCollapsed((prev) => {
+        const wasCollapsed = prev[date] !== false; // default collapsed
+        const nextCollapsed = !wasCollapsed;
+        // Opening → ensure we load
+        if (wasCollapsed && dayCache[date] == null) {
+          void loadDay(date);
+        }
+        return { ...prev, [date]: nextCollapsed };
+      });
+    },
+    [dayCache, loadDay]
+  );
 
-  const weeks = useMemo(() => (heat ? weeksFromHeatmap(heat.days) : []), [heat]);
-
-  // Re-pin when week columns re-layout (e.g. after heat swap local ↔ remote)
-  useEffect(() => {
-    if (!weeks.length) return;
-    scrollGraphToEnd(false);
-  }, [weeks.length, heat?.to, scrollGraphToEnd]);
+  const isDayCollapsed = useCallback(
+    (date: string) => dayCollapsed[date] !== false, // default true (collapsed)
+    [dayCollapsed]
+  );
 
   const levelColor = useCallback(
     (level: number, out: boolean) => {
@@ -193,8 +306,11 @@ export default function ActivityScreen() {
 
   const toggleEvent = useCallback((key: string) => {
     hapticSelect();
-    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+    setEventExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
+
+  const todayKey = heat?.ytd_to || heat?.to || localDateKey(new Date());
+  const isThisWeek = weekStart === weekStartOf(todayKey);
 
   return (
     <ScrollView
@@ -223,6 +339,7 @@ export default function ActivityScreen() {
             </Text>
           ) : null}
 
+          {/* Compact YTD graph — overview only */}
           <ScrollView
             ref={graphScrollRef}
             horizontal
@@ -232,25 +349,21 @@ export default function ActivityScreen() {
             onContentSizeChange={() => scrollGraphToEnd(false)}
             onLayout={() => scrollGraphToEnd(false)}
           >
-            <View style={styles.weeks}>
+            <View style={styles.weeks} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
               {weeks.map((week, wi) => (
                 <View key={wi} style={styles.week}>
                   {week.map((cell) => {
                     const out = !inRange(cell.date);
-                    const sel = selected === cell.date;
+                    const inThisWeek = cell.date >= weekStart && cell.date <= weekEnd;
                     return (
-                      <Pressable
+                      <View
                         key={cell.date}
-                        disabled={out}
-                        onPress={() => openDay(cell.date)}
-                        accessibilityLabel={`${cell.date}: ${cell.count} changes`}
                         style={[
                           styles.cell,
                           {
                             backgroundColor: levelColor(cell.level, out),
-                            opacity: out ? 0 : 1,
-                            borderWidth: sel ? 2 : 0,
-                            borderColor: color.ink,
+                            // Soft dim outside the open week — no border (keeps 11×11 geometry)
+                            opacity: out ? 0 : inThisWeek ? 1 : 0.4,
                           },
                         ]}
                       />
@@ -272,36 +385,167 @@ export default function ActivityScreen() {
             <Text style={type.caption}>More</Text>
           </View>
 
-          {selected ? (
-            <View style={styles.daySection}>
-              <Text style={[type.section, styles.dayTitle]}>{formatDayLabel(selected)}</Text>
-              {dayBusy ? (
-                <ActivityIndicator color={color.ink} style={{ marginTop: space[3] }} />
-              ) : !day || day.events.length === 0 ? (
-                <Text style={[type.meta, { marginTop: space[2] }]}>No changes this day.</Text>
-              ) : (
-                day.events.map((ev, idx) => {
-                  const key = `${ev.slug}-${ev.at}-${idx}`;
-                  return (
-                    <EventCard
-                      key={key}
-                      event={ev}
-                      expanded={!!expanded[key]}
-                      onToggle={() => toggleEvent(key)}
-                      styles={styles}
-                      color={color}
-                      type={type}
-                      ui={ui}
-                      onOpenNote={() => {
-                        hapticLight();
-                        pushOnce(router, `/note/${encodeURIComponent(ev.slug)}`);
-                      }}
-                    />
-                  );
-                })
-              )}
+          {/* Week navigator + day folders */}
+          <View style={styles.weekSection}>
+            <View style={styles.weekNav}>
+              <Pressable
+                onPress={() => shiftWeek(-1)}
+                disabled={!canGoPrev}
+                accessibilityRole="button"
+                accessibilityLabel="Previous week"
+                style={({ pressed }) => [
+                  styles.weekNavBtn,
+                  !canGoPrev && styles.weekNavBtnDisabled,
+                  pressed && canGoPrev && { opacity: 0.65 },
+                ]}
+                hitSlop={8}
+              >
+                <Text style={[styles.weekNavChev, { color: canGoPrev ? color.ink : color.faint }]}>
+                  ‹
+                </Text>
+              </Pressable>
+
+              <View style={styles.weekNavCenter}>
+                <Text style={[type.section, styles.weekTitle]} numberOfLines={1}>
+                  {formatWeekRange(weekStart)}
+                </Text>
+                {!isThisWeek ? (
+                  <Pressable onPress={jumpToThisWeek} hitSlop={6} accessibilityRole="button">
+                    <Text style={[type.caption, { color: color.link, marginTop: 2 }]}>This week</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={[type.caption, { color: color.muted, marginTop: 2 }]}>This week</Text>
+                )}
+              </View>
+
+              <Pressable
+                onPress={() => shiftWeek(1)}
+                disabled={!canGoNext}
+                accessibilityRole="button"
+                accessibilityLabel="Next week"
+                style={({ pressed }) => [
+                  styles.weekNavBtn,
+                  !canGoNext && styles.weekNavBtnDisabled,
+                  pressed && canGoNext && { opacity: 0.65 },
+                ]}
+                hitSlop={8}
+              >
+                <Text style={[styles.weekNavChev, { color: canGoNext ? color.ink : color.faint }]}>
+                  ›
+                </Text>
+              </Pressable>
             </View>
-          ) : null}
+
+            {(() => {
+              const activeDays = daysInWeek.filter((date) => {
+                // Hide empty days entirely (graph still shows the week overview).
+                if (!inRange(date)) return false;
+                const count = countByDate.get(date) || 0;
+                const cached = dayCache[date];
+                if (cached && cached !== "loading" && cached !== "error") {
+                  return cached.events.length > 0;
+                }
+                return count > 0;
+              });
+              if (activeDays.length === 0) {
+                return (
+                  <Text style={[type.meta, { marginTop: space[2], textAlign: "center" }]}>
+                    No activity this week.
+                  </Text>
+                );
+              }
+              return activeDays.map((date) => {
+              const outside = !inRange(date);
+              const count = countByDate.get(date) || 0;
+              const collapsed = isDayCollapsed(date);
+              const isToday = date === todayKey;
+              const cached = dayCache[date];
+              const eventCount =
+                cached && cached !== "loading" && cached !== "error"
+                  ? cached.events.length
+                  : count;
+
+              return (
+                <View key={date} style={styles.dayBlock}>
+                  <Pressable
+                    onPress={() => {
+                      if (outside) return;
+                      toggleDay(date);
+                    }}
+                    disabled={outside}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: !collapsed, disabled: outside }}
+                    accessibilityLabel={`${formatDayFolderLabel(date)}, ${eventCount} ${
+                      eventCount === 1 ? "change" : "changes"
+                    }, ${collapsed ? "collapsed" : "expanded"}`}
+                    accessibilityHint={collapsed ? "Expands day" : "Collapses day"}
+                    style={({ pressed }) => [
+                      styles.dayFolder,
+                      isToday && styles.dayFolderToday,
+                      !collapsed && styles.dayFolderOpen,
+                      outside && styles.dayFolderOutside,
+                      pressed && !outside && styles.dayFolderPressed,
+                    ]}
+                  >
+                    <View style={styles.dayFolderText}>
+                      <Text
+                        style={[
+                          styles.dayFolderTitle,
+                          outside && { color: color.faint },
+                          isToday && { fontWeight: "700" },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {formatDayFolderLabel(date)}
+                        {isToday ? " · Today" : ""}
+                      </Text>
+                    </View>
+                    <CountPill
+                      label={outside ? "—" : eventCount}
+                      variant={collapsed ? "filled" : "ghost"}
+                    />
+                  </Pressable>
+
+                  {!collapsed && !outside ? (
+                    <View style={styles.dayFolderBody}>
+                      {cached === "loading" || cached == null ? (
+                        <ActivityIndicator color={color.ink} style={{ marginVertical: space[3] }} />
+                      ) : cached === "error" ? (
+                        <Text style={[type.meta, { marginVertical: space[2] }]}>
+                          Couldn’t load this day.
+                        </Text>
+                      ) : cached.events.length === 0 ? (
+                        <Text style={[type.meta, { marginVertical: space[2], marginLeft: space[1] }]}>
+                          No changes this day.
+                        </Text>
+                      ) : (
+                        cached.events.map((ev, idx) => {
+                          const key = `${date}-${ev.slug}-${ev.at}-${idx}`;
+                          return (
+                            <EventCard
+                              key={key}
+                              event={ev}
+                              expanded={!!eventExpanded[key]}
+                              onToggle={() => toggleEvent(key)}
+                              styles={styles}
+                              color={color}
+                              type={type}
+                              ui={ui}
+                              onOpenNote={() => {
+                                hapticLight();
+                                pushOnce(router, `/note/${encodeURIComponent(ev.slug)}`);
+                              }}
+                            />
+                          );
+                        })
+                      )}
+                    </View>
+                  ) : null}
+                </View>
+              );
+              });
+            })()}
+          </View>
         </>
       ) : null}
     </ScrollView>
@@ -331,7 +575,6 @@ function EventCard({
     if (event.has_diff && event.before_text != null && event.after_text != null) {
       return lineDiff(event.before_text, event.after_text);
     }
-    // Created / snapshot: preview the outline itself as structure
     if (event.after_text) {
       return outlineAsRows(event.after_text, event.kind === "created" ? "add" : "eq");
     }
@@ -346,12 +589,10 @@ function EventCard({
       if (r.type === "add") adds++;
       else if (r.type === "del") dels++;
     }
-    // Pure snapshot (all eq) still has content to preview
     const hasChange = adds + dels > 0 || rows.some((r) => r.type === "eq" && r.text.trim());
     return { adds, dels, hasChange };
   }, [rows]);
 
-  /** Prefer change lines when a real diff exists; else full outline snapshot. */
   const previewRows = useMemo(() => {
     if (!rows) return null;
     const changes = rows.filter((r) => r.type === "add" || r.type === "del");
@@ -363,7 +604,6 @@ function EventCard({
     !event.encrypted &&
     (stats.hasChange || !!event.after_text || event.summary === "Note updated");
 
-  /** Same trailing CountPill language as home folders: filled = packed, ghost = open. */
   const pillLabel =
     stats.adds + stats.dels > 0
       ? stats.adds + stats.dels
@@ -434,7 +674,6 @@ function diffInks(color: ThemeColors) {
   };
 }
 
-/** One outliner-style line: optional +/− rail, bullet, indented body. */
 function OutlinePreviewRow({
   row,
   styles,
@@ -460,14 +699,7 @@ function OutlinePreviewRow({
       ]}
     >
       {isAdd || isDel ? (
-        <Text
-          style={[
-            styles.diffMark,
-            { color: inkColor },
-          ]}
-        >
-          {isAdd ? "+" : "−"}
-        </Text>
+        <Text style={[styles.diffMark, { color: inkColor }]}>{isAdd ? "+" : "−"}</Text>
       ) : (
         <View style={styles.diffMarkSpacer} />
       )}
@@ -516,13 +748,90 @@ function makeStyles(color: ThemeColors) {
       marginTop: space[3],
       marginBottom: space[2],
     },
-    daySection: {
-      marginTop: space[5],
-      paddingTop: space[4],
+    weekSection: {
+      marginTop: space[4],
+      paddingTop: space[3],
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: color.lineSoft,
     },
-    dayTitle: { marginBottom: space[3] },
+    weekNav: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+      marginBottom: space[3],
+    },
+    weekNavBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: radius.md,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: color.fill,
+    },
+    weekNavBtnDisabled: { opacity: 0.4 },
+    weekNavChev: {
+      fontSize: 28,
+      fontWeight: "400",
+      lineHeight: 32,
+      marginTop: -2,
+    },
+    weekNavCenter: {
+      flex: 1,
+      alignItems: "center",
+      minWidth: 0,
+    },
+    weekTitle: { textAlign: "center" },
+    dayBlock: {
+      marginBottom: space[1],
+    },
+    dayFolder: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+      paddingVertical: space[3],
+      paddingHorizontal: space[3],
+      borderRadius: radius.md,
+      backgroundColor: color.paperRaised,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.lineSoft,
+      minHeight: 48,
+    },
+    dayFolderToday: {
+      borderColor: color.line,
+    },
+    dayFolderOpen: {
+      backgroundColor: color.fill,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+      borderBottomWidth: 0,
+    },
+    dayFolderOutside: {
+      opacity: 0.45,
+    },
+    dayFolderPressed: {
+      opacity: 0.85,
+    },
+    dayFolderText: {
+      flex: 1,
+      minWidth: 0,
+    },
+    dayFolderTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: color.ink,
+    },
+    dayFolderBody: {
+      paddingTop: space[2],
+      paddingBottom: space[1],
+      paddingHorizontal: space[1],
+      marginBottom: space[2],
+      borderWidth: StyleSheet.hairlineWidth,
+      borderTopWidth: 0,
+      borderColor: color.lineSoft,
+      borderBottomLeftRadius: radius.md,
+      borderBottomRightRadius: radius.md,
+      backgroundColor: color.paper,
+    },
     eventCard: {
       backgroundColor: color.paperRaised,
       borderRadius: radius.md,
@@ -549,9 +858,9 @@ function makeStyles(color: ThemeColors) {
       gap: space[2],
       paddingVertical: space[3],
       paddingHorizontal: space[3],
-      minHeight: 56,
+      minHeight: 52,
     },
-    eventHeadText: { flex: 1, minWidth: 0, gap: 2, paddingRight: space[2] },
+    eventHeadText: { flex: 1, minWidth: 0, gap: 2 },
     eventLabel: { fontWeight: "600" },
     eventBody: {
       paddingHorizontal: space[3],
@@ -561,64 +870,52 @@ function makeStyles(color: ThemeColors) {
       borderTopColor: color.lineSoft,
       paddingTop: space[3],
     },
+    openBtn: { marginTop: 0 },
     outlineBox: {
       borderRadius: radius.sm,
       overflow: "hidden",
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: color.lineSoft,
-      backgroundColor: color.paper,
+      gap: 2,
     },
     outlineRow: {
       flexDirection: "row",
       alignItems: "flex-start",
       paddingVertical: 5,
-      paddingRight: space[2],
-      paddingLeft: space[1],
-      minHeight: 28,
+      paddingHorizontal: space[2],
+      borderRadius: radius.sm,
     },
     outlineBody: {
       flex: 1,
       flexDirection: "row",
       alignItems: "flex-start",
       minWidth: 0,
+      gap: 8,
     },
     dotCol: {
-      width: 16,
-      height: 22,
+      width: 14,
+      paddingTop: 6,
       alignItems: "center",
-      justifyContent: "center",
-      flexShrink: 0,
     },
     dot: {
       width: 6,
       height: 6,
       borderRadius: 3,
-      transform: [{ translateY: -1 }],
     },
     outlineText: {
       flex: 1,
       fontSize: 15,
-      lineHeight: 22,
-      color: color.ink,
+      lineHeight: 21,
     },
+    diffMark: {
+      width: 16,
+      fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
+      fontSize: 13,
+      fontWeight: "700",
+      lineHeight: 21,
+      textAlign: "center",
+    },
+    diffMarkSpacer: { width: 16 },
     diffAdd: { backgroundColor: addBg },
     diffDel: { backgroundColor: delBg },
-    diffEq: { backgroundColor: "transparent" },
-    diffMark: {
-      width: 18,
-      fontSize: 14,
-      fontWeight: "700",
-      color: color.muted,
-      lineHeight: 22,
-      textAlign: "center",
-      flexShrink: 0,
-    },
-    diffMarkSpacer: {
-      width: 18,
-      flexShrink: 0,
-    },
-    openBtn: {
-      marginTop: space[1],
-    },
+    diffEq: {},
   });
 }

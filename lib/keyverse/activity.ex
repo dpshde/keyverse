@@ -3,9 +3,10 @@ defmodule Keyverse.Activity do
   Pack activity for the contribution graph (GitHub-style heatmap) and day detail.
 
   Primary source: `ops/<slug>/*.json` wall-clock `at` (informational timestamps).
-  Fallback: note `created_at` / `updated_at` when a slug has no op log yet
-  (snapshot-only clients). Day detail reconstructs before/after outline text by
-  replaying the op fold so clients can render a line diff.
+  Fallback: note `created_at` only when a slug has no op log yet (not
+  `updated_at` — import/sync rewrites that and looks like a mass edit).
+  Day detail reconstructs before/after outline text by replaying the op fold
+  so clients can render a line diff.
   """
 
   alias Keyverse.{Fold, Note, OpLog, Scope}
@@ -361,31 +362,34 @@ defmodule Keyverse.Activity do
     label = note_label(note)
     encrypted = is_map(note["cipher"])
 
-    for {field, kind} <- [{"created_at", "created"}, {"updated_at", "snapshot"}],
-        at = note[field],
-        is_binary(at),
-        date = iso_date(at),
-        date && in_range?(date, from, to),
-        # skip duplicate created+updated same second for brand-new notes
-        field != "updated_at" or note["created_at"] != note["updated_at"] do
+    # Only `created_at` — never `updated_at` (import/mirror rewrites that stamp).
+    at = note["created_at"]
+
+    with true <- is_binary(at),
+         date when is_binary(date) <- iso_date(at),
+         true <- in_range?(date, from, to) do
       state = if encrypted, do: nil, else: Fold.state_from_note(note)
       text = if state, do: outline_text(state), else: nil
 
-      %{
-        kind: kind,
-        slug: slug,
-        hash: nil,
-        at: at,
-        date: date,
-        implicit: false,
-        ops: [],
-        before_state: if(kind == "created", do: %{"blocks" => [], "attachments" => []}, else: nil),
-        after_state: state,
-        before_text: if(kind == "created", do: "", else: nil),
-        after_text: text,
-        label: label,
-        encrypted: encrypted
-      }
+      [
+        %{
+          kind: "created",
+          slug: slug,
+          hash: nil,
+          at: at,
+          date: date,
+          implicit: false,
+          ops: [],
+          before_state: %{"blocks" => [], "attachments" => []},
+          after_state: state,
+          before_text: "",
+          after_text: text,
+          label: label,
+          encrypted: encrypted
+        }
+      ]
+    else
+      _ -> []
     end
   end
 

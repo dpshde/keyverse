@@ -107,7 +107,7 @@ function level(count: number): 0 | 1 | 2 | 3 | 4 {
 }
 
 /** Add days to a local YYYY-MM-DD key (stays on local calendar). */
-function addDays(iso: string, n: number): string {
+export function addDays(iso: string, n: number): string {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(y, m - 1, d + n, 12, 0, 0, 0);
   return localDateKey(dt);
@@ -132,7 +132,8 @@ export function notesTakenYtdFromNotes(notes: Note[]): number {
 }
 
 /**
- * YTD heatmap (local calendar Jan 1 → today) from note created/updated stamps.
+ * YTD heatmap (local calendar Jan 1 → today) from note **created_at** only.
+ * Never use updated_at — import/sync rewrites that and looks like a mass edit.
  */
 export function heatmapFromNotes(notes: Note[]): ActivityHeatmap {
   const today = localDateKey(new Date());
@@ -140,12 +141,9 @@ export function heatmapFromNotes(notes: Note[]): ActivityHeatmap {
   const counts = new Map<string, number>();
 
   for (const note of notes) {
-    for (const field of ["created_at", "updated_at"] as const) {
-      const date = isoDate(note[field]);
-      if (!date || date < from || date > today) continue;
-      if (field === "updated_at" && note.created_at === note.updated_at) continue;
-      counts.set(date, (counts.get(date) || 0) + 1);
-    }
+    const date = isoDate(note.created_at);
+    if (!date || date < from || date > today) continue;
+    counts.set(date, (counts.get(date) || 0) + 1);
   }
 
   const cells: HeatCell[] = [];
@@ -202,7 +200,10 @@ function formatDayLabelShort(iso: string): string {
   });
 }
 
-/** Local day detail — list notes touched that day (current snapshot text only). */
+/**
+ * Local day detail — notes **created** that day (created_at only).
+ * updated_at is ignored (import/mirror pollution).
+ */
 export function dayFromNotes(notes: Note[], date: string): ActivityDay {
   const events: ActivityEvent[] = [];
 
@@ -214,35 +215,19 @@ export function dayFromNotes(notes: Note[], date: string): ActivityDay {
     const after = encrypted ? null : outlineText(note);
 
     const created = isoDate(note.created_at);
-    const updated = isoDate(note.updated_at);
+    if (created !== date) continue;
 
-    if (created === date) {
-      events.push({
-        kind: "created",
-        slug,
-        label,
-        at: note.created_at || date,
-        summary: "Note created",
-        before_text: "",
-        after_text: after,
-        encrypted,
-        has_diff: !encrypted && !!after,
-      });
-    }
-
-    if (updated === date && note.created_at !== note.updated_at) {
-      events.push({
-        kind: "snapshot",
-        slug,
-        label,
-        at: note.updated_at || date,
-        summary: "Note updated",
-        before_text: null,
-        after_text: after,
-        encrypted,
-        has_diff: false,
-      });
-    }
+    events.push({
+      kind: "created",
+      slug,
+      label,
+      at: note.created_at || date,
+      summary: "Note created",
+      before_text: "",
+      after_text: after,
+      encrypted,
+      has_diff: !encrypted && !!after,
+    });
   }
 
   events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
