@@ -1,20 +1,38 @@
 /**
  * Local-first pack store. Notes live on device; cloud is optional mirror.
+ *
+ * Cold-start strategy:
+ * 1. Memory cache (same session)
+ * 2. Single-file list snapshot (one read) → paint home immediately
+ * 3. Parallel revalidate from per-note files (source of truth)
+ *
+ * Individual `notes/{slug}.json` files remain the pack SoT (PROTOCOL).
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import type { Attachment, Block, Note, Scope } from "../api/types";
-import { hydrateBlocks, newBlockId } from "../api/client";
+import { newBlockId } from "../api/client";
 import { resolveLocal, displayScope } from "./resolveLocal";
 
 const META_KEY = "kv.local.meta.v1";
 const NOTES_INDEX = "kv.local.notesIndex.v1";
+/** Parallel FileSystem reads — sequential await-per-note was the cold-start bottleneck. */
+const READ_CONCURRENCY = 24;
+const WRITE_CONCURRENCY = 12;
+/** Debounce snapshot flush so rapid autosaves don't thrash disk. */
+const SNAPSHOT_DEBOUNCE_MS = 350;
 
 /** In-memory note list — avoids re-reading every .json on each screen focus. */
 let notesListCache: Note[] | null = null;
 let notesBySlugCache: Map<string, Note> | null = null;
 /** Bumps on any write/delete/import so UIs can skip redundant reloads. */
 let notesCacheEpoch = 0;
+/** In-memory slug index — avoids AsyncStorage round-trips on every put. */
+let indexCache: string[] | null = null;
+/** Coalesce concurrent cold listNotes into one load. */
+let listNotesInflight: Promise<Note[]> | null = null;
+let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+let revalidateInflight: Promise<void> | null = null;
 
 /** Live note updates for reader ↔ full note (and multi-surface) sync. */
 export type NoteChange =
@@ -58,11 +76,51 @@ export function getNotesCacheEpoch(): number {
   return notesCacheEpoch;
 }
 
-/** Drop memory cache (next listNotes/getNote hits disk). */
+/**
+ * Sync read of the in-memory notes list (no disk).
+ * Null when cache is cold — UI should show empty/loading then revalidate.
+ */
+export function peekNotes(): Note[] | null {
+  return notesListCache;
+}
+
+/** Sync read of one note from memory; null if cold or missing. */
+export function peekNote(slug: string): Note | null {
+  if (!slug) return null;
+  return notesBySlugCache?.get(slug) ?? null;
+}
+
+/**
+ * Cheap signature for “did the pack list change enough to re-render?”
+ * Uses slug + updated_at so block/body edits and cloud pulls both register.
+ */
+export function notesFingerprint(notes: Note[]): string {
+  if (!notes.length) return "0";
+  let s = String(notes.length);
+  for (const n of notes) {
+    s += `\n${n.scope?.slug || ""}:${n.updated_at || ""}`;
+  }
+  return s;
+}
+
+/** Drop memory cache (next listNotes/getNote hits disk). Keeps slug index. */
 export function invalidateNotesCache(): void {
   notesListCache = null;
   notesBySlugCache = null;
   notesCacheEpoch += 1;
+}
+
+/**
+ * Drop memory + disk list snapshot (e.g. after replace import / clear pack).
+ * Next listNotes rebuilds from per-note files.
+ */
+export function invalidateNotesCacheDeep(): void {
+  invalidateNotesCache();
+  if (snapshotTimer) {
+    clearTimeout(snapshotTimer);
+    snapshotTimer = null;
+  }
+  void FileSystem.deleteAsync(listCachePath(), { idempotent: true }).catch(() => {});
 }
 
 function sortNotes(notes: Note[]): Note[] {
@@ -86,11 +144,12 @@ function cacheUpsert(note: Note) {
     return;
   }
   if (!notesListCache || !notesBySlugCache) {
-    // Lazy: just invalidate so next listNotes rebuilds
-    invalidateNotesCache();
-    // Still notify — subscribers can getNote after list rebuild
+    // Seed memory with this note so UI isn't empty; revalidate fills the rest
+    setNotesCache([note]);
     notesCacheEpoch += 1;
     emitNoteChange({ slug, note });
+    scheduleListSnapshot();
+    void revalidateNotesFromDisk();
     return;
   }
   notesBySlugCache.set(slug, note);
@@ -100,18 +159,21 @@ function cacheUpsert(note: Note) {
   notesListCache = sortNotes(notesListCache);
   notesCacheEpoch += 1;
   emitNoteChange({ slug, note });
+  scheduleListSnapshot();
 }
 
 function cacheRemove(slug: string) {
   if (!notesListCache || !notesBySlugCache) {
     invalidateNotesCache();
     emitNoteChange({ slug, note: null, deleted: true });
+    scheduleListSnapshot();
     return;
   }
   notesBySlugCache.delete(slug);
   notesListCache = notesListCache.filter((n) => n.scope?.slug !== slug);
   notesCacheEpoch += 1;
   emitNoteChange({ slug, note: null, deleted: true });
+  scheduleListSnapshot();
 }
 
 function notesDir(): string {
@@ -122,15 +184,44 @@ function attDir(): string {
   return `${FileSystem.documentDirectory}keyverse/pack/attachments/`;
 }
 
+/** Derived list cache — not part of the portable pack zip. */
+function listCachePath(): string {
+  return `${FileSystem.documentDirectory}keyverse/pack/_list_cache.v1.json`;
+}
+
 async function ensureDirs() {
   await FileSystem.makeDirectoryAsync(notesDir(), { intermediates: true }).catch(() => {});
   await FileSystem.makeDirectoryAsync(attDir(), { intermediates: true }).catch(() => {});
 }
 
-async function readJson<T>(uri: string): Promise<T | null> {
+/** Bounded parallel map — keeps FS / bridge load reasonable on device. */
+async function mapPool<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (!items.length) return [];
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const workers = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i], i);
+      }
+    })
+  );
+  return out;
+}
+
+/**
+ * Read JSON without a prior getInfoAsync (saves one FS round-trip per note).
+ * Missing files throw → null.
+ */
+async function readJsonFast<T>(uri: string): Promise<T | null> {
   try {
-    const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists) return null;
     const t = await FileSystem.readAsStringAsync(uri);
     return JSON.parse(t) as T;
   } catch {
@@ -139,9 +230,117 @@ async function readJson<T>(uri: string): Promise<T | null> {
 }
 
 async function writeJson(uri: string, obj: unknown) {
-  await ensureDirs();
   // Compact JSON — faster autosave on the JS thread (pretty-print not needed on device)
   await FileSystem.writeAsStringAsync(uri, JSON.stringify(obj));
+}
+
+function scheduleListSnapshot() {
+  if (snapshotTimer) clearTimeout(snapshotTimer);
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = null;
+    void flushListSnapshot();
+  }, SNAPSHOT_DEBOUNCE_MS);
+}
+
+async function flushListSnapshot() {
+  if (!notesListCache) return;
+  try {
+    await ensureDirs();
+    // Single-file warm cache for next cold start (not part of portable pack export)
+    await FileSystem.writeAsStringAsync(
+      listCachePath(),
+      JSON.stringify({ v: 1, notes: notesListCache })
+    );
+  } catch {
+    /* ignore snapshot failures */
+  }
+}
+
+async function tryLoadListSnapshot(): Promise<Note[] | null> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(listCachePath());
+    const parsed = JSON.parse(raw) as { v?: number; notes?: Note[] };
+    if (parsed?.v === 1 && Array.isArray(parsed.notes)) return parsed.notes;
+  } catch {
+    /* missing or corrupt */
+  }
+  return null;
+}
+
+/** Load every note file in parallel (source of truth). */
+async function loadNotesFromDisk(): Promise<Note[]> {
+  let slugs = await getIndex();
+  if (!slugs.length) {
+    // Recover index from directory when AsyncStorage was wiped or never written
+    try {
+      const files = await FileSystem.readDirectoryAsync(notesDir());
+      slugs = files.filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -".json".length));
+      if (slugs.length) await setIndex(slugs);
+    } catch {
+      /* empty pack */
+    }
+  }
+  if (!slugs.length) return [];
+  const loaded = await mapPool(slugs, READ_CONCURRENCY, (slug) =>
+    readJsonFast<Note>(notePath(slug))
+  );
+  return loaded.filter((n): n is Note => !!n);
+}
+
+/**
+ * Background revalidate: individual files win over the list snapshot.
+ * Only notifies when the pack fingerprint actually changed.
+ */
+function revalidateNotesFromDisk(): Promise<void> {
+  if (revalidateInflight) return revalidateInflight;
+  revalidateInflight = (async () => {
+    try {
+      const notes = await loadNotesFromDisk();
+      const nextFp = notesFingerprint(notes);
+      const prevFp = notesListCache ? notesFingerprint(notesListCache) : "";
+      if (nextFp === prevFp && notesListCache) {
+        // Snapshot was fresh — still refresh snapshot timestamp/order if needed
+        return;
+      }
+      // Diff by slug so open editors only react to their note
+      const prevMap = notesBySlugCache;
+      setNotesCache(notes);
+      notesCacheEpoch += 1;
+      if (prevMap) {
+        const nextSlugs = new Set<string>();
+        for (const n of notes) {
+          const s = n.scope?.slug;
+          if (!s) continue;
+          nextSlugs.add(s);
+          const old = prevMap.get(s);
+          if (!old || (old.updated_at || "") !== (n.updated_at || "")) {
+            emitNoteChange({ slug: s, note: n });
+          }
+        }
+        for (const s of prevMap.keys()) {
+          if (!nextSlugs.has(s)) {
+            emitNoteChange({ slug: s, note: null, deleted: true });
+          }
+        }
+      } else {
+        // Home (and others that ignore payload) pick up via peekNotes
+        for (const n of notes.slice(0, 1)) {
+          const s = n.scope?.slug;
+          if (s) emitNoteChange({ slug: s, note: n });
+        }
+        if (!notes.length) {
+          // No note payload — still bump so focus/SWR paths refresh
+          emitNoteChange({ slug: "__reload__", note: null, deleted: true });
+        }
+      }
+      scheduleListSnapshot();
+    } catch {
+      /* keep snapshot cache */
+    } finally {
+      revalidateInflight = null;
+    }
+  })();
+  return revalidateInflight;
 }
 
 export async function getMeta(): Promise<LocalMeta> {
@@ -166,12 +365,15 @@ export async function setMeta(patch: Partial<LocalMeta>): Promise<LocalMeta> {
 }
 
 async function getIndex(): Promise<string[]> {
+  if (indexCache) return indexCache.slice();
   const raw = await AsyncStorage.getItem(NOTES_INDEX);
-  return raw ? (JSON.parse(raw) as string[]) : [];
+  indexCache = raw ? (JSON.parse(raw) as string[]) : [];
+  return indexCache.slice();
 }
 
 async function setIndex(slugs: string[]) {
   const uniq = [...new Set(slugs)].sort();
+  indexCache = uniq;
   await AsyncStorage.setItem(NOTES_INDEX, JSON.stringify(uniq));
 }
 
@@ -179,17 +381,45 @@ function notePath(slug: string) {
   return `${notesDir()}${slug}.json`;
 }
 
+/**
+ * List all local notes (newest updated_at first).
+ * Cold path: list snapshot → memory paint, then parallel file revalidate.
+ */
 export async function listNotes(): Promise<Note[]> {
   if (notesListCache) return notesListCache;
-  await ensureDirs();
-  const slugs = await getIndex();
-  const notes: Note[] = [];
-  for (const slug of slugs) {
-    const n = await readJson<Note>(notePath(slug));
-    if (n) notes.push(n);
-  }
-  setNotesCache(notes);
-  return notesListCache!;
+  if (listNotesInflight) return listNotesInflight;
+
+  listNotesInflight = (async () => {
+    try {
+      await ensureDirs();
+      // Another path may have warm-filled memory while we awaited dirs
+      if (notesListCache) return notesListCache;
+
+      // Fast path: one read of the derived list cache
+      const snap = await tryLoadListSnapshot();
+      if (notesListCache) return notesListCache;
+      if (snap) {
+        setNotesCache(snap);
+        // Files remain SoT — reconcile without blocking first paint
+        void revalidateNotesFromDisk();
+        return notesListCache!;
+      }
+
+      const notes = await loadNotesFromDisk();
+      if (notesListCache) {
+        // Write landed during disk scan — revalidate merges truth from files
+        void revalidateNotesFromDisk();
+        return notesListCache;
+      }
+      setNotesCache(notes);
+      scheduleListSnapshot();
+      return notesListCache!;
+    } finally {
+      listNotesInflight = null;
+    }
+  })();
+
+  return listNotesInflight;
 }
 
 export async function getNote(slug: string): Promise<Note | null> {
@@ -198,6 +428,37 @@ export async function getNote(slug: string): Promise<Note | null> {
     await listNotes();
   }
   return notesBySlugCache?.get(slug) ?? null;
+}
+
+/**
+ * Bulk write notes (import / cloud pull). One index write, parallel FS, single list rebuild.
+ * Much faster than N× upsertNoteRecord (each of which re-read/wrote the slug index).
+ */
+export async function bulkUpsertNotes(notes: Note[]): Promise<number> {
+  if (!notes.length) return 0;
+  await ensureDirs();
+  const idx = new Set(await getIndex());
+  let wrote = 0;
+
+  await mapPool(notes, WRITE_CONCURRENCY, async (note) => {
+    const slug = note.scope?.slug;
+    if (!slug) return;
+    await writeJson(notePath(slug), note);
+    idx.add(slug);
+    wrote += 1;
+  });
+
+  await setIndex([...idx]);
+  // Drop stale list snapshot, then rebuild from per-note files (parallel)
+  invalidateNotesCacheDeep();
+  await listNotes();
+  return wrote;
+}
+
+/** Clear slug index in memory + AsyncStorage (after wipe / replace import). */
+export async function clearNotesIndex(): Promise<void> {
+  indexCache = [];
+  await AsyncStorage.setItem(NOTES_INDEX, "[]");
 }
 
 function scopeFromSlug(slug: string): Scope {
@@ -223,7 +484,11 @@ export async function putNote(
   }
 ): Promise<Note | { deleted: true; slug: string }> {
   await ensureDirs();
-  const existing = (await getNote(slug)) || null;
+  // Prefer memory; avoid full-list warm when possible for single-note write path
+  const existing =
+    peekNote(slug) ??
+    (await readJsonFast<Note>(notePath(slug))) ??
+    null;
   const blocks = payload.blocks;
   const attachments =
     payload.attachments !== undefined

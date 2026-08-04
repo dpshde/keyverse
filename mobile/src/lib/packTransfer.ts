@@ -176,31 +176,19 @@ export async function importLocalPackZip(
 
   if (mode === "replace") {
     await clearLocalNotesAndAttachments();
-    Local.invalidateNotesCache();
+    Local.invalidateNotesCacheDeep();
   }
 
-  let noteCount = 0;
   let attCount = 0;
+  const notesToWrite: Note[] = [];
+  const attsToWrite: { sha: string; bytes: ArrayBuffer }[] = [];
+  let doorMeta: string | null = null;
 
   for (const [rel, data] of entries) {
     if (rel === "protocol.json" || rel === "door") {
-      // optional metadata — keep door for display only
       if (rel === "door") {
         const door = strFromU8(data).trim();
-        if (door) {
-          const meta = await Local.getMeta();
-          if (meta.cloud?.enabled) {
-            /* don't overwrite live cloud door from import */
-          } else {
-            await Local.setMeta({
-              cloud: {
-                enabled: false,
-                host: meta.cloud?.host || "https://keyverse-production.up.railway.app",
-                door,
-              },
-            });
-          }
-        }
+        if (door) doorMeta = door;
       }
       continue;
     }
@@ -221,24 +209,43 @@ export async function importLocalPackZip(
         note.scope = { kind: "verse", osis: slug.toUpperCase(), slug };
       }
       if (!note.id) note.id = `n_${slug}`;
-      await Local.upsertNoteRecord(note);
-      noteCount++;
+      notesToWrite.push(note);
       continue;
     }
 
     if (rel.startsWith("attachments/")) {
       const sha = rel.slice("attachments/".length);
       if (!/^[a-f0-9]{64}$/i.test(sha)) continue;
-      await Local.saveAttachmentBytes(
+      attsToWrite.push({
         sha,
-        data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
-      );
-      attCount++;
+        bytes: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
+      });
     }
   }
 
-  // Ensure list is coherent after bulk disk writes
-  Local.invalidateNotesCache();
+  // Door meta once (not per-entry)
+  if (doorMeta) {
+    const meta = await Local.getMeta();
+    if (!meta.cloud?.enabled) {
+      await Local.setMeta({
+        cloud: {
+          enabled: false,
+          host: meta.cloud?.host || "https://keyverse-production.up.railway.app",
+          door: doorMeta,
+        },
+      });
+    }
+  }
+
+  // Parallel attachments + bulk notes (one index rewrite, parallel FS)
+  await Promise.all(
+    attsToWrite.map(async (a) => {
+      await Local.saveAttachmentBytes(a.sha, a.bytes);
+      attCount++;
+    })
+  );
+  const noteCount = await Local.bulkUpsertNotes(notesToWrite);
+
   return { mode, notes: noteCount, attachments: attCount, files: entries.length };
 }
 
@@ -260,9 +267,8 @@ async function clearLocalNotesAndAttachments() {
     /* */
   }
   await Local.setMeta({}); // touch
-  // reset index
-  const { default: AsyncStorage } = await import("@react-native-async-storage/async-storage");
-  await AsyncStorage.setItem("kv.local.notesIndex.v1", "[]");
+  await Local.clearNotesIndex();
+  Local.invalidateNotesCacheDeep();
 }
 
 function normalizeRel(name: string): string | null {

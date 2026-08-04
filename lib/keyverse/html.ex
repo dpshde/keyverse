@@ -16,6 +16,31 @@ defmodule Keyverse.Html do
     ~s(<span class="ui-ico-label">#{ico(name)}<span class="ui-ico-txt">#{esc(text)}</span></span>)
   end
 
+  @doc """
+  Phosphor-style caret chevron (regular weight).
+
+  Directions: `"right"` | `"down"` | `"left"` | `"up"`.
+  Right/down match the product SVGs; left/up are mirrors.
+  """
+  def chev(dir \\ "right") when dir in ~w(right down left up) do
+    {points, transform} =
+      case dir do
+        "right" -> {"96 48 176 128 96 208", nil}
+        "down" -> {"208 96 128 176 48 96", nil}
+        "left" -> {"96 48 176 128 96 208", "translate(256 0) scale(-1 1)"}
+        "up" -> {"208 96 128 176 48 96", "translate(0 256) scale(1 -1)"}
+      end
+
+    poly =
+      if transform do
+        ~s(<polyline points="#{points}" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" transform="#{transform}"/>)
+      else
+        ~s(<polyline points="#{points}" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>)
+      end
+
+    ~s(<svg class="kv-chev" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1em" height="1em" aria-hidden="true" focusable="false">#{poly}</svg>)
+  end
+
   # Phosphor note-pencil — chapter note control
   defp ico_note_pencil do
     """
@@ -369,6 +394,9 @@ defmodule Keyverse.Html do
   def render_index(pack_dir, door, base) do
     notes = Note.list(pack_dir)
     tree = home_tree_html(notes, base)
+    inbox = home_inbox_html(notes, base)
+    # Page size shared with mobile INBOX_PAGE_SIZE
+    inbox_page = 25
 
     body = """
     <header class="ui home-head">
@@ -380,9 +408,13 @@ defmodule Keyverse.Html do
     </header>
     #{crypto_bar(false)}
     #{ref_search_html(base)}
-    <section class="home-notes">
-      <h2 class="ui muted home-notes-h">#{ico("notebook")} Notes</h2>
-      #{tree}
+    <section class="home-notes" id="home-notes" data-inbox-page="#{inbox_page}">
+      <div class="home-view-panel" data-home-panel="library" id="home-library" role="tabpanel">
+        #{tree}
+      </div>
+      <div class="home-view-panel" data-home-panel="inbox" id="home-inbox" role="tabpanel" hidden>
+        #{inbox}
+      </div>
     </section>
     #{home_footer(base)}
     <script src="/home-tree.js"></script>
@@ -394,18 +426,20 @@ defmodule Keyverse.Html do
   @doc "Contribution graph + day detail (ops history / note touches)."
   def render_activity(base, door) do
     body = """
-    <header class="ui home-head">
-      <h1><a class="activity-home-link" href="#{esc(base)}/">keyverse</a></h1>
+    <header class="ui home-head activity-top">
+      <a class="activity-home-link" href="#{esc(base)}/">keyverse</a>
       <div class="home-head-actions">
         #{theme_seg()}
         #{door_share_chip(door)}
       </div>
     </header>
     <section class="activity-page" id="activity-page" data-testid="activity-page">
-      <div class="activity-head">
-        <h2 class="ui activity-title">#{ico("chart-bar")} Activity</h2>
-        <p class="muted activity-lead" id="activity-lead">Loading…</p>
-      </div>
+      <header class="activity-head">
+        <h1 class="ui activity-title">Activity</h1>
+        <p class="activity-lead" id="activity-lead" aria-live="polite">
+          <span class="activity-lead-stat muted">Loading…</span>
+        </p>
+      </header>
       <div class="activity-graph-wrap" id="activity-graph-wrap">
         <div class="activity-graph" id="activity-graph" role="img" aria-label="Note activity overview"></div>
       </div>
@@ -420,18 +454,32 @@ defmodule Keyverse.Html do
       </div>
       <section class="activity-week" id="activity-week" aria-label="Week activity">
         <div class="activity-week-nav" id="activity-week-nav">
-          <button type="button" class="activity-week-btn" id="activity-week-prev" aria-label="Previous week">‹</button>
+          <button type="button" class="activity-week-btn" id="activity-week-prev" aria-label="Previous week">#{chev("left")}</button>
           <div class="activity-week-center">
-            <h3 class="ui activity-week-title" id="activity-week-title"></h3>
+            <button type="button" class="activity-week-title-hit" id="activity-week-pick"
+              aria-haspopup="dialog" aria-controls="activity-week-picker" aria-expanded="false"
+              aria-label="Choose week">
+              <span class="ui activity-week-title" id="activity-week-title"></span>
+            </button>
             <button type="button" class="activity-week-jump muted" id="activity-week-jump" hidden>This week</button>
-            <span class="activity-week-badge muted" id="activity-week-badge" hidden>This week</span>
           </div>
-          <button type="button" class="activity-week-btn" id="activity-week-next" aria-label="Next week">›</button>
+          <button type="button" class="activity-week-btn" id="activity-week-next" aria-label="Next week">#{chev("right")}</button>
         </div>
         <div class="activity-day-folders" id="activity-day-folders">
           <p class="muted activity-week-empty" id="activity-week-empty">Loading…</p>
         </div>
       </section>
+      <div class="activity-week-picker" id="activity-week-picker" hidden role="dialog"
+        aria-modal="true" aria-labelledby="activity-week-picker-title">
+        <div class="activity-week-picker-backdrop" id="activity-week-picker-backdrop" tabindex="-1"></div>
+        <div class="activity-week-picker-sheet">
+          <div class="activity-week-picker-head">
+            <h3 class="ui activity-week-picker-title" id="activity-week-picker-title">Choose week</h3>
+            <button type="button" class="activity-week-picker-done ui" id="activity-week-picker-done">Done</button>
+          </div>
+          <div class="activity-week-picker-list" id="activity-week-picker-list" role="listbox" aria-label="Weeks"></div>
+        </div>
+      </div>
     </section>
     <footer class="site-foot home-foot ui">
       <a class="pack-own-link" href="#{esc(base)}/">#{ico_label("arrow-left", "Notes")}</a>
@@ -454,7 +502,8 @@ defmodule Keyverse.Html do
     """
   end
 
-  # One home foot row: Activity · Export · Import · Install (when offered)
+  # One home foot row: Activity · Export · Import · Install (when offered).
+  # Notes layout (Library/Inbox) sits here — settings-adjacent, not a home chrome row.
   defp home_footer(base) do
     """
     <footer class="site-foot home-foot ui" id="pack-own">
@@ -467,6 +516,12 @@ defmodule Keyverse.Html do
         </label>
       </form>
       <button type="button" class="pwa-install" id="pwa-install">#{ico_label("device-mobile", "Install app")}</button>
+      <div class="home-view-seg home-view-seg-foot" role="tablist" aria-label="Home notes layout">
+        <button type="button" class="home-view-btn" data-home-view="library"
+          role="tab" aria-selected="true" aria-controls="home-library" id="tab-library">Library</button>
+        <button type="button" class="home-view-btn" data-home-view="inbox"
+          role="tab" aria-selected="false" aria-controls="home-inbox" id="tab-inbox">Inbox</button>
+      </div>
       <p id="pack-import-status" class="pack-own-status" role="status" hidden></p>
     </footer>
     <script>
@@ -513,6 +568,91 @@ defmodule Keyverse.Html do
   # Prefer Phosphor over inline SVG so weight/size match the rest of the UI.
   @nt_icon_edit ~s(<i class="ph ph-pencil-simple" aria-hidden="true"></i>)
   @nt_icon_read ~s(<i class="ph ph-book-open" aria-hidden="true"></i>)
+
+  # Flat recent-first cards (Inbox) with day separators (empty days omitted).
+  # Client shows first data-inbox-page **notes**; "Show more" reveals the next page.
+  defp home_inbox_html(notes, base) do
+    days = Tree.build_home_inbox_days(notes)
+
+    if days == [] do
+      ~s(<p class="home-empty">No notes yet. Search a passage above — new notes show here newest first.</p>)
+    else
+      total = days |> Enum.map(&length(&1.entries)) |> Enum.sum()
+
+      {body, _idx} =
+        Enum.reduce(days, {"", 0}, fn day, {html, idx} ->
+          header = """
+          <div class="inbox-day" data-day="#{esc(day.day_key)}">
+            <h3 class="inbox-day-h">#{esc(day.label)}</h3>
+          """
+
+          {cards, next_idx} =
+            Enum.reduce(day.entries, {"", idx}, fn entry, {acc, i} ->
+              {acc <> render_inbox_card(entry, base, i), i + 1}
+            end)
+
+          {html <> header <> cards <> "</div>\n", next_idx}
+        end)
+
+      more =
+        if total > 25 do
+          ~s(<button type="button" class="home-inbox-more" id="inbox-more">Show more</button>)
+        else
+          ""
+        end
+
+      """
+      <p class="home-inbox-lead muted" id="inbox-lead" #{if total > 25, do: "", else: "hidden"}></p>
+      <div class="note-inbox" id="note-inbox" data-total="#{total}">
+        #{body}
+      </div>
+      #{more}
+      """
+    end
+  end
+
+  defp render_inbox_card(%{scope: scope, note: note}, base, index) do
+    slug = scope.slug
+    ref = Scope.display(scope)
+    note_href = "#{base}/note/#{slug}"
+    read_href = "#{base}/read/#{slug}"
+    # Inbox order + stamp: created_at only (pack/door truth)
+    time_iso = note["created_at"] || ""
+    sub = Tree.excerpt(note)
+    sealed? = Note.encrypted?(note)
+
+    badge =
+      cond do
+        sealed? -> ~s(<span class="nt-badge">Sealed</span>)
+        true -> ""
+      end
+
+    time =
+      if time_iso != "" do
+        ~s(<span class="muted nt-time">#{esc(Tree.rel_time(time_iso))}</span>)
+      else
+        ""
+      end
+
+    """
+    <div class="inbox-card" data-inbox-index="#{index}">
+      <div class="note-row is-note inbox-row">
+        <div class="nt-main nt-open-read" role="link" tabindex="0" data-href="#{esc(read_href)}">
+          <span class="nt-top">
+            <span class="ref">#{esc(ref)}</span>
+            <span class="nt-meta">
+              <a class="nt-act nt-open" href="#{esc(note_href)}" title="Open note" aria-label="Open note">#{@nt_icon_edit}</a>
+              <a class="nt-act nt-read" href="#{esc(read_href)}" title="Read" aria-label="Read">#{@nt_icon_read}</a>
+              #{badge}
+              #{time}
+            </span>
+          </span>
+          <div class="nt-ex">#{esc(sub)}</div>
+        </div>
+      </div>
+    </div>
+    """
+  end
 
   defp render_home_tree_node(node, depth, base) do
     kids = Map.get(node, :children) || []

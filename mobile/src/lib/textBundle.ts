@@ -86,6 +86,25 @@ export async function preloadTexts(trs: TranslationId[] = ["BSB", "KJV"]): Promi
   await Promise.all(trs.map((t) => loadPack(t).catch(() => null)));
 }
 
+/** Sync chapter text if pack already in memory (no gunzip). */
+export function peekChapter(
+  tr: TranslationId,
+  book: string,
+  chapter: number
+): ChapterText | null {
+  const idx = cache[tr];
+  if (!idx) return null;
+  const doc = idx[`${book.toLowerCase()}.${chapter}`];
+  if (!doc) return null;
+  return {
+    ...doc,
+    translation: tr,
+    book: doc.book || book.toUpperCase(),
+    chapter: doc.chapter || chapter,
+    verses: doc.verses || [],
+  };
+}
+
 export async function getChapter(
   tr: TranslationId,
   book: string,

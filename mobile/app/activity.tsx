@@ -16,10 +16,11 @@ import { useTheme } from "@/src/context/ThemeContext";
 import * as Local from "@/src/lib/localPack";
 import {
   addDays,
+  dayEqual,
   dayFromNotes,
   formatDayLabel,
   formatTime,
-  formatYtdLead,
+  heatEqual,
   heatmapFromNotes,
   lineDiff,
   localDateKey,
@@ -40,6 +41,7 @@ import {
   setDayCached,
   setHeatCached,
 } from "@/src/lib/activityCache";
+import { Chevron } from "@/src/components/Chevron";
 import { CountPill } from "@/src/components/CountPill";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
 import { radius, space, type ThemeColors } from "@/src/theme";
@@ -132,7 +134,8 @@ export default function ActivityScreen() {
 
   const applyHeat = useCallback(
     async (next: ActivityHeatmap) => {
-      setHeat(next);
+      // Stale-while-revalidate: keep showing cache unless payload actually changed
+      setHeat((prev) => (heatEqual(prev, next) ? prev : next));
       await setHeatCached(scope, next);
     },
     [scope]
@@ -154,11 +157,13 @@ export default function ActivityScreen() {
       const force = !!opts?.force;
       setErr(null);
 
-      // Hydrate from disk if memory empty
+      // Hydrate from disk if memory empty — paint cache immediately
       let cached = getHeatMem(scope);
       if (!cached) {
         cached = await loadHeatCached(scope);
-        if (cached) setHeat(cached);
+        if (cached) {
+          setHeat((prev) => (heatEqual(prev, cached) ? prev : cached));
+        }
       }
 
       // Only block UI when we have nothing to show
@@ -348,13 +353,28 @@ export default function ActivityScreen() {
     setWeekPickerOpen(true);
   }, []);
 
+  const putDay = useCallback((date: string, day: ActivityDay) => {
+    setDayCache((prev) => {
+      const cur = prev[date];
+      if (
+        cur &&
+        cur !== "loading" &&
+        cur !== "error" &&
+        dayEqual(cur, day)
+      ) {
+        return prev;
+      }
+      return { ...prev, [date]: day };
+    });
+  }, []);
+
   const loadDay = useCallback(
     async (date: string) => {
-      // Memory / disk first — no spinner flash on revisit
+      // Memory / disk first — paint cache immediately, revalidate in background
       let cached = getDayMem(scope, date);
       if (!cached) cached = await loadDayCached(scope, date);
       if (cached) {
-        setDayCache((prev) => ({ ...prev, [date]: cached! }));
+        putDay(date, cached);
       } else {
         setDayCache((prev) => {
           // Don't clobber a good payload if re-entering mid-fetch
@@ -372,7 +392,7 @@ export default function ActivityScreen() {
               count: remote.count,
               events: remote.events as ActivityEvent[],
             };
-            setDayCache((prev) => ({ ...prev, [date]: day }));
+            putDay(date, day);
             await setDayCached(scope, day);
             return;
           } catch {
@@ -381,7 +401,7 @@ export default function ActivityScreen() {
         }
         const notes = await Local.listNotes();
         const day = dayFromNotes(notes, date);
-        setDayCache((prev) => ({ ...prev, [date]: day }));
+        putDay(date, day);
         await setDayCached(scope, day);
       } catch {
         if (!cached) {
@@ -389,7 +409,7 @@ export default function ActivityScreen() {
         }
       }
     },
-    [cloudEnabled, client, scope]
+    [cloudEnabled, client, scope, putDay]
   );
 
   const toggleDay = useCallback(
@@ -461,7 +481,6 @@ export default function ActivityScreen() {
         </View>
       ) : heat ? (
         <>
-          <Text style={[type.meta, styles.lead]}>{formatYtdLead(heat)}</Text>
           {err ? (
             <Text style={[type.caption, { color: color.danger, marginBottom: space[2] }]}>
               {err}
@@ -529,9 +548,7 @@ export default function ActivityScreen() {
                 ]}
                 hitSlop={8}
               >
-                <Text style={[styles.weekNavChev, { color: canGoPrev ? color.ink : color.faint }]}>
-                  ‹
-                </Text>
+                <Chevron direction="left" size={14} color={canGoPrev ? color.muted : color.faint} />
               </Pressable>
 
               <View style={styles.weekNavCenter}>
@@ -543,14 +560,9 @@ export default function ActivityScreen() {
                   hitSlop={6}
                   style={({ pressed }) => [styles.weekTitleHit, pressed && { opacity: 0.7 }]}
                 >
-                  <Text style={[type.section, styles.weekTitle]} numberOfLines={1}>
+                  <Text style={styles.weekTitle} numberOfLines={1}>
                     {formatWeekRange(weekStart)}
                   </Text>
-                  {isThisWeek ? (
-                    <Text style={[type.caption, { color: color.muted, marginTop: 2 }]}>
-                      Tap to pick week
-                    </Text>
-                  ) : null}
                 </Pressable>
                 {!isThisWeek ? (
                   <Pressable
@@ -559,7 +571,7 @@ export default function ActivityScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Jump to this week"
                   >
-                    <Text style={[type.caption, { color: color.link, marginTop: 2 }]}>This week</Text>
+                    <Text style={styles.weekJump}>This week</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -576,9 +588,7 @@ export default function ActivityScreen() {
                 ]}
                 hitSlop={8}
               >
-                <Text style={[styles.weekNavChev, { color: canGoNext ? color.ink : color.faint }]}>
-                  ›
-                </Text>
+                <Chevron direction="right" size={14} color={canGoNext ? color.muted : color.faint} />
               </Pressable>
             </View>
 
@@ -899,6 +909,7 @@ function OutlinePreviewRow({
   const isAdd = row.type === "add";
   const isDel = row.type === "del";
   const { addInk, delInk } = diffInks(color);
+  // No +/- rail; color + strikethrough carry the meaning.
   const inkColor = isAdd ? addInk : isDel ? delInk : color.ink;
   const dotColor = isAdd ? addInk : isDel ? delInk : color.verseNum;
 
@@ -911,11 +922,6 @@ function OutlinePreviewRow({
         row.type === "eq" && styles.diffEq,
       ]}
     >
-      {isAdd || isDel ? (
-        <Text style={[styles.diffMark, { color: inkColor }]}>{isAdd ? "+" : "−"}</Text>
-      ) : (
-        <View style={styles.diffMarkSpacer} />
-      )}
       <View style={[styles.outlineBody, { paddingLeft: row.indent * OUTLINE_STEP }]}>
         <View style={styles.dotCol}>
           <View style={[styles.dot, { backgroundColor: dotColor }]} />
@@ -927,7 +933,10 @@ function OutlinePreviewRow({
             {
               color: inkColor,
               ...(isDel
-                ? { textDecorationLine: "line-through" as const, textDecorationColor: delInk }
+                ? {
+                    textDecorationLine: "line-through" as const,
+                    textDecorationColor: delInk,
+                  }
                 : null),
             },
           ]}
@@ -944,8 +953,7 @@ function makeStyles(color: ThemeColors) {
 
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: color.paper },
-    lead: { marginBottom: space[2] },
-    graphScroll: { marginHorizontal: -space[1] },
+    graphScroll: { marginHorizontal: -space[1], marginTop: space[1] },
     graphInner: { paddingVertical: space[1], paddingRight: space[2] },
     weeks: { flexDirection: "row", gap: GAP },
     week: { gap: GAP },
@@ -958,12 +966,14 @@ function makeStyles(color: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       gap: 4,
-      marginTop: space[3],
-      marginBottom: space[2],
+      marginTop: space[1],
+      marginBottom: 0,
+      opacity: 0.85,
     },
     weekSection: {
-      marginTop: space[4],
-      paddingTop: space[3],
+      // Secondary zone under graph hero (web .activity-week)
+      marginTop: space[5],
+      paddingTop: space[4],
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: color.lineSoft,
     },
@@ -971,7 +981,7 @@ function makeStyles(color: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       gap: space[2],
-      marginBottom: space[3],
+      marginBottom: space[3] + 2,
     },
     weekNavBtn: {
       width: 44,
@@ -982,23 +992,34 @@ function makeStyles(color: ThemeColors) {
       backgroundColor: color.fill,
     },
     weekNavBtnDisabled: { opacity: 0.4 },
-    weekNavChev: {
-      fontSize: 28,
-      fontWeight: "400",
-      lineHeight: 32,
-      marginTop: -2,
-    },
     weekNavCenter: {
       flex: 1,
       alignItems: "center",
       minWidth: 0,
       paddingVertical: space[1],
+      gap: 2,
     },
     weekTitleHit: {
       alignItems: "center",
       alignSelf: "stretch",
+      paddingVertical: 4,
+      paddingHorizontal: space[2],
+      borderRadius: radius.sm,
     },
-    weekTitle: { textAlign: "center" },
+    weekTitle: {
+      textAlign: "center",
+      fontSize: 17,
+      fontWeight: "600",
+      letterSpacing: -0.3,
+      lineHeight: 22,
+      color: color.ink,
+    },
+    weekJump: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: color.link,
+      marginTop: 2,
+    },
     pickerRoot: {
       flex: 1,
       backgroundColor: color.paper,
@@ -1176,15 +1197,6 @@ function makeStyles(color: ThemeColors) {
       fontSize: 15,
       lineHeight: 21,
     },
-    diffMark: {
-      width: 16,
-      fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
-      fontSize: 13,
-      fontWeight: "700",
-      lineHeight: 21,
-      textAlign: "center",
-    },
-    diffMarkSpacer: { width: 16 },
     diffAdd: { backgroundColor: addBg },
     diffDel: { backgroundColor: delBg },
     diffEq: {},

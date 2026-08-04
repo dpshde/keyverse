@@ -52,6 +52,53 @@ export type ActivityDay = {
   events: ActivityEvent[];
 };
 
+/** True when heatmap payloads are equivalent for UI (skip re-render). */
+export function heatEqual(a: ActivityHeatmap | null, b: ActivityHeatmap | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (
+    a.total !== b.total ||
+    a.from !== b.from ||
+    a.to !== b.to ||
+    a.ytd_from !== b.ytd_from ||
+    a.ytd_to !== b.ytd_to ||
+    a.notes_taken_ytd !== b.notes_taken_ytd ||
+    a.source !== b.source ||
+    a.days.length !== b.days.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < a.days.length; i++) {
+    const x = a.days[i];
+    const y = b.days[i];
+    if (x.date !== y.date || x.count !== y.count || x.level !== y.level) return false;
+  }
+  return true;
+}
+
+/** True when day payloads are equivalent for UI (skip re-render). */
+export function dayEqual(a: ActivityDay | null, b: ActivityDay | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.date !== b.date || a.count !== b.count || a.events.length !== b.events.length) {
+    return false;
+  }
+  for (let i = 0; i < a.events.length; i++) {
+    const x = a.events[i];
+    const y = b.events[i];
+    if (
+      x.at !== y.at ||
+      x.slug !== y.slug ||
+      x.kind !== y.kind ||
+      x.hash !== y.hash ||
+      x.summary !== y.summary
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Parse a backend timestamp (UTC ISO from the door / pack).
  * - Full ISO with Z or ±offset → absolute instant

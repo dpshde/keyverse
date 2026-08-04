@@ -70,7 +70,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setMetaState(m);
         const pw = await AsyncStorage.getItem(PW_KEY);
         if (pw) setPw(pw);
-        preloadTexts(["BSB", "KJV"]).catch(() => {});
+        // Warm notes ASAP (snapshot → parallel files). Don't block ready.
+        void Local.listNotes().catch(() => {});
+        // Only gunzip the active translation on launch (~1.3MB gzip each).
+        // The other translation loads on first switch / first open.
+        const tr = (m.translation || "BSB") as TranslationId;
+        preloadTexts([tr]).catch(() => {});
+        const other: TranslationId = tr === "BSB" ? "KJV" : "BSB";
+        // Idle-ish second pack — don't compete with notes list + first chapter
+        setTimeout(() => {
+          preloadTexts([other]).catch(() => {});
+        }, 2500);
       } finally {
         setReady(true);
       }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -12,11 +12,13 @@ import {
   type KeyboardEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SymbolView } from "expo-symbols";
 import type { SuggestItem } from "../api/types";
 import { useTheme } from "../context/ThemeContext";
 import { hapticLight, hapticSelect } from "../lib/haptics";
 import { radius, space, tap, tapComfy } from "../theme";
 import { LiquidGlassShell } from "./LiquidGlassShell";
+import { PassagePickerSheet } from "./PassagePickerSheet";
 
 type Props = {
   value: string;
@@ -25,11 +27,16 @@ type Props = {
   suggestions: SuggestItem[];
   /** So the parent list can pad above the raised dock */
   onKeyboardHeightChange?: (height: number) => void;
+  /**
+   * Optional book→chapter sheet (Exedra-style notched picker).
+   * Default on — set false to keep text-only input.
+   */
+  enablePicker?: boolean;
 };
 
 /**
  * Thumb-zone passage control: floating liquid-glass capsule.
- * Uses shared BlurView shell (same material as LiquidGlassBar).
+ * Optional PassagePickerSheet for book/chapter browse.
  */
 export function PassageSelector({
   value,
@@ -37,11 +44,13 @@ export function PassageSelector({
   onSubmit,
   suggestions,
   onKeyboardHeightChange,
+  enablePicker = true,
 }: Props) {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const g = c.glass;
   const restPad = Math.max(insets.bottom, space[3]);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   /**
    * Lift with translateY (native driver) — animating `bottom`/`padding` is JS-thread
@@ -131,6 +140,26 @@ export function PassageSelector({
 
       <LiquidGlassShell borderRadius={r}>
         <View style={styles.capsuleInner}>
+          {enablePicker ? (
+            <Pressable
+              style={({ pressed }) => [styles.pickBtn, pressed && { opacity: 0.65 }]}
+              onPress={() => {
+                hapticSelect();
+                Keyboard.dismiss();
+                setPickerOpen(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Browse books and chapters"
+            >
+              <SymbolView
+                name="book"
+                size={20}
+                weight="semibold"
+                tintColor={c.ink}
+                fallback={<Text style={[styles.pickFallback, { color: c.ink }]}>B</Text>}
+              />
+            </Pressable>
+          ) : null}
           <TextInput
             style={[styles.field, { color: c.ink }]}
             value={value}
@@ -170,6 +199,17 @@ export function PassageSelector({
           </Pressable>
         </View>
       </LiquidGlassShell>
+
+      {enablePicker ? (
+        <PassagePickerSheet
+          visible={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onSelect={(slug) => {
+            onChangeText(slug);
+            onSubmit(slug);
+          }}
+        />
+      ) : null}
     </Animated.View>
   );
 }
@@ -221,10 +261,21 @@ const styles = StyleSheet.create({
     padding: space[2],
     minHeight: tapComfy + space[2] * 2,
   },
+  pickBtn: {
+    width: tapComfy,
+    height: tapComfy,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pickFallback: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
   field: {
     flex: 1,
     minHeight: tapComfy,
-    paddingHorizontal: space[4],
+    paddingHorizontal: space[2],
     paddingVertical: space[3],
     fontSize: 17,
     fontWeight: "500",

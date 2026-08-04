@@ -13,7 +13,11 @@
   var weekPrevBtn = document.getElementById("activity-week-prev");
   var weekNextBtn = document.getElementById("activity-week-next");
   var weekJumpBtn = document.getElementById("activity-week-jump");
-  var weekBadgeEl = document.getElementById("activity-week-badge");
+  var weekPickBtn = document.getElementById("activity-week-pick");
+  var weekPickerEl = document.getElementById("activity-week-picker");
+  var weekPickerList = document.getElementById("activity-week-picker-list");
+  var weekPickerDone = document.getElementById("activity-week-picker-done");
+  var weekPickerBackdrop = document.getElementById("activity-week-picker-backdrop");
 
   /** @type {{ days: any[], from: string, to: string, ytd_from?: string, ytd_to?: string, notes_taken_ytd?: number, total?: number } | null} */
   var heat = null;
@@ -23,6 +27,8 @@
   var dayCache = {};
   /** date → true when expanded */
   var dayOpen = {};
+  /** Element that opened the picker (for focus restore) */
+  var weekPickerReturnFocus = null;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -408,9 +414,11 @@
       weekJumpBtn.hidden = isThis;
       weekJumpBtn.textContent = "This week";
     }
-    if (weekBadgeEl) {
-      weekBadgeEl.hidden = !isThis;
-      weekBadgeEl.textContent = "This week";
+    if (weekPickBtn) {
+      weekPickBtn.setAttribute(
+        "aria-label",
+        "Week of " + formatWeekRange(weekStart) + ". Choose week."
+      );
     }
     if (weekPrevBtn) {
       weekPrevBtn.disabled = !canGoPrev();
@@ -419,6 +427,126 @@
     if (weekNextBtn) {
       weekNextBtn.disabled = !canGoNext();
       weekNextBtn.classList.toggle("is-disabled", !canGoNext());
+    }
+  }
+
+  /** Sunday-start weeks that intersect heat range, newest first. */
+  function weekOptions() {
+    if (!heat) return [];
+    var from = heatFrom();
+    var to = heatTo();
+    if (!from || !to) return [];
+    var thisWeek = weekStartOf(todayKey() || to);
+    var first = weekStartOf(from);
+    var cursor = weekStartOf(to);
+    var out = [];
+    var guard = 0;
+    while (cursor >= first && guard < 80) {
+      var end = addDays(cursor, 6);
+      if (end >= from && cursor <= to) {
+        var count = 0;
+        for (var i = 0; i < 7; i++) {
+          var d = addDays(cursor, i);
+          if (d >= from && d <= to) count += countByDate(d);
+        }
+        out.push({
+          start: cursor,
+          end: end,
+          count: count,
+          isCurrent: cursor === thisWeek,
+        });
+      }
+      cursor = addDays(cursor, -7);
+      guard++;
+    }
+    return out;
+  }
+
+  function openWeekPicker() {
+    if (!heat || !weekPickerEl || !weekPickerList) return;
+    weekPickerReturnFocus = document.activeElement;
+    var opts = weekOptions();
+    var html = "";
+    for (var i = 0; i < opts.length; i++) {
+      var w = opts[i];
+      var selected = w.start === weekStart;
+      var word = w.count === 1 ? "change" : "changes";
+      html +=
+        '<button type="button" class="activity-week-picker-row' +
+        (selected ? " is-selected" : "") +
+        '" role="option" aria-selected="' +
+        (selected ? "true" : "false") +
+        '" data-week="' +
+        esc(w.start) +
+        '" aria-label="' +
+        esc(
+          formatWeekRange(w.start) +
+            (w.isCurrent ? ", this week" : "") +
+            ", " +
+            w.count +
+            " " +
+            word
+        ) +
+        '">' +
+        '<span class="activity-week-picker-row-text">' +
+        '<span class="activity-week-picker-row-title">' +
+        esc(formatWeekRange(w.start)) +
+        "</span>" +
+        (w.isCurrent
+          ? '<span class="muted activity-week-picker-row-sub">This week</span>'
+          : "") +
+        "</span>" +
+        '<span class="activity-count-pill' +
+        (selected ? " is-ghost" : "") +
+        '" aria-hidden="true">' +
+        (w.count | 0) +
+        "</span>" +
+        "</button>";
+    }
+    if (!opts.length) {
+      html = '<p class="muted activity-week-empty">No weeks in range.</p>';
+    }
+    weekPickerList.innerHTML = html;
+    weekPickerList.querySelectorAll("[data-week]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        pickWeek(btn.getAttribute("data-week"));
+      });
+    });
+    weekPickerEl.hidden = false;
+    document.body.classList.add("activity-picker-open");
+    if (weekPickBtn) weekPickBtn.setAttribute("aria-expanded", "true");
+    // Focus selected row, or first row, or Done
+    var focusEl =
+      weekPickerList.querySelector(".activity-week-picker-row.is-selected") ||
+      weekPickerList.querySelector(".activity-week-picker-row") ||
+      weekPickerDone;
+    if (focusEl && focusEl.focus) focusEl.focus();
+  }
+
+  function closeWeekPicker() {
+    if (!weekPickerEl) return;
+    weekPickerEl.hidden = true;
+    document.body.classList.remove("activity-picker-open");
+    if (weekPickBtn) weekPickBtn.setAttribute("aria-expanded", "false");
+    if (weekPickerReturnFocus && weekPickerReturnFocus.focus) {
+      try {
+        weekPickerReturnFocus.focus();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    weekPickerReturnFocus = null;
+  }
+
+  function pickWeek(start) {
+    if (!start) return;
+    setWeekStart(start);
+    closeWeekPicker();
+    var t = todayKey();
+    if (t && start === weekStartOf(t)) {
+      scrollGraphToDate(t);
+    } else {
+      scrollGraphToDate(start);
     }
   }
 
@@ -509,10 +637,32 @@
     }
     var html = '<ul class="activity-event-list">';
     for (var i = 0; i < events.length; i++) {
-      html += eventCardHtml(events[i], i === 0);
+      // Notes start collapsed — user expands for outline diff
+      html += eventCardHtml(events[i], false);
     }
     html += "</ul>";
     return html;
+  }
+
+  /**
+   * Product chevron SVGs (Phosphor caret regular).
+   * dir: right | down | left | up — left/up mirror the provided glyphs.
+   */
+  function chevSvg(dir) {
+    var points =
+      dir === "down" || dir === "up" ? "208 96 128 176 48 96" : "96 48 176 128 96 208";
+    var transform = "";
+    if (dir === "left") transform = ' transform="translate(256 0) scale(-1 1)"';
+    if (dir === "up") transform = ' transform="translate(0 256) scale(1 -1)"';
+    return (
+      '<svg class="kv-chev" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1em" height="1em" aria-hidden="true" focusable="false">' +
+      '<polyline points="' +
+      points +
+      '" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"' +
+      transform +
+      "/>" +
+      "</svg>"
+    );
   }
 
   function eventCardHtml(e, openFirst) {
@@ -527,7 +677,9 @@
         '<button type="button" class="activity-event-toggle" aria-expanded="' +
         (open ? "true" : "false") +
         '">' +
-        '<span class="activity-event-chev" aria-hidden="true"></span>' +
+        '<span class="activity-event-chev" aria-hidden="true">' +
+        chevSvg(open ? "down" : "right") +
+        "</span>" +
         '<span class="activity-event-head-text">' +
         '<span class="activity-event-label">' +
         esc(e.label || e.slug) +
@@ -579,6 +731,8 @@
         btn.setAttribute("aria-expanded", open ? "true" : "false");
         var body = card.querySelector(".activity-event-body");
         if (body) body.hidden = !open;
+        var chev = btn.querySelector(".activity-event-chev");
+        if (chev) chev.innerHTML = chevSvg(open ? "down" : "right");
       });
     });
   }
@@ -679,9 +833,9 @@
   }
 
   function outlineRowHtml(kind, block) {
+    // kind: add | del | eq — no +/- rail; del = strikethrough only
     var cls = "activity-oline apd-" + kind;
     if (!(block.text && String(block.text).trim())) cls += " is-blank";
-    var mark = kind === "add" ? "+" : kind === "del" ? "−" : "";
     var text = block.text && String(block.text).trim() ? esc(block.text) : "";
     var textHtml = text
       ? '<span class="activity-otxt">' + text + "</span>"
@@ -692,9 +846,6 @@
       '" style="--depth:' +
       (block.indent | 0) +
       '">' +
-      '<span class="activity-omark" aria-hidden="true">' +
-      mark +
-      "</span>" +
       '<span class="activity-odot" aria-hidden="true"></span>' +
       textHtml +
       "</div>"
@@ -706,11 +857,9 @@
     if (!rows.length) {
       return '<p class="muted activity-diff-empty">No text change.</p>';
     }
-    var compact = rows.length <= 2 ? " is-compact" : "";
+    // No outer panel — event card frames; add/del washes are self-contained
     return (
-      '<div class="activity-outline-diff outline' +
-      compact +
-      '" role="region" aria-label="Outline diff">' +
+      '<div class="activity-outline-diff outline" role="region" aria-label="Outline diff">' +
       rows
         .map(function (r) {
           return outlineRowHtml(r.t, r.block);
@@ -725,11 +874,8 @@
     if (!blocks.length) {
       return '<p class="muted activity-diff-empty">Empty note.</p>';
     }
-    var compact = blocks.length <= 2 ? " is-compact" : "";
     return (
-      '<div class="activity-outline-diff outline activity-outline-snap' +
-      compact +
-      '" role="region" aria-label="Note outline">' +
+      '<div class="activity-outline-diff outline activity-outline-snap" role="region" aria-label="Note outline">' +
       blocks
         .map(function (b) {
           return outlineRowHtml("eq", b);
@@ -761,6 +907,23 @@
       scrollGraphToDate(t);
     });
   }
+  if (weekPickBtn) {
+    weekPickBtn.addEventListener("click", function () {
+      openWeekPicker();
+    });
+  }
+  if (weekPickerDone) {
+    weekPickerDone.addEventListener("click", closeWeekPicker);
+  }
+  if (weekPickerBackdrop) {
+    weekPickerBackdrop.addEventListener("click", closeWeekPicker);
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && weekPickerEl && !weekPickerEl.hidden) {
+      e.preventDefault();
+      closeWeekPicker();
+    }
+  });
 
   // YTD heatmap → land on this week
   fetch(BASE + "/api/activity", { credentials: "same-origin" })
@@ -772,18 +935,34 @@
       var today = data.ytd_to || data.to;
       weekStart = weekStartOf(today || new Date().toISOString().slice(0, 10));
 
+      var notes =
+        data.notes_taken_ytd != null
+          ? data.notes_taken_ytd | 0
+          : data.lines_added_ytd != null
+            ? data.lines_added_ytd | 0
+            : data.total | 0;
+      var yFrom = data.ytd_from || data.from;
+      var yTo = data.ytd_to || data.to;
+      var noteWord = notes === 1 ? "note" : "notes";
+      var range = formatRange(yFrom, yTo);
+      // Stacked hierarchy under title: weighted stat, then muted range
       if (leadEl) {
-        var notes =
-          data.notes_taken_ytd != null
-            ? data.notes_taken_ytd | 0
-            : data.lines_added_ytd != null
-              ? data.lines_added_ytd | 0
-              : data.total | 0;
-        var yFrom = data.ytd_from || data.from;
-        var yTo = data.ytd_to || data.to;
-        var noteWord = notes === 1 ? "note" : "notes";
-        leadEl.textContent =
-          notes + " " + noteWord + " taken YTD · " + formatRange(yFrom, yTo);
+        leadEl.innerHTML =
+          '<span class="activity-lead-stat">' +
+          '<span class="activity-lead-n">' +
+          notes +
+          "</span> " +
+          noteWord +
+          " taken YTD</span>" +
+          '<span class="activity-lead-range">' +
+          esc(range) +
+          "</span>";
+      }
+      if (graphEl) {
+        graphEl.setAttribute(
+          "aria-label",
+          "Note activity overview. " + notes + " " + noteWord + " taken YTD. " + range
+        );
       }
 
       updateWeekNav();
@@ -791,7 +970,10 @@
       renderDayFolders();
     })
     .catch(function () {
-      if (leadEl) leadEl.textContent = "Couldn’t load activity.";
+      if (leadEl) {
+        leadEl.innerHTML =
+          '<span class="activity-lead-stat login-error">Couldn’t load activity.</span>';
+      }
       if (foldersEl) {
         foldersEl.innerHTML =
           '<p class="muted login-error">Couldn’t load activity.</p>';

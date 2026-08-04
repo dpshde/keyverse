@@ -22,7 +22,7 @@ import { useSession } from "@/src/context/SessionContext";
 import type { Block, Note } from "@/src/api/types";
 import { hydrateBlocks } from "@/src/api/client";
 import { decryptPayload } from "@/src/lib/crypto";
-import { getChapter, chapterKey } from "@/src/lib/textBundle";
+import { getChapter, chapterKey, peekChapter } from "@/src/lib/textBundle";
 import { displayScope, resolveLocal } from "@/src/lib/resolveLocal";
 import { passageShareUrls } from "@/src/lib/shareUrl";
 import { LiquidGlassBar, liquidGlassBarListPad } from "@/src/components/LiquidGlassBar";
@@ -475,25 +475,16 @@ export default function ReaderScreen() {
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!slug) return;
     const quiet = !!opts?.quiet;
-    if (!quiet) {
-      setBusy(true);
-      setErr(null);
-    }
-    try {
-      const r = resolveLocal(slug);
-      const book = bookChapter?.book || "";
-      const chapter = bookChapter?.chapter || 1;
-      const text = await getChapter(translation, book, chapter);
-      setTitle(
-        displayScope(
-          r.scope || { kind: "chapter", osis: `${book}.${chapter}`, slug: `${book}.${chapter}` }
-        )
-      );
+    const r = resolveLocal(slug);
+    const book = bookChapter?.book || "";
+    const chapter = bookChapter?.chapter || 1;
+    const nextTitle = displayScope(
+      r.scope || { kind: "chapter", osis: `${book}.${chapter}`, slug: `${book}.${chapter}` }
+    );
+    const chSlug = chapterKey(book, chapter);
+    const prefix = `${book}.${chapter}`.toLowerCase();
 
-      // Chapter-scoped notes only — avoid mapping/decrypting the whole pack
-      const chSlug = chapterKey(book, chapter);
-      const prefix = `${book}.${chapter}`.toLowerCase();
-      const list = await Local.listNotes();
+    const notesMapFromList = (list: Note[]): Record<string, Note> => {
       const map: Record<string, Note> = {};
       for (const n of list) {
         const sl = (n.scope?.slug || "").toLowerCase();
@@ -502,23 +493,93 @@ export default function ReaderScreen() {
           map[n.scope!.slug] = n;
         }
       }
-      setNotesBySlug(map);
-      setLiveText({});
-      setChapterSlug(chSlug);
-      setChapterNote(map[chSlug] || null);
+      return map;
+    };
 
-      // Range / cover indicators are derived live from notesBySlug (see rangeIndex).
-      setVerses(
-        (text.verses || []).map((vr) => {
-          const vslug = `${book}.${chapter}.${vr.v}`;
-          return {
-            v: vr.v,
-            text: vr.text || "",
-            verseSlug: vslug,
-            heading: (vr as { heading?: string }).heading || undefined,
-          };
-        })
-      );
+    const applyNotesMap = (map: Record<string, Note>) => {
+      setNotesBySlug((prev) => {
+        const prevKeys = Object.keys(prev).sort();
+        const nextKeys = Object.keys(map).sort();
+        if (prevKeys.length === nextKeys.length) {
+          let same = true;
+          for (let i = 0; i < prevKeys.length; i++) {
+            const k = prevKeys[i];
+            if (k !== nextKeys[i] || prev[k]?.updated_at !== map[k]?.updated_at) {
+              same = false;
+              break;
+            }
+          }
+          if (same) return prev;
+        }
+        return map;
+      });
+      setChapterSlug(chSlug);
+      setChapterNote((prev) => {
+        const n = map[chSlug] || null;
+        if (
+          (prev?.scope?.slug || null) === (n?.scope?.slug || null) &&
+          (prev?.updated_at || null) === (n?.updated_at || null)
+        ) {
+          return prev;
+        }
+        return n;
+      });
+    };
+
+    const versesFromText = (text: { verses?: { v: number; text?: string; heading?: string }[] }) =>
+      (text.verses || []).map((vr) => {
+        const vslug = `${book}.${chapter}.${vr.v}`;
+        return {
+          v: vr.v,
+          text: vr.text || "",
+          verseSlug: vslug,
+          heading: (vr as { heading?: string }).heading || undefined,
+        };
+      });
+
+    const applyVerses = (rows: VerseRow[]) => {
+      setVerses((prev) => {
+        if (
+          prev.length === rows.length &&
+          prev.every(
+            (p, i) =>
+              p.v === rows[i].v &&
+              p.text === rows[i].text &&
+              p.verseSlug === rows[i].verseSlug &&
+              p.heading === rows[i].heading
+          )
+        ) {
+          return prev;
+        }
+        return rows;
+      });
+    };
+
+    // Optimistic: paint memory cache before any await
+    const peekedNotes = Local.peekNotes();
+    if (peekedNotes) applyNotesMap(notesMapFromList(peekedNotes));
+
+    const peekedText = book && chapter ? peekChapter(translation, book, chapter) : null;
+    if (peekedText?.verses?.length) {
+      setTitle(nextTitle);
+      applyVerses(versesFromText(peekedText));
+      setBusy(false);
+    } else if (!quiet) {
+      setBusy(true);
+      setErr(null);
+    }
+
+    try {
+      const text = await getChapter(translation, book, chapter);
+      setTitle(nextTitle);
+      applyVerses(versesFromText(text));
+
+      // Chapter-scoped notes only — avoid mapping/decrypting the whole pack
+      const list = await Local.listNotes();
+      applyNotesMap(notesMapFromList(list));
+      // Full chapter navigation clears live typing; quiet revalidate must not
+      if (!quiet) setLiveText({});
+      notesEpochRef.current = Local.getNotesCacheEpoch();
     } catch (e) {
       if (!quiet) setErr(String(e));
     } finally {

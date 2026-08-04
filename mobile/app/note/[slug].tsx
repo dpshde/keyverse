@@ -56,12 +56,29 @@ export default function NoteScreen() {
   const { passphrase, hasPassphrase, cloudEnabled, cloudHost, cloudDoor } = useSession();
   const router = useRouter();
   const navigation = useNavigation();
-  const [busy, setBusy] = useState(true);
-  const [blocks, setBlocks] = useState<Block[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [wantEncrypt, setWantEncrypt] = useState(false);
-  const [locked, setLocked] = useState(false);
-  const [noteMeta, setNoteMeta] = useState<Note | null>(null);
+  // Cache-first: paint from memory so reader → full note never blanks
+  const seedNote = Local.peekNote(slug);
+  const [busy, setBusy] = useState(() => seedNote == null);
+  const [blocks, setBlocks] = useState<Block[]>(() =>
+    seedNote && !seedNote.encrypted ? hydrateBlocks(seedNote) : []
+  );
+  const [attachments, setAttachments] = useState<Attachment[]>(
+    () =>
+      (seedNote && !seedNote.encrypted
+        ? ((seedNote.attachments || []) as Attachment[])
+        : [])
+  );
+  const [wantEncrypt, setWantEncrypt] = useState(
+    () => !!(seedNote?.encrypted || (cloudEnabled && hasPassphrase))
+  );
+  const [locked, setLocked] = useState(
+    () => !!(seedNote?.encrypted && seedNote.cipher && !passphrase)
+  );
+  const [noteMeta, setNoteMeta] = useState<Note | null>(() => seedNote);
+  /** Last applied stamp — skip rehydrate when focus/getNote returns same note. */
+  const appliedStampRef = useRef(
+    seedNote ? `${seedNote.scope?.slug || slug}:${seedNote.updated_at || ""}` : ""
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
   const blocksRef = useRef(blocks);
@@ -119,9 +136,26 @@ export default function NoteScreen() {
 
   const load = useCallback(async () => {
     if (!slug) return;
-    setBusy(true);
+    // Optimistic: apply memory hit immediately; only spin when cold
+    const peeked = Local.peekNote(slug);
+    if (peeked) {
+      const stamp = `${peeked.scope?.slug || slug}:${peeked.updated_at || ""}`;
+      if (stamp !== appliedStampRef.current) {
+        appliedStampRef.current = stamp;
+        await applyNote(peeked, { showBusy: false });
+      }
+      setBusy(false);
+    } else {
+      setBusy(true);
+    }
     try {
       const note = await Local.getNote(slug);
+      const stamp = note
+        ? `${note.scope?.slug || slug}:${note.updated_at || ""}`
+        : `${slug}:`;
+      // Skip UI rewrite if getNote returned the same stamp we already painted
+      if (stamp === appliedStampRef.current) return;
+      appliedStampRef.current = stamp;
       await applyNote(note, { showBusy: false });
     } catch (e) {
       Alert.alert("Couldn’t open note", String(e));
@@ -138,7 +172,14 @@ export default function NoteScreen() {
   useFocusEffect(
     useCallback(() => {
       if (dirtyRef.current || timer.current) return;
-      void Local.getNote(slug).then((n) => applyNote(n));
+      void Local.getNote(slug).then((n) => {
+        const stamp = n
+          ? `${n.scope?.slug || slug}:${n.updated_at || ""}`
+          : `${slug}:`;
+        if (stamp === appliedStampRef.current) return;
+        appliedStampRef.current = stamp;
+        void applyNote(n);
+      });
     }, [slug, applyNote])
   );
 
@@ -148,9 +189,13 @@ export default function NoteScreen() {
       if (ch.slug !== slug) return;
       if (dirtyRef.current || timer.current) return;
       if (ch.deleted) {
+        appliedStampRef.current = `${slug}:`;
         void applyNote(null);
         return;
       }
+      const stamp = `${ch.note.scope?.slug || slug}:${ch.note.updated_at || ""}`;
+      if (stamp === appliedStampRef.current) return;
+      appliedStampRef.current = stamp;
       void applyNote(ch.note);
     });
   }, [slug, applyNote]);
@@ -200,6 +245,7 @@ export default function NoteScreen() {
       }
 
       const note = res as Note;
+      appliedStampRef.current = `${note.scope?.slug || slug}:${note.updated_at || ""}`;
       setNoteMeta((prev) =>
         prev
           ? {

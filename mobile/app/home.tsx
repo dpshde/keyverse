@@ -16,7 +16,18 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { useSession } from "@/src/context/SessionContext";
 import type { Note, SuggestItem } from "@/src/api/types";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
-import { buildNoteTree, type TreeFolder, type TreeLeaf, type TreeNode } from "@/src/lib/noteTree";
+import {
+  buildInboxDaySections,
+  buildInboxLeaves,
+  buildNoteTree,
+  flattenInboxWithDayHeaders,
+  HOME_VIEW_KEY,
+  INBOX_PAGE_SIZE,
+  type HomeViewMode,
+  type TreeFolder,
+  type TreeLeaf,
+  type TreeNode,
+} from "@/src/lib/noteTree";
 import * as Local from "@/src/lib/localPack";
 import { resolveLocal, suggestLocal } from "@/src/lib/resolveLocal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -40,14 +51,12 @@ import { pushOnce, releasePushLock } from "@/src/lib/nav";
 import { fontRead, radius, space, tap, type ThemeColors } from "@/src/theme";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
+const FOLD_KEY = "kv.fold.local";
 
 /**
- * Critique → improve (operate mode):
- * - Machine OSIS (`1SA.15.15`) → natural refs (`1 Samuel 15:15`)
- * - Folder labels match people language (books & chapters)
- * - Cards lead with the note body; kind chrome demoted/removed
- * - Hierarchy: book (strong) → chapter (quiet) → note (content card)
- * - Full-note affordance is a soft trailing control, not a heavy rail
+ * Home: Library (book → chapter hierarchy) or Inbox (flat, created-at cards).
+ * Layout preference lives in Settings — not a chrome row here.
+ * Inbox paginates so large packs stay light.
  */
 export default function HomeScreen() {
   const { cloudEnabled, cloudHost, translation, enableCloud } = useSession();
@@ -55,22 +64,29 @@ export default function HomeScreen() {
   const styles = useMemo(() => makeHomeStyles(color), [color]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [notes, setNotes] = useState<Note[]>([]);
+  // Seed from memory so returning to home never blanks the list while revalidating.
+  const [notes, setNotes] = useState<Note[]>(() => Local.peekNotes() ?? []);
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<SuggestItem[]>([]);
-  const [busy, setBusy] = useState(true);
+  /** List refresh only — never blocks the passage dock / book picker. */
+  const [busy, setBusy] = useState(false);
+  /** Cold start only — false immediately when memory cache already has notes. */
+  const [notesLoading, setNotesLoading] = useState(() => Local.peekNotes() == null);
   const [err, setErr] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [homeView, setHomeView] = useState<HomeViewMode>("library");
+  /** How many inbox rows are mounted (grows by INBOX_PAGE_SIZE). */
+  const [inboxLimit, setInboxLimit] = useState(INBOX_PAGE_SIZE);
   const [kbHeight, setKbHeight] = useState(0);
   const [invite, setInvite] = useState<SyncInviteState>("pending");
   const [syncBusy, setSyncBusy] = useState(false);
   const [enterOpen, setEnterOpen] = useState(false);
   const [revealDoor, setRevealDoor] = useState<string | null>(null);
 
-  const foldKey = "kv.fold.local";
   const onKeyboardHeightChange = useCallback((h: number) => setKbHeight(h), []);
 
   const notesEpochRef = useRef(Local.getNotesCacheEpoch());
+  const notesFpRef = useRef(Local.notesFingerprint(Local.peekNotes() ?? []));
   /** Only one iMessage-style swipe row open at a time. */
   const openSwipeRef = useRef<SwipeableMethods | null>(null);
 
@@ -84,6 +100,18 @@ export default function HomeScreen() {
       openSwipeRef.current.close();
     }
     openSwipeRef.current = methods;
+  }, []);
+
+  /** Apply list only when fingerprint changes — avoids FlatList thrash on SWR revalidate. */
+  const applyNotes = useCallback((list: Note[]) => {
+    const fp = Local.notesFingerprint(list);
+    if (fp === notesFpRef.current) {
+      notesEpochRef.current = Local.getNotesCacheEpoch();
+      return;
+    }
+    notesFpRef.current = fp;
+    notesEpochRef.current = Local.getNotesCacheEpoch();
+    setNotes(list);
   }, []);
 
   const deleteNote = useCallback(
@@ -101,8 +129,14 @@ export default function HomeScreen() {
               try {
                 closeOpenSwipe();
                 await Local.deleteNote(leaf.slug);
-                notesEpochRef.current = Local.getNotesCacheEpoch();
-                setNotes((prev) => prev.filter((n) => n.scope?.slug !== leaf.slug));
+                // subscribeNoteChanges also applies; keep local filter snappy
+                const list = Local.peekNotes();
+                if (list) applyNotes(list);
+                else {
+                  notesEpochRef.current = Local.getNotesCacheEpoch();
+                  notesFpRef.current = "";
+                  setNotes((prev) => prev.filter((n) => n.scope?.slug !== leaf.slug));
+                }
                 hapticSuccess();
               } catch (e) {
                 hapticError();
@@ -113,49 +147,93 @@ export default function HomeScreen() {
         ]
       );
     },
-    [closeOpenSwipe]
+    [closeOpenSwipe, applyNotes]
   );
 
-  const load = useCallback(async (opts?: { quiet?: boolean }) => {
-    const quiet = !!opts?.quiet;
-    if (!quiet) {
-      setBusy(true);
-      setErr(null);
-    }
-    try {
-      const [list, foldRaw, inv] = await Promise.all([
-        Local.listNotes(), // memory-cached after first disk read
-        AsyncStorage.getItem(foldKey),
-        getSyncInviteState(),
-      ]);
-      setNotes(list);
-      setInvite(inv);
-      notesEpochRef.current = Local.getNotesCacheEpoch();
-      if (foldRaw) setCollapsed(JSON.parse(foldRaw) || {});
-    } catch (e) {
-      if (!quiet) setErr(String(e));
-    } finally {
-      if (!quiet) setBusy(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (opts?: { quiet?: boolean; initial?: boolean }) => {
+      const quiet = !!opts?.quiet;
+      const initial = !!opts?.initial;
+      // Pull-to-refresh only — never freeze the passage bar / book picker.
+      if (!quiet && !initial) {
+        setBusy(true);
+        setErr(null);
+      }
+      // Only block list when we have nothing cached (cold start)
+      if (initial && Local.peekNotes() == null) setNotesLoading(true);
+      try {
+        // Prefs + notes in parallel; listNotes is memory-hit after first warm.
+        const [foldRaw, viewRaw, inv, list] = await Promise.all([
+          AsyncStorage.getItem(FOLD_KEY),
+          AsyncStorage.getItem(HOME_VIEW_KEY),
+          getSyncInviteState(),
+          Local.listNotes(),
+        ]);
+        if (foldRaw) {
+          try {
+            setCollapsed(JSON.parse(foldRaw) || {});
+          } catch {
+            /* ignore */
+          }
+        }
+        if (viewRaw === "inbox" || viewRaw === "library") {
+          setHomeView(viewRaw);
+          if (viewRaw === "inbox") setInboxLimit(INBOX_PAGE_SIZE);
+        }
+        setInvite(inv);
+        applyNotes(list);
+      } catch (e) {
+        if (!quiet) setErr(String(e));
+      } finally {
+        if (initial) setNotesLoading(false);
+        if (!quiet && !initial) setBusy(false);
+      }
+    },
+    [applyNotes]
+  );
 
   useEffect(() => {
-    load();
+    // Non-blocking: passage dock + book selector work immediately;
+    // cached notes already painted via useState seed.
+    void load({ initial: true, quiet: true });
   }, [load]);
+
+  // Live: reader tray / cloud pull / import while home stays mounted
+  useEffect(() => {
+    return Local.subscribeNoteChanges(() => {
+      const list = Local.peekNotes();
+      if (list) applyNotes(list);
+      else void load({ quiet: true });
+    });
+  }, [applyNotes, load]);
 
   // Refresh list only when notes actually changed elsewhere (note editor / sync / import)
   useFocusEffect(
     useCallback(() => {
       // Allow opening Settings/Share again immediately after dismissing a sheet
       releasePushLock();
+      // Pick up Library/Inbox choice from Settings without a full reload
+      AsyncStorage.getItem(HOME_VIEW_KEY)
+        .then((v) => {
+          if (v === "inbox" || v === "library") {
+            setHomeView((prev) => {
+              if (prev !== v && v === "inbox") setInboxLimit(INBOX_PAGE_SIZE);
+              return v;
+            });
+          }
+        })
+        .catch(() => {});
       const ep = Local.getNotesCacheEpoch();
       if (ep !== notesEpochRef.current) {
-        load({ quiet: true });
+        // Epoch advanced (often already applied via subscribe) — revalidate quietly
+        const list = Local.peekNotes();
+        if (list) applyNotes(list);
+        else void load({ quiet: true });
       } else {
         // Re-read invite / cloud chrome when returning from Sync home
         getSyncInviteState().then(setInvite).catch(() => {});
       }
-    }, [load])
+    }, [load, applyNotes])
   );
 
   const showInviteBanner =
@@ -205,7 +283,38 @@ export default function HomeScreen() {
   }, [q]);
 
   const tree = useMemo(() => buildNoteTree(notes), [notes]);
-  const flat = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
+  const libraryFlat = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
+  const inboxAll = useMemo(() => buildInboxLeaves(notes), [notes]);
+  const inboxSections = useMemo(() => buildInboxDaySections(notes), [notes]);
+  const inboxHasMore = inboxLimit < inboxAll.length;
+
+  const listData = useMemo((): HomeRow[] => {
+    if (homeView === "inbox") {
+      return flattenInboxWithDayHeaders(inboxSections, inboxLimit).map((row) => {
+        if (row.kind === "day") {
+          return {
+            key: row.key,
+            kind: "day" as const,
+            dayKey: row.dayKey!,
+            dayLabel: row.dayLabel!,
+            depth: 0,
+          };
+        }
+        return {
+          key: row.key,
+          kind: "note" as const,
+          node: row.leaf!,
+          depth: 0,
+        };
+      });
+    }
+    return libraryFlat;
+  }, [homeView, inboxSections, inboxLimit, libraryFlat]);
+
+  const loadMoreInbox = useCallback(() => {
+    if (homeView !== "inbox" || !inboxHasMore) return;
+    setInboxLimit((n) => Math.min(n + INBOX_PAGE_SIZE, inboxAll.length));
+  }, [homeView, inboxHasMore, inboxAll.length]);
 
   const toggle = useCallback(async (id: string) => {
     hapticSelect();
@@ -213,7 +322,7 @@ export default function HomeScreen() {
       const map2 = { ...prev };
       if (map2[id]) delete map2[id];
       else map2[id] = true;
-      AsyncStorage.setItem(foldKey, JSON.stringify(map2)).catch(() => {});
+      AsyncStorage.setItem(FOLD_KEY, JSON.stringify(map2)).catch(() => {});
       return map2;
     });
   }, []);
@@ -242,7 +351,55 @@ export default function HomeScreen() {
     }),
     [dockPad]
   );
-  const homeKeyExtractor = useCallback((item: { key: string }) => item.key, []);
+  const homeKeyExtractor = useCallback((item: HomeRow) => item.key, []);
+
+  const renderNoteCard = useCallback(
+    (leaf: TreeLeaf, depth: number) => (
+      <NoteSwipeRow
+        style={{ marginLeft: depth * space[3] }}
+        label={leaf.label}
+        onWillOpen={onSwipeWillOpen}
+        onDelete={() => deleteNote(leaf)}
+        onEdit={() => {
+          hapticLight();
+          pushOnce(router, `/note/${encodeURIComponent(leaf.slug)}`);
+        }}
+      >
+        <Pressable
+          style={styles.card}
+          onPress={() => {
+            closeOpenSwipe();
+            hapticSelect();
+            pushOnce(router, `/read/${encodeURIComponent(leaf.slug)}`);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${leaf.label} in reader. Swipe left for options.`}
+          accessibilityHint="Swipe left for Note and Delete"
+        >
+          <View style={styles.cardHead}>
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              {leaf.label}
+            </Text>
+            {leaf.encrypted ? (
+              <Text style={styles.badge}>Sealed</Text>
+            ) : leaf.attCount > 0 ? (
+              <Text style={styles.badge}>
+                {leaf.attCount} file{leaf.attCount === 1 ? "" : "s"}
+              </Text>
+            ) : null}
+          </View>
+          {leaf.preview ? (
+            <InlineMarkdown text={leaf.preview} style={styles.cardBody} />
+          ) : leaf.encrypted ? (
+            <Text style={styles.cardBodyMuted}>Encrypted — open with passphrase</Text>
+          ) : (
+            <Text style={styles.cardBodyMuted}>Empty note</Text>
+          )}
+        </Pressable>
+      </NoteSwipeRow>
+    ),
+    [closeOpenSwipe, deleteNote, onSwipeWillOpen, router, styles]
+  );
 
   return (
     <View style={ui.screen}>
@@ -310,6 +467,7 @@ export default function HomeScreen() {
             </Pressable>
           </View>
         </View>
+
         {err ? <Text style={ui.err}>{err}</Text> : null}
         {syncBusy ? (
           <View style={styles.syncBusyRow}>
@@ -327,122 +485,109 @@ export default function HomeScreen() {
         />
       ) : null}
 
-      {busy && !notes.length ? (
-        <ActivityIndicator style={{ marginTop: space[10] }} color={color.muted} />
-      ) : (
-        <FlatList
-          data={flat}
-          keyExtractor={homeKeyExtractor}
-          refreshControl={
-            <RefreshControl refreshing={busy} onRefresh={load} tintColor={color.muted} />
-          }
-          contentContainerStyle={listContentStyle}
-          keyboardShouldPersistTaps="handled"
-          onScrollBeginDrag={closeOpenSwipe}
-          windowSize={10}
-          maxToRenderPerBatch={10}
-          initialNumToRender={16}
-          updateCellsBatchingPeriod={50}
-          removeClippedSubviews={Platform.OS === "android"}
-          ListEmptyComponent={
-            <Text style={styles.empty}>
-              Notes stay on this device. Open a passage below in {translation} and write under a
-              verse.
+      <FlatList
+        data={listData}
+        keyExtractor={homeKeyExtractor}
+        extraData={{ homeView, collapsed, inboxLimit, notesLoading }}
+        refreshControl={
+          <RefreshControl
+            refreshing={busy}
+            onRefresh={() => void load()}
+            tintColor={color.muted}
+          />
+        }
+        contentContainerStyle={listContentStyle}
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={closeOpenSwipe}
+        onEndReached={homeView === "inbox" ? loadMoreInbox : undefined}
+        onEndReachedThreshold={0.4}
+        windowSize={10}
+        maxToRenderPerBatch={homeView === "inbox" ? INBOX_PAGE_SIZE : 10}
+        initialNumToRender={homeView === "inbox" ? INBOX_PAGE_SIZE : 16}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={Platform.OS === "android"}
+        ListHeaderComponent={
+          homeView === "inbox" && notes.length > 0 && inboxAll.length > INBOX_PAGE_SIZE ? (
+            <Text style={styles.inboxLead}>
+              Showing {Math.min(inboxLimit, inboxAll.length)} of {inboxAll.length}
             </Text>
-          }
-          renderItem={({ item }) => {
-            if (item.kind === "folder") {
-              const f = item.node as TreeFolder;
-              const isCol = !!collapsed[f.id];
-              const isBook = f.level === "book";
-              const a11y = f.accessibilityLabel || f.label;
-              const noteWord = f.noteCount === 1 ? "note" : "notes";
-              /**
-               * Same trailing CountPill for books and chapters:
-               * - Collapsed → filled (packed)
-               * - Expanded → ghost (open; children visible)
-               * Title column only — no under-title “N notes” (that fought the pill).
-               */
-              return (
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.folder,
-                    isBook ? styles.folderBook : styles.folderChapter,
-                    { marginLeft: item.depth * space[3] },
-                    !isBook && pressed && styles.folderChapterPressed,
-                    isBook && !isCol && styles.folderBookOpen,
-                  ]}
-                  onPress={() => toggle(f.id)}
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: !isCol }}
-                  accessibilityLabel={`${a11y}, ${f.noteCount} ${noteWord}, ${
-                    isCol ? "collapsed" : "expanded"
-                  }`}
-                  accessibilityHint={isCol ? "Expands section" : "Collapses section"}
-                >
-                  <Text
-                    style={isBook ? styles.folderTitleBook : styles.folderTitleChapter}
-                    numberOfLines={1}
-                  >
-                    {f.label}
-                  </Text>
-                  <CountPill
-                    label={f.noteCount}
-                    variant={isCol ? "filled" : "ghost"}
-                  />
-                </Pressable>
-              );
-            }
-
-            const leaf = item.node as TreeLeaf;
+          ) : null
+        }
+        ListFooterComponent={
+          homeView === "inbox" && inboxHasMore ? (
+            <Pressable
+              onPress={loadMoreInbox}
+              style={({ pressed }) => [styles.loadMore, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Load more notes"
+            >
+              <Text style={styles.loadMoreTxt}>Show more</Text>
+            </Pressable>
+          ) : null
+        }
+        ListEmptyComponent={
+          notesLoading ? (
+            <ActivityIndicator style={{ marginTop: space[10] }} color={color.muted} />
+          ) : (
+            <Text style={styles.empty}>
+              {homeView === "inbox"
+                ? "No notes yet. Open a passage below and write under a verse — they’ll show up here newest first."
+                : `Notes stay on this device. Open a passage below in ${translation} and write under a verse.`}
+            </Text>
+          )
+        }
+        renderItem={({ item }) => {
+          if (item.kind === "day") {
             return (
-              <NoteSwipeRow
-                style={{ marginLeft: item.depth * space[3] }}
-                label={leaf.label}
-                onWillOpen={onSwipeWillOpen}
-                onDelete={() => deleteNote(leaf)}
-                onEdit={() => {
-                  hapticLight();
-                  pushOnce(router, `/note/${encodeURIComponent(leaf.slug)}`);
-                }}
+              <View
+                style={styles.dayHeader}
+                accessibilityRole="header"
+                accessibilityLabel={item.dayLabel}
               >
-                <Pressable
-                  style={styles.card}
-                  onPress={() => {
-                    closeOpenSwipe();
-                    hapticSelect();
-                    pushOnce(router, `/read/${encodeURIComponent(leaf.slug)}`);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open ${leaf.label} in reader. Swipe left for options.`}
-                  accessibilityHint="Swipe left for Note and Delete"
-                >
-                  <View style={styles.cardHead}>
-                    <Text style={styles.cardTitle} numberOfLines={1}>
-                      {leaf.label}
-                    </Text>
-                    {leaf.encrypted ? (
-                      <Text style={styles.badge}>Sealed</Text>
-                    ) : leaf.attCount > 0 ? (
-                      <Text style={styles.badge}>
-                        {leaf.attCount} file{leaf.attCount === 1 ? "" : "s"}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {leaf.preview ? (
-                    <InlineMarkdown text={leaf.preview} style={styles.cardBody} />
-                  ) : leaf.encrypted ? (
-                    <Text style={styles.cardBodyMuted}>Encrypted — open with passphrase</Text>
-                  ) : (
-                    <Text style={styles.cardBodyMuted}>Empty note</Text>
-                  )}
-                </Pressable>
-              </NoteSwipeRow>
+                <Text style={styles.dayHeaderTxt}>{item.dayLabel}</Text>
+              </View>
             );
-          }}
-        />
-      )}
+          }
+          if (item.kind === "folder") {
+            const f = item.node as TreeFolder;
+            const isCol = !!collapsed[f.id];
+            const isBook = f.level === "book";
+            const a11y = f.accessibilityLabel || f.label;
+            const noteWord = f.noteCount === 1 ? "note" : "notes";
+            return (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.folder,
+                  isBook ? styles.folderBook : styles.folderChapter,
+                  // Books stay flush (depth 0); only chapter/note rows nest under an open book.
+                  {
+                    marginLeft: isBook ? 0 : item.depth * space[3],
+                  },
+                  !isBook && pressed && styles.folderChapterPressed,
+                ]}
+                onPress={() => toggle(f.id)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: !isCol }}
+                accessibilityLabel={`${a11y}, ${f.noteCount} ${noteWord}, ${
+                  isCol ? "collapsed" : "expanded"
+                }`}
+                accessibilityHint={isCol ? "Expands section" : "Collapses section"}
+              >
+                <Text
+                  style={isBook ? styles.folderTitleBook : styles.folderTitleChapter}
+                  numberOfLines={1}
+                >
+                  {f.label}
+                </Text>
+                <CountPill label={f.noteCount} variant={isCol ? "filled" : "ghost"} />
+              </Pressable>
+            );
+          }
+          return renderNoteCard(item.node as TreeLeaf, item.depth);
+        }}
+      />
 
+      {/* Always mounted — book picker must work while notes still load */}
       <PassageSelector
         value={q}
         onChangeText={setQ}
@@ -465,12 +610,27 @@ export default function HomeScreen() {
   );
 }
 
+type HomeRow =
+  | {
+      key: string;
+      kind: "folder" | "note";
+      node: TreeNode;
+      depth: number;
+    }
+  | {
+      key: string;
+      kind: "day";
+      dayKey: string;
+      dayLabel: string;
+      depth: number;
+    };
+
 function flattenTree(
   nodes: TreeNode[],
   collapsed: Record<string, boolean>,
   depth = 0
-): { key: string; kind: "folder" | "note"; node: TreeNode; depth: number }[] {
-  const out: { key: string; kind: "folder" | "note"; node: TreeNode; depth: number }[] = [];
+): HomeRow[] {
+  const out: HomeRow[] = [];
   for (const n of nodes) {
     if (n.type === "folder") {
       out.push({ key: n.id, kind: "folder", node: n, depth });
@@ -541,6 +701,41 @@ function makeHomeStyles(color: ThemeColors) {
       gap: space[2],
       marginTop: space[2],
     },
+    inboxLead: {
+      fontSize: 13,
+      lineHeight: 18,
+      color: color.muted,
+      marginBottom: space[2],
+      letterSpacing: -0.1,
+    },
+    dayHeader: {
+      marginTop: space[3],
+      marginBottom: space[2],
+      paddingBottom: space[1],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: color.lineSoft,
+    },
+    dayHeaderTxt: {
+      fontSize: 13,
+      fontWeight: "700",
+      letterSpacing: 0.2,
+      textTransform: "uppercase",
+      color: color.muted,
+    },
+    loadMore: {
+      alignItems: "center",
+      justifyContent: "center",
+      minHeight: 48,
+      marginTop: space[2],
+      marginBottom: space[2],
+      borderRadius: radius.md,
+      backgroundColor: color.fill,
+    },
+    loadMoreTxt: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: color.inkSoft,
+    },
     empty: {
       textAlign: "center",
       color: color.muted,
@@ -563,13 +758,9 @@ function makeHomeStyles(color: ThemeColors) {
       marginBottom: space[2],
       paddingVertical: space[2],
       minHeight: 48,
-    },
-    /** Soft left rail when a book is open — structure without chevrons */
-    folderBookOpen: {
-      borderLeftWidth: 2,
-      borderLeftColor: color.line,
-      paddingLeft: space[2],
+      // Open vs closed is only the CountPill (filled/ghost) — never indent the title.
       marginLeft: 0,
+      paddingLeft: 0,
     },
     /**
      * Chapter rows: large hit target, no fill — sits on paper like book labels.

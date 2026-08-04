@@ -20,12 +20,14 @@ import * as Sharing from "expo-sharing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSession } from "@/src/context/SessionContext";
 import type { TranslationId } from "@/src/lib/textBundle";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Local from "@/src/lib/localPack";
 import {
   exportLocalPackZip,
   importLocalPackZip,
 } from "@/src/lib/packTransfer";
 import { b64ToArrayBuffer } from "@/src/lib/bytes";
+import { HOME_VIEW_KEY, type HomeViewMode } from "@/src/lib/noteTree";
 import { CountPill } from "@/src/components/CountPill";
 import { EnterSyncKey } from "@/src/components/EnterSyncKey";
 import { SyncKeyReveal } from "@/src/components/SyncKeyReveal";
@@ -51,6 +53,11 @@ const APPEARANCE: { id: ThemePreference; label: string }[] = [
   { id: "system", label: "System" },
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+];
+
+const HOME_VIEWS: { id: HomeViewMode; label: string }[] = [
+  { id: "library", label: "Library" },
+  { id: "inbox", label: "Inbox" },
 ];
 
 export default function SettingsScreen() {
@@ -81,6 +88,7 @@ export default function SettingsScreen() {
   const [enterOpen, setEnterOpen] = useState(false);
   const [revealDoor, setRevealDoor] = useState<string | null>(null);
   const [syncErr, setSyncErr] = useState<string | null>(null);
+  const [homeView, setHomeView] = useState<HomeViewMode>("library");
   /** Keyboard height → bottom content pad (same curve as passage dock). */
   const kbPad = useRef(new Animated.Value(0)).current;
 
@@ -116,6 +124,20 @@ export default function SettingsScreen() {
   const refreshStats = useCallback(async () => {
     const notes = await Local.listNotes();
     setStats({ notes: notes.length, label: `${notes.length} local notes` });
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(HOME_VIEW_KEY)
+      .then((v) => {
+        if (v === "inbox" || v === "library") setHomeView(v);
+      })
+      .catch(() => {});
+  }, []);
+
+  const setHomeViewMode = useCallback((mode: HomeViewMode) => {
+    hapticSelect();
+    setHomeView(mode);
+    AsyncStorage.setItem(HOME_VIEW_KEY, mode).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -356,6 +378,30 @@ export default function SettingsScreen() {
                 }}
               >
                 <Text style={[styles.chipTxt, preference === opt.id && styles.chipTxtOn]}>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={ui.group}>
+          <Text style={type.section}>Home notes</Text>
+          <Text style={type.meta}>
+            Library groups by book and chapter. Inbox is a flat list of notes, newest
+            created first.
+          </Text>
+          <View style={styles.row}>
+            {HOME_VIEWS.map((opt) => (
+              <Pressable
+                key={opt.id}
+                style={[styles.chip, homeView === opt.id && styles.chipOn]}
+                onPress={() => setHomeViewMode(opt.id)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: homeView === opt.id }}
+                accessibilityLabel={`Home notes: ${opt.label}`}
+              >
+                <Text style={[styles.chipTxt, homeView === opt.id && styles.chipTxtOn]}>
                   {opt.label}
                 </Text>
               </Pressable>

@@ -172,6 +172,110 @@ defmodule Keyverse.Tree do
 
   def count_tree_notes(_), do: 0
 
+  @doc """
+  Flat note list for Inbox home mode — no book/chapter hierarchy.
+  Newest **created** first. Uses pack `created_at` only — never `updated_at`
+  (import/sync rewrites that stamp and would pollute order).
+  """
+  def build_home_inbox(notes) when is_list(notes) do
+    notes
+    |> Enum.map(&note_entry/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort_by(&note_created_key/1, :desc)
+  end
+
+  @doc """
+  Inbox grouped by UTC calendar day of `created_at`.
+  Returns `[%{day_key, label, entries}]` newest day first — empty days omitted.
+  """
+  def build_home_inbox_days(notes) when is_list(notes) do
+    build_home_inbox(notes)
+    |> Enum.group_by(&created_day_key/1)
+    |> Enum.sort_by(fn {day, _} -> day end, :desc)
+    # "unknown" sorts after ISO dates when descending? "unknown" > "2024..." lexically
+    # so put unknown at the end always:
+    |> Enum.sort_by(fn {day, _} -> if day == "unknown", do: 1, else: 0 end)
+    |> Enum.map(fn {day_key, entries} ->
+      # Preserve newest-created order within the day (group_by keeps relative order)
+      %{
+        day_key: day_key,
+        label: format_inbox_day_label(day_key),
+        entries: entries
+      }
+    end)
+  end
+
+  def note_created_key(%{note: note}) do
+    case note["created_at"] do
+      at when is_binary(at) and at != "" -> at
+      _ -> ""
+    end
+  end
+
+  def note_created_key(_), do: ""
+
+  def created_day_key(%{note: note}) do
+    case note["created_at"] do
+      <<y::binary-size(4), "-", m::binary-size(2), "-", d::binary-size(2), _::binary>>
+      when y != "" ->
+        "#{y}-#{m}-#{d}"
+
+      at when is_binary(at) and at != "" ->
+        case DateTime.from_iso8601(normalize_iso(at)) do
+          {:ok, dt, _} -> Date.to_iso8601(DateTime.to_date(dt))
+          _ -> "unknown"
+        end
+
+      _ ->
+        "unknown"
+    end
+  end
+
+  def created_day_key(_), do: "unknown"
+
+  defp normalize_iso(at) do
+    s = String.replace(at, " ", "T")
+
+    cond do
+      String.ends_with?(s, "Z") -> s
+      Regex.match?(~r/[+-]\d{2}:?\d{2}$/, s) -> s
+      true -> s <> "Z"
+    end
+  end
+
+  def format_inbox_day_label("unknown"), do: "Unknown date"
+
+  def format_inbox_day_label(<<y::binary-size(4), "-", m::binary-size(2), "-", d::binary-size(2)>>) do
+    case Date.from_iso8601("#{y}-#{m}-#{d}") do
+      {:ok, date} ->
+        today = Date.utc_today()
+
+        cond do
+          date == today ->
+            "Today"
+
+          date == Date.add(today, -1) ->
+            "Yesterday"
+
+          true ->
+            # "Tue · Aug 4" / with year when not current year
+            mon = ~w(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec) |> Enum.at(date.month - 1)
+            wday = ~w(Mon Tue Wed Thu Fri Sat Sun) |> Enum.at(Date.day_of_week(date) - 1)
+
+            if date.year == today.year do
+              "#{wday} · #{mon} #{date.day}"
+            else
+              "#{wday} · #{mon} #{date.day}, #{date.year}"
+            end
+        end
+
+      _ ->
+        "#{y}-#{m}-#{d}"
+    end
+  end
+
+  def format_inbox_day_label(other), do: to_string(other)
+
   def excerpt(note) do
     cond do
       Note.encrypted?(note) ->

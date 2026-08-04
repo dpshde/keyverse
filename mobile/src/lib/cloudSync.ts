@@ -170,31 +170,37 @@ export async function enableCloudAndSync(
     pushed++;
   }
 
-  // Pull cloud → local (union)
-  let pulled = 0;
+  // Pull cloud → local (union): fetch notes in parallel, bulk-write once
   const remote = await client.listNotes();
-  for (const rn of remote) {
-    const slug = rn.scope?.slug;
-    if (!slug) continue;
-    const full = await client.getNote(slug).catch(() => rn);
-    await Local.upsertNoteRecord(full);
-    // pull file bytes
-    for (const a of full.attachments || []) {
-      if (a.kind === "file" && a.sha256) {
+  const fullNotes: Note[] = (
+    await Promise.all(
+      remote.map(async (rn) => {
+        const slug = rn.scope?.slug;
+        if (!slug) return null;
+        return client.getNote(slug).catch(() => rn);
+      })
+    )
+  ).filter((n): n is Note => !!n);
+
+  const pulled = await Local.bulkUpsertNotes(fullNotes);
+
+  // Attachment blobs — parallel, skip ones already on device
+  await Promise.all(
+    fullNotes.flatMap((full) =>
+      (full.attachments || []).map(async (a) => {
+        if (a.kind !== "file" || !a.sha256) return;
         const existing = await Local.readAttachmentBytes(a.sha256);
-        if (!existing) {
-          try {
-            const bytes = await client.getAttachmentBytes(a.sha256);
-            await Local.saveAttachmentBytes(a.sha256, bytes);
-            attN++;
-          } catch {
-            /* skip */
-          }
+        if (existing) return;
+        try {
+          const bytes = await client.getAttachmentBytes(a.sha256);
+          await Local.saveAttachmentBytes(a.sha256, bytes);
+          attN++;
+        } catch {
+          /* skip */
         }
-      }
-    }
-    pulled++;
-  }
+      })
+    )
+  );
 
   await Local.setMeta({
     cloud: {
