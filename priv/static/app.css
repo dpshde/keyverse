@@ -292,6 +292,32 @@
     font-size: 1.2rem;
     line-height: 1;
   }
+  .reader-head .head-icon-btn .head-svg {
+    display: block;
+    width: 1.2rem;
+    height: 1.2rem;
+    flex-shrink: 0;
+  }
+  /* Chapter note + expand-all: ink glyph only — never a filled wash/bg */
+  .reader-head .head-icon-btn.head-icon-plain,
+  .reader-head .head-icon-btn.head-icon-plain:hover,
+  .reader-head .head-icon-btn.head-icon-plain:active,
+  .reader-head .head-icon-btn.head-icon-plain.is-active,
+  .reader-head .reader-expand-all.head-icon-plain[aria-pressed="true"],
+  .reader-head .reader-expand-all.head-icon-plain[aria-pressed="true"]:hover {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .reader-head .head-icon-btn.head-icon-plain:hover {
+    opacity: 1;
+    color: inherit;
+  }
+  .reader-head .head-icon-btn.head-icon-plain:active {
+    opacity: .55;
+  }
+  .reader-head .reader-expand-all.head-icon-plain[aria-pressed="true"] {
+    opacity: 1;
+  }
   /* Back: slot stays full width; glyph is the real control surface */
   .reader-head > .reader-back.head-icon-btn {
     width: 7.5rem;
@@ -345,24 +371,14 @@
       background: color-mix(in srgb, currentColor 8%, transparent);
     }
   }
-  /* Expand-all notes — same icon chrome as share / chapter (no text pill) */
+  /* Expand-all notes — icon only, no filled plate */
   .reader-expand-all {
     appearance: none;
     border: 0;
     cursor: pointer;
     font: inherit;
     color: inherit;
-  }
-  .reader-expand-all[aria-pressed="true"] {
-    opacity: 1;
-    background: color-mix(in srgb, currentColor 10%, transparent);
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .reader-expand-all[aria-pressed="true"]:hover {
-      background: color-mix(in srgb, currentColor 14%, transparent);
-      color: inherit;
-      opacity: 1;
-    }
+    background: transparent;
   }
   /* Icon/back controls — quiet on desktop, enlarged on touch (see mobile adapt) */
   .reader-back,
