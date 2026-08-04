@@ -10,6 +10,8 @@
     var seq = 0;
     var base = typeof BASE === "string" ? BASE : "";
 
+    var root = input.closest(".ref-search") || form.parentElement;
+
     function hide() {
       list.hidden = true;
       list.innerHTML = "";
@@ -17,6 +19,7 @@
       active = -1;
       input.setAttribute("aria-expanded", "false");
       input.removeAttribute("aria-activedescendant");
+      if (root) root.classList.remove("is-open");
     }
 
     function kindLabel(k) {
@@ -30,6 +33,7 @@
       if (!items.length) { hide(); return; }
       list.hidden = false;
       input.setAttribute("aria-expanded", "true");
+      if (root) root.classList.add("is-open");
       list.innerHTML = items.map(function (s, i) {
         var id = "ref-opt-" + i;
         var sel = i === active ? ' aria-selected="true"' : ' aria-selected="false"';

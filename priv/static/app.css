@@ -901,22 +901,36 @@
   .ref-search input[type=text]:hover {
     border-color: color-mix(in srgb, var(--ink) 18%, transparent);
   }
-  .ref-search input[type=text]:focus {
+  .ref-search input[type=text]:focus,
+  .ref-search #ref-input:focus {
     outline: none;
     border-color: color-mix(in srgb, var(--ink) 36%, transparent);
     box-shadow:
       var(--card-shadow),
       0 0 0 3px color-mix(in srgb, var(--ink) 8%, transparent);
   }
-  .ref-search input[aria-expanded="true"] {
+  /* Suggestions open — square the bottom so field + list read as one panel */
+  .ref-search input[type=text][aria-expanded="true"],
+  .ref-search #ref-input[aria-expanded="true"],
+  .ref-search.is-open input[type=text],
+  .ref-search.is-open #ref-input {
     border-radius: var(--rs-radius) var(--rs-radius) 0 0;
-    border-bottom-color: color-mix(in srgb, var(--ink) 10%, transparent);
+    border-bottom-color: transparent;
+    box-shadow: none;
+  }
+  .ref-search.is-open input[type=text]:focus,
+  .ref-search.is-open #ref-input:focus,
+  .ref-search input[type=text][aria-expanded="true"]:focus,
+  .ref-search #ref-input[aria-expanded="true"]:focus {
+    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
+    border-bottom-color: transparent;
+    box-shadow: none;
   }
   .ref-suggest {
     position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
     margin: -1px 0 0; padding: 0; list-style: none;
     border: 1px solid var(--rs-border);
-    border-top: 0;
+    border-top: 1px solid var(--line-soft);
     border-radius: 0 0 var(--rs-radius) var(--rs-radius);
     background: var(--paper-raised);
     box-shadow: 0 .4rem 1.25rem color-mix(in srgb, #000 10%, transparent);
