@@ -369,7 +369,6 @@ defmodule Keyverse.Html do
   def render_index(pack_dir, door, base) do
     notes = Note.list(pack_dir)
     tree = home_tree_html(notes, base)
-    man = Keyverse.PackTransfer.manifest(pack_dir)
 
     body = """
     <header class="ui home-head">
