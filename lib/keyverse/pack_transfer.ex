@@ -3,16 +3,17 @@ defmodule Keyverse.PackTransfer do
   User-owned pack import/export.
 
   The pack directory is the product. Export produces a portable zip of **user
-  data** only (protocol.json, door, notes/, attachments/). Disposable scripture
-  cache (`text/`, host `_cache/`) is never included.
+  data** only (protocol.json, door, notes/, attachments/, ops/). Disposable
+  scripture cache (`text/`, host `_cache/`) is never included.
 
-  Import restores a zip into a pack directory (merge or replace).
+  Import restores a zip into a pack directory (merge or replace). Merge unions
+  op records by content hash (PROTOCOL §10.7) — union *is* merge.
   """
 
   alias Keyverse.Pack
 
   @user_files ~w(protocol.json door)
-  @user_dirs ~w(notes attachments)
+  @user_dirs ~w(notes attachments ops)
 
   @doc """
   Build an in-memory zip of user-owned pack contents.
@@ -56,8 +57,11 @@ defmodule Keyverse.PackTransfer do
 
   Options:
   - `:mode` — `:merge` (default) overwrites files present in the zip;
-    `:replace` clears `notes/` and `attachments/` first (keeps door if zip lacks it)
+    `:replace` clears `notes/`, `attachments/`, and `ops/` first (keeps door if zip lacks it)
   - `:validate` — run conformance after import (default true)
+
+  Zip entry paths may be flat (`notes/…`) or wrapped in a single top-level folder
+  (`my-pack/notes/…`) as when a user compresses a pack directory in Finder.
   """
   def import_zip(pack_dir, zip_binary, opts \\ []) when is_binary(zip_binary) do
     pack_dir = Path.expand(pack_dir)
@@ -85,6 +89,7 @@ defmodule Keyverse.PackTransfer do
           if mode == :replace do
             File.rm_rf!(Path.join(pack_dir, "notes"))
             File.rm_rf!(Path.join(pack_dir, "attachments"))
+            File.rm_rf!(Path.join(pack_dir, "ops"))
           end
 
           Enum.each(normalized, fn {rel, data} ->
@@ -197,7 +202,7 @@ defmodule Keyverse.PackTransfer do
       attachment_bytes: att_bytes,
       user_owned: true,
       export: %{
-        includes: ["protocol.json", "door", "notes/", "attachments/"],
+        includes: ["protocol.json", "door", "notes/", "attachments/", "ops/"],
         excludes: ["text/", "_cache/", ".git/"]
       }
     }
@@ -250,11 +255,13 @@ defmodule Keyverse.PackTransfer do
   end
 
   # Only allow pack-relative user paths; reject absolute / .. / host junk.
+  # Accepts a single wrapper directory (Finder "Compress" of a pack folder).
   defp safe_rel(name) do
     name =
       name
       |> String.replace("\\", "/")
       |> String.trim_leading("/")
+      |> strip_wrapper_dir()
 
     cond do
       name == "" ->
@@ -269,10 +276,16 @@ defmodule Keyverse.PackTransfer do
       name in @user_files ->
         name
 
-      String.starts_with?(name, "notes/") and not String.contains?(name, "//") ->
+      String.starts_with?(name, "notes/") and not String.contains?(name, "//") and
+          String.ends_with?(name, ".json") ->
         name
 
-      String.starts_with?(name, "attachments/") and Regex.match?(~r/^attachments\/[a-f0-9]{64}$/, name) ->
+      String.starts_with?(name, "attachments/") and
+          Regex.match?(~r/^attachments\/[a-f0-9]{64}$/, name) ->
+        name
+
+      String.starts_with?(name, "ops/") and
+          Regex.match?(~r/^ops\/[a-z0-9][a-z0-9.\-]*\/[a-f0-9]{64}\.json$/, name) ->
         name
 
       # zip may include directory markers
@@ -282,5 +295,34 @@ defmodule Keyverse.PackTransfer do
       true ->
         nil
     end
+  end
+
+  # e.g. "my-pack/notes/jhn.3.16.json" → "notes/jhn.3.16.json"
+  # Flat export paths and junk (__MACOSX/…) are left unchanged.
+  defp strip_wrapper_dir(name) do
+    if pack_root_entry?(name) do
+      name
+    else
+      case String.split(name, "/", parts: 2) do
+        [wrapper, rest] when wrapper != "" and rest != "" ->
+          if not String.contains?(wrapper, "..") and pack_root_entry?(rest) do
+            rest
+          else
+            name
+          end
+
+        _ ->
+          name
+      end
+    end
+  end
+
+  defp pack_root_entry?(path) do
+    path in @user_files or
+      path in @user_dirs or
+      path in Enum.map(@user_dirs, &(&1 <> "/")) or
+      String.starts_with?(path, "notes/") or
+      String.starts_with?(path, "attachments/") or
+      String.starts_with?(path, "ops/")
   end
 end

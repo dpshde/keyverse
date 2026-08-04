@@ -43,6 +43,13 @@ defmodule Keyverse.Protocol.Conformance do
         validate_notes_tree(pack_dir, errors, warnings)
       end
 
+    {errors, warnings} =
+      if Enum.any?(errors, &(&1.code == "not_a_directory")) do
+        {errors, warnings}
+      else
+        validate_ops_tree(pack_dir, errors, warnings)
+      end
+
     %{
       ok?: errors == [],
       pack: pack_dir,
@@ -65,13 +72,25 @@ defmodule Keyverse.Protocol.Conformance do
 
         cond do
           expect["must_pass"] == false ->
-            %{dir: dir, kind: :valid, ok?: false, reason: "expect.json says must_pass:false", report: report}
+            %{
+              dir: dir,
+              kind: :valid,
+              ok?: false,
+              reason: "expect.json says must_pass:false",
+              report: report
+            }
 
-          report.ok? ->
-            %{dir: dir, kind: :valid, ok?: true, report: report}
+          not report.ok? ->
+            %{dir: dir, kind: :valid, ok?: false, reason: "expected pass", report: report}
 
           true ->
-            %{dir: dir, kind: :valid, ok?: false, reason: "expected pass", report: report}
+            case check_fold_vectors(dir, expect["fold"]) do
+              :ok ->
+                %{dir: dir, kind: :valid, ok?: true, report: report}
+
+              {:error, reason} ->
+                %{dir: dir, kind: :valid, ok?: false, reason: reason, report: report}
+            end
         end
       end)
 
@@ -92,7 +111,8 @@ defmodule Keyverse.Protocol.Conformance do
               dir: dir,
               kind: :invalid,
               ok?: false,
-              reason: "missing error codes #{inspect(want)}; got #{inspect(MapSet.to_list(codes))}",
+              reason:
+                "missing error codes #{inspect(want)}; got #{inspect(MapSet.to_list(codes))}",
               report: report
             }
 
@@ -145,17 +165,32 @@ defmodule Keyverse.Protocol.Conformance do
             warnings =
               if is_binary(doc["schemas"]),
                 do: warnings,
-                else: [warning("missing_schemas_field", "protocol.json", "schemas field recommended") | warnings]
+                else: [
+                  warning("missing_schemas_field", "protocol.json", "schemas field recommended")
+                  | warnings
+                ]
 
             {errors, warnings}
 
           {:ok, %{"protocol" => other}} ->
-            {[error("bad_protocol_name", "protocol.json", "protocol must be \"keyverse\", got #{inspect(other)}") | errors],
-             warnings}
+            {[
+               error(
+                 "bad_protocol_name",
+                 "protocol.json",
+                 "protocol must be \"keyverse\", got #{inspect(other)}"
+               )
+               | errors
+             ], warnings}
 
           {:ok, _} ->
-            {[error("protocol_missing_fields", "protocol.json", "protocol and version are required") | errors],
-             warnings}
+            {[
+               error(
+                 "protocol_missing_fields",
+                 "protocol.json",
+                 "protocol and version are required"
+               )
+               | errors
+             ], warnings}
 
           {:error, _} ->
             {[error("protocol_not_json", "protocol.json", "invalid JSON") | errors], warnings}
@@ -164,9 +199,20 @@ defmodule Keyverse.Protocol.Conformance do
       {:error, :enoent} ->
         # Allowed if notes/ exists (legacy); warn
         if File.dir?(Path.join(pack_dir, "notes")) do
-          {errors, [warning("missing_protocol_json", "protocol.json", "missing; recommended for discovery") | warnings]}
+          {errors,
+           [
+             warning(
+               "missing_protocol_json",
+               "protocol.json",
+               "missing; recommended for discovery"
+             )
+             | warnings
+           ]}
         else
-          {[error("missing_protocol_json", "protocol.json", "missing protocol.json and notes/") | errors], warnings}
+          {[
+             error("missing_protocol_json", "protocol.json", "missing protocol.json and notes/")
+             | errors
+           ], warnings}
         end
 
       {:error, reason} ->
@@ -246,9 +292,17 @@ defmodule Keyverse.Protocol.Conformance do
 
         errors =
           case scope["kind"] do
-            k when k in ["verse", "range", "chapter"] -> errors
-            nil -> errors
-            other -> [error("bad_scope_kind", "#{rel}#scope.kind", "invalid kind #{inspect(other)}") | errors]
+            k when k in ["verse", "range", "chapter"] ->
+              errors
+
+            nil ->
+              errors
+
+            other ->
+              [
+                error("bad_scope_kind", "#{rel}#scope.kind", "invalid kind #{inspect(other)}")
+                | errors
+              ]
           end
 
         errors =
@@ -298,7 +352,10 @@ defmodule Keyverse.Protocol.Conformance do
         warnings =
           cond do
             is_list(note["blocks"]) and note["blocks"] != [] ->
-              [warning("sealed_nonempty_blocks", rel, "encrypted notes should use blocks:[]") | warnings]
+              [
+                warning("sealed_nonempty_blocks", rel, "encrypted notes should use blocks:[]")
+                | warnings
+              ]
 
             true ->
               warnings
@@ -315,7 +372,11 @@ defmodule Keyverse.Protocol.Conformance do
               {validate_blocks(blocks, rel, errors), warnings}
 
             is_binary(body) ->
-              {errors, [warning("legacy_body", rel, "legacy body; clients MUST hydrate to blocks") | warnings]}
+              {errors,
+               [
+                 warning("legacy_body", rel, "legacy body; clients MUST hydrate to blocks")
+                 | warnings
+               ]}
 
             true ->
               # empty note file is odd but allow if only metadata — flag warning
@@ -351,9 +412,14 @@ defmodule Keyverse.Protocol.Conformance do
 
     errors =
       case cipher["v"] do
-        nil -> errors
-        1 -> errors
-        other -> [error("cipher_bad_v", "#{path}.v", "expected 1, got #{inspect(other)}") | errors]
+        nil ->
+          errors
+
+        1 ->
+          errors
+
+        other ->
+          [error("cipher_bad_v", "#{path}.v", "expected 1, got #{inspect(other)}") | errors]
       end
 
     errors
@@ -387,7 +453,14 @@ defmodule Keyverse.Protocol.Conformance do
                   [error("block_indent_range", "#{path}.indent", "indent out of range") | a]
 
                 is_integer(prev_indent) and indent > prev_indent + 1 ->
-                  [error("block_indent_jump", "#{path}.indent", "indent may increase by at most 1") | a]
+                  [
+                    error(
+                      "block_indent_jump",
+                      "#{path}.indent",
+                      "indent may increase by at most 1"
+                    )
+                    | a
+                  ]
 
                 true ->
                   a
@@ -396,7 +469,10 @@ defmodule Keyverse.Protocol.Conformance do
             |> then(fn a ->
               if is_binary(b["text"]) do
                 if String.contains?(b["text"], "\n"),
-                  do: [error("block_multiline_text", "#{path}.text", "text must be a single line") | a],
+                  do: [
+                    error("block_multiline_text", "#{path}.text", "text must be a single line")
+                    | a
+                  ],
                   else: a
               else
                 [error("block_missing_text", "#{path}.text", "text required") | a]
@@ -428,7 +504,9 @@ defmodule Keyverse.Protocol.Conformance do
       "file" ->
         errors =
           Enum.reduce(["name", "mime"], errors, fn k, acc ->
-            if is_binary(att[k]), do: acc, else: [error("att_missing_#{k}", "#{path}.#{k}", "required") | acc]
+            if is_binary(att[k]),
+              do: acc,
+              else: [error("att_missing_#{k}", "#{path}.#{k}", "required") | acc]
           end)
 
         errors =
@@ -442,7 +520,14 @@ defmodule Keyverse.Protocol.Conformance do
               if File.regular?(blob) do
                 errors
               else
-                [error("missing_cas_blob", "attachments/#{att["sha256"]}", "CAS blob missing for file attachment") | errors]
+                [
+                  error(
+                    "missing_cas_blob",
+                    "attachments/#{att["sha256"]}",
+                    "CAS blob missing for file attachment"
+                  )
+                  | errors
+                ]
               end
           end
 
@@ -460,8 +545,267 @@ defmodule Keyverse.Protocol.Conformance do
         end
 
       other ->
-        [error("att_bad_kind", "#{path}.kind", "kind must be file|url, got #{inspect(other)}") | errors]
+        [
+          error("att_bad_kind", "#{path}.kind", "kind must be file|url, got #{inspect(other)}")
+          | errors
+        ]
     end
+  end
+
+  # --- ops/ (append-only op log, PROTOCOL §10) ------------------------------
+
+  @op_known ~w(insert set_text set_indent set_collapsed move delete put_attachment remove_attachment)
+
+  defp validate_ops_tree(pack_dir, errors, warnings) do
+    ops_root = Path.join(pack_dir, "ops")
+
+    cond do
+      not File.dir?(ops_root) ->
+        # ops/ is optional (0.2 packs, snapshot-only clients)
+        {errors, warnings}
+
+      true ->
+        case File.ls(ops_root) do
+          {:ok, names} ->
+            Enum.reduce(Enum.sort(names), {errors, warnings}, fn name, {e, w} ->
+              dir = Path.join(ops_root, name)
+
+              cond do
+                not File.dir?(dir) ->
+                  {[
+                     error(
+                       "ops_stray_file",
+                       "ops/#{name}",
+                       "ops/ may only contain <slug>/ directories"
+                     )
+                     | e
+                   ], w}
+
+                not Regex.match?(@slug_re, name) ->
+                  {[
+                     error(
+                       "ops_bad_slug_dir",
+                       "ops/#{name}/",
+                       "directory name is not a valid slug"
+                     )
+                     | e
+                   ], w}
+
+                true ->
+                  validate_ops_slug_dir(pack_dir, name, e, w)
+              end
+            end)
+
+          {:error, reason} ->
+            {[error("ops_unreadable", "ops/", inspect(reason)) | errors], warnings}
+        end
+    end
+  end
+
+  defp validate_ops_slug_dir(pack_dir, slug, errors, warnings) do
+    dir = Path.join([pack_dir, "ops", slug])
+
+    case File.ls(dir) do
+      {:ok, files} ->
+        validate_ops_files(pack_dir, dir, slug, Enum.sort(files), errors, warnings)
+
+      {:error, reason} ->
+        {[error("ops_unreadable", "ops/#{slug}/", inspect(reason)) | errors], warnings}
+    end
+  end
+
+  defp validate_ops_files(pack_dir, dir, slug, files, errors, warnings) do
+    hashes = MapSet.new(files, &String.trim_trailing(&1, ".json"))
+
+    {errors, warnings, records} =
+      Enum.reduce(files, {errors, warnings, []}, fn file, {e, w, recs} ->
+        rel = "ops/#{slug}/#{file}"
+        name_hash = String.trim_trailing(file, ".json")
+
+        cond do
+          not String.ends_with?(file, ".json") or not Regex.match?(@sha_re, name_hash) ->
+            {[error("op_bad_filename", rel, "op files must be named <sha256>.json") | e], w, recs}
+
+          true ->
+            body = File.read!(Path.join(dir, file))
+            actual = :crypto.hash(:sha256, body) |> Base.encode16(case: :lower)
+
+            e =
+              if actual == name_hash,
+                do: e,
+                else: [error("op_hash_mismatch", rel, "sha256 of file bytes is #{actual}") | e]
+
+            case Jason.decode(body) do
+              {:ok, record} when is_map(record) ->
+                {e, w} = validate_op_record(rel, slug, record, hashes, e, w)
+                {e, w, [%{hash: name_hash, record: record} | recs]}
+
+              {:ok, _} ->
+                {[error("op_not_object", rel, "op record must be a JSON object") | e], w, recs}
+
+              {:error, _} ->
+                {[error("op_not_json", rel, "invalid JSON") | e], w, recs}
+            end
+        end
+      end)
+
+    check_fold_vs_snapshot(pack_dir, slug, records, errors, warnings)
+  end
+
+  defp validate_op_record(rel, slug, record, hashes, errors, warnings) do
+    errors =
+      if record["v"] == 1,
+        do: errors,
+        else: [error("op_bad_version", "#{rel}.v", "op record v must be 1") | errors]
+
+    errors =
+      if record["slug"] == slug,
+        do: errors,
+        else: [
+          error("op_slug_mismatch", "#{rel}.slug", "record slug must match ops/<slug>/ directory")
+          | errors
+        ]
+
+    parents = record["parents"]
+
+    errors =
+      if is_list(parents) and Enum.all?(parents, &(is_binary(&1) and Regex.match?(@sha_re, &1))),
+        do: errors,
+        else: [
+          error("op_bad_parents", "#{rel}.parents", "parents must be a list of sha256 hex hashes")
+          | errors
+        ]
+
+    warnings =
+      if is_list(parents) do
+        parents
+        |> Enum.reject(&(not is_binary(&1) or MapSet.member?(hashes, &1)))
+        |> Enum.reduce(warnings, fn p, w ->
+          [
+            warning(
+              "op_parent_missing",
+              "#{rel}.parents",
+              "parent #{p} not present (dangling is legal)"
+            )
+            | w
+          ]
+        end)
+      else
+        warnings
+      end
+
+    errors =
+      if is_integer(record["lamport"]) and record["lamport"] >= 1,
+        do: errors,
+        else: [
+          error("op_bad_lamport", "#{rel}.lamport", "lamport must be an integer >= 1") | errors
+        ]
+
+    case record["ops"] do
+      ops when is_list(ops) and ops != [] ->
+        ops
+        |> Enum.with_index()
+        |> Enum.reduce({errors, warnings}, fn {op, i}, {e, w} ->
+          validate_primitive(rel, i, op, e, w)
+        end)
+
+      _ ->
+        {[error("op_bad_ops", "#{rel}.ops", "ops must be a non-empty array") | errors], warnings}
+    end
+  end
+
+  defp validate_primitive(rel, i, op, errors, warnings) do
+    path = "#{rel}.ops[#{i}]"
+
+    cond do
+      not is_map(op) or not is_binary(op["op"]) ->
+        {[error("op_bad_primitive", path, "primitive must be an object with string op") | errors],
+         warnings}
+
+      op["op"] not in @op_known ->
+        # forward compatibility: folds treat unknown primitives as no-ops
+        {errors,
+         [warning("op_unknown_primitive", path, "unknown primitive #{op["op"]}") | warnings]}
+
+      true ->
+        required =
+          case op["op"] do
+            "insert" -> ["block", "text"]
+            "set_text" -> ["block", "text"]
+            "set_indent" -> ["block", "indent"]
+            "set_collapsed" -> ["block", "collapsed"]
+            "move" -> ["block"]
+            "delete" -> ["block"]
+            "put_attachment" -> ["attachment"]
+            "remove_attachment" -> ["id"]
+          end
+
+        missing = Enum.reject(required, &Map.has_key?(op, &1))
+
+        if missing == [] do
+          {errors, warnings}
+        else
+          {[
+             error("op_bad_primitive", path, "#{op["op"]} missing #{Enum.join(missing, ", ")}")
+             | errors
+           ], warnings}
+        end
+    end
+  end
+
+  # expect.json "fold" vectors: {"<slug>": <clean state>}. A conforming fold
+  # implementation MUST materialize exactly this state from ops/<slug>/.
+  defp check_fold_vectors(_dir, nil), do: :ok
+
+  defp check_fold_vectors(dir, vectors) when is_map(vectors) do
+    Enum.reduce_while(vectors, :ok, fn {slug, expected}, :ok ->
+      records = Keyverse.OpLog.list(dir, slug)
+      folded = Keyverse.Fold.materialize(Keyverse.Fold.fold(records))
+
+      if Keyverse.Fold.equal?(folded, expected) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, "fold vector mismatch for #{slug}: got #{Jason.encode!(folded)}"}}
+      end
+    end)
+  end
+
+  defp check_fold_vectors(_dir, _), do: {:error, "expect.json fold must be an object"}
+
+  # The snapshot may legitimately be ahead of the log (out-of-band edit not
+  # yet reconciled), so divergence is a warning, not an error.
+  defp check_fold_vs_snapshot(pack_dir, slug, records, errors, warnings) do
+    folded = Keyverse.Fold.materialize(Keyverse.Fold.fold(records))
+    note_path = Path.join([pack_dir, "notes", "#{slug}.json"])
+
+    snapshot =
+      with {:ok, body} <- File.read(note_path),
+           {:ok, note} when is_map(note) <- Jason.decode(body) do
+        if note["cipher"], do: :sealed, else: Keyverse.Fold.state_from_note(note)
+      else
+        _ -> Keyverse.Fold.state_from_note(nil)
+      end
+
+    warnings =
+      cond do
+        snapshot == :sealed ->
+          warnings
+
+        Keyverse.Fold.equal?(folded, snapshot) ->
+          warnings
+
+        true ->
+          [
+            warning(
+              "snapshot_fold_divergence",
+              "ops/#{slug}/",
+              "fold of op log differs from notes/#{slug}.json snapshot"
+            )
+            | warnings
+          ]
+      end
+
+    {errors, warnings}
   end
 
   defp require_string(errors, map, key, path, code) do
@@ -473,9 +817,13 @@ defmodule Keyverse.Protocol.Conformance do
   end
 
   defp require_map(errors, map, key, path, code) do
-    if is_map(map[key]), do: errors, else: [error(code, "#{path}.#{key}", "#{key} required object") | errors]
+    if is_map(map[key]),
+      do: errors,
+      else: [error(code, "#{path}.#{key}", "#{key} required object") | errors]
   end
 
   defp error(code, path, message), do: %{code: code, path: path, message: message, level: "error"}
-  defp warning(code, path, message), do: %{code: code, path: path, message: message, level: "warning"}
+
+  defp warning(code, path, message),
+    do: %{code: code, path: path, message: message, level: "warning"}
 end

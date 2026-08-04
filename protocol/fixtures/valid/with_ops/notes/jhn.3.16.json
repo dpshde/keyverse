@@ -1,0 +1,28 @@
+{
+  "attachments": [],
+  "blocks": [
+    {
+      "id": "b1",
+      "indent": 0,
+      "text": "For God so loved"
+    },
+    {
+      "id": "b2",
+      "indent": 1,
+      "text": "the world"
+    },
+    {
+      "id": "b3",
+      "indent": 1,
+      "text": "that he gave"
+    }
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "id": "note_ops1",
+  "scope": {
+    "kind": "verse",
+    "osis": "JHN.3.16",
+    "slug": "jhn.3.16"
+  },
+  "updated_at": "2026-01-01T00:00:00Z"
+}

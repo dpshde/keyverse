@@ -293,6 +293,73 @@ export class KeyverseClient {
     if (!res.ok) throw new ApiError(res.status, await parseBody(res));
     return res.arrayBuffer();
   }
+
+  /**
+   * Contribution heatmap. Default = calendar YTD (Jan 1 → today).
+   * Pass `days` only for a trailing N-day window.
+   */
+  async activityHeatmap(days?: number): Promise<{
+    days: { date: string; count: number; level: number }[];
+    total: number;
+    notes_taken_ytd: number;
+    /** @deprecated use notes_taken_ytd */
+    lines_added_ytd?: number;
+    ytd_from: string;
+    ytd_to: string;
+    from: string;
+    to: string;
+    source: string;
+  }> {
+    const q = days != null ? `?days=${days}` : "";
+    const { body } = await this.req("GET", `/api/activity${q}`);
+    return body as {
+      days: { date: string; count: number; level: number }[];
+      total: number;
+      notes_taken_ytd: number;
+      lines_added_ytd?: number;
+      ytd_from: string;
+      ytd_to: string;
+      from: string;
+      to: string;
+      source: string;
+    };
+  }
+
+  /** Events for one UTC day, with before/after outline text when ops exist. */
+  async activityDay(date: string): Promise<{
+    date: string;
+    count: number;
+    events: {
+      kind: string;
+      slug: string;
+      label: string;
+      at: string;
+      hash?: string | null;
+      summary: string;
+      before_text?: string | null;
+      after_text?: string | null;
+      encrypted?: boolean;
+      has_diff?: boolean;
+    }[];
+  }> {
+    const { body } = await this.req("GET", `/api/activity?date=${encodeURIComponent(date)}`);
+    return body as {
+      date: string;
+      count: number;
+      events: {
+        kind: string;
+        slug: string;
+        label: string;
+        at: string;
+        hash?: string | null;
+        summary: string;
+        before_text?: string | null;
+        after_text?: string | null;
+        encrypted?: boolean;
+        has_diff?: boolean;
+      }[];
+    };
+  }
 }
 
 export function hydrateBlocks(note: Note): Block[] {

@@ -1,0 +1,25 @@
+{
+  "fold": {
+    "jhn.3.16": {
+      "attachments": [],
+      "blocks": [
+        {
+          "id": "b1",
+          "indent": 0,
+          "text": "For God so loved"
+        },
+        {
+          "id": "b2",
+          "indent": 1,
+          "text": "the world"
+        },
+        {
+          "id": "b3",
+          "indent": 1,
+          "text": "that he gave"
+        }
+      ]
+    }
+  },
+  "must_pass": true
+}

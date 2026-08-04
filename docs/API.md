@@ -166,6 +166,34 @@ Raw bytes. `?name=` optional download name.
 | `400` | invalid hash |
 | `404` | blob missing |
 
+## Activity (contribution graph)
+
+Heatmap of note edits over time, driven primarily by `ops/**` wall-clock `at`
+(PROTOCOL §10) and falling back to note `created_at` / `updated_at` when a
+slug has no op log. UI: `GET /{door}/activity` (web) and the mobile Activity
+screen.
+
+### `GET /api/activity`
+
+Heatmap defaults to **calendar YTD** (UTC Jan 1 → today). Optional `?days=N` for a trailing window.
+
+| Status | Body |
+|--------|------|
+| `200` | `{ days: [{ date, count, level }], total, notes_taken_ytd, ytd_from, ytd_to, from, to, source }` |
+
+`level` is 0–4 (GitHub-style intensity). `source` is `ops`, `notes`, or `mixed`.  
+`notes_taken_ytd` is unique notes first written year-to-date — used for the activity lead.
+
+### `GET /api/activity?date=YYYY-MM-DD`
+
+Day detail. Op-backed events include `before_text` / `after_text` (outline form)
+for line diffs; `has_diff` is true when those differ.
+
+| Status | Body |
+|--------|------|
+| `200` | `{ date, count, events: [{ kind, slug, label, at, summary, before_text, after_text, has_diff, … }] }` |
+| `400` | invalid date |
+
 ## Pack ownership (export / import)
 
 User-owned transfer profile. See [OWNERSHIP.md](./OWNERSHIP.md).
@@ -180,7 +208,8 @@ Manifest of the current pack (counts + export include list).
 
 ### `GET /api/pack/export`
 
-Zip of user data only: `protocol.json`, `door`, `notes/**`, `attachments/**`.
+Zip of user data only: `protocol.json`, `door`, `notes/**`, `attachments/**`,
+`ops/**`.
 
 | Status | Body |
 |--------|------|

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://keyverse.local/schemas/op.schema.json",
+  "title": "keyverse op record",
+  "description": "Append-only op record under pack/ops/<slug>/<hash>.json. Filename hash = SHA-256 of the record's canonical JSON encoding. See PROTOCOL.md §10.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["v", "slug", "parents", "lamport", "ops"],
+  "properties": {
+    "v": {
+      "type": "integer",
+      "const": 1,
+      "description": "Op record version"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.\\-]*$",
+      "description": "Note slug this record belongs to; must match the ops/<slug>/ directory"
+    },
+    "parents": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+      "description": "Hashes of the records this one causally follows. [] for a root record. Concurrent records share parents; the fold orders them by (lamport, hash)."
+    },
+    "lamport": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "max(lamport of all records seen for this note) + 1 at creation"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Wall-clock creation time. Informational only; NEVER used for ordering."
+    },
+    "implicit": {
+      "type": "boolean",
+      "description": "True when synthesized from an out-of-band snapshot edit (PROTOCOL §10.5)"
+    },
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/primitive" },
+      "description": "Primitive ops applied atomically in order"
+    }
+  },
+  "$defs": {
+    "block_id": { "type": "string", "pattern": "^[\\w.-]+$" },
+    "primitive": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "block", "after", "indent", "text"],
+          "properties": {
+            "op": { "const": "insert" },
+            "block": { "$ref": "#/$defs/block_id" },
+            "after": {
+              "oneOf": [{ "$ref": "#/$defs/block_id" }, { "type": "null" }],
+              "description": "Anchor block id (tombstones keep position); null = head; unknown anchor = append at end"
+            },
+            "indent": { "type": "integer", "minimum": 0, "maximum": 32 },
+            "text": { "type": "string" },
+            "collapsed": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "block", "text"],
+          "properties": {
+            "op": { "const": "set_text" },
+            "block": { "$ref": "#/$defs/block_id" },
+            "text": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "block", "indent"],
+          "properties": {
+            "op": { "const": "set_indent" },
+            "block": { "$ref": "#/$defs/block_id" },
+            "indent": { "type": "integer", "minimum": 0, "maximum": 32 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "block", "collapsed"],
+          "properties": {
+            "op": { "const": "set_collapsed" },
+            "block": { "$ref": "#/$defs/block_id" },
+            "collapsed": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "block", "after"],
+          "properties": {
+            "op": { "const": "move" },
+            "block": { "$ref": "#/$defs/block_id" },
+            "after": {
+              "oneOf": [{ "$ref": "#/$defs/block_id" }, { "type": "null" }]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "block"],
+          "properties": {
+            "op": { "const": "delete" },
+            "block": { "$ref": "#/$defs/block_id" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "attachment"],
+          "properties": {
+            "op": { "const": "put_attachment" },
+            "attachment": { "$ref": "attachment.schema.json" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["op", "id"],
+          "properties": {
+            "op": { "const": "remove_attachment" },
+            "id": { "$ref": "#/$defs/block_id" }
+          }
+        }
+      ]
+    }
+  }
+}

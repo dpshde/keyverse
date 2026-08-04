@@ -3,6 +3,7 @@ defmodule Keyverse.Router do
   use Plug.Router
 
   alias Keyverse.{
+    Activity,
     Attach,
     Config,
     Door,
@@ -75,6 +76,10 @@ defmodule Keyverse.Router do
 
   get "/home-tree.js" do
     send_static(conn, "home-tree.js", "application/javascript", "public, max-age=3600")
+  end
+
+  get "/activity.js" do
+    send_static(conn, "activity.js", "application/javascript", "public, max-age=3600")
   end
 
   get "/door-share.js" do
@@ -286,6 +291,9 @@ defmodule Keyverse.Router do
       {"GET", "/"} ->
         html(conn, 200, Html.render_index(pack_dir, door, base))
 
+      {"GET", "/activity"} ->
+        html(conn, 200, Html.render_activity(base, door))
+
       {"GET", "/manifest.webmanifest"} ->
         send_json(conn, 200, Html.web_manifest(if(base == "", do: "/", else: base <> "/")))
 
@@ -398,6 +406,31 @@ defmodule Keyverse.Router do
         man = PackTransfer.manifest(pack_dir)
         quota = PackQuota.usage(pack_dir)
         send_json(conn, 200, Map.put(man, :quota, quota))
+
+      {"GET", "/api/activity"} ->
+        conn = Plug.Conn.fetch_query_params(conn)
+
+        case conn.query_params["date"] do
+          date when is_binary(date) and date != "" ->
+            case Activity.day(pack_dir, date) do
+              {:error, :invalid_date} ->
+                send_json(conn, 400, %{error: "invalid date (use YYYY-MM-DD)"})
+
+              detail ->
+                send_json(conn, 200, detail)
+            end
+
+          _ ->
+            # Default graph window = YTD. Optional days=N for trailing window.
+            opts =
+              case conn.query_params["days"] do
+                nil -> []
+                "" -> []
+                d -> [days: parse_activity_days(d)]
+              end
+
+            send_json(conn, 200, Activity.heatmap(pack_dir, opts))
+        end
 
       {"GET", "/api/pack/export"} ->
         t0 = System.monotonic_time(:microsecond)
@@ -1062,6 +1095,7 @@ defmodule Keyverse.Router do
         metrics: true,
         pwa: true,
         local_fs_mount_ro: true,
+        activity: true,
         host: "elixir"
       },
       endpoints: [
@@ -1069,6 +1103,8 @@ defmodule Keyverse.Router do
         "GET /api/door",
         "POST /api/door/rotate",
         "GET /api/notes",
+        "GET /api/activity",
+        "GET /api/activity?date=YYYY-MM-DD",
         "GET /api/resolve?q=",
         "GET /api/suggest?q=&limit=",
         "GET /api/text/bsb/<book>/<chapter>",
@@ -1083,6 +1119,7 @@ defmodule Keyverse.Router do
         "GET /api/pack/export",
         "POST /api/pack/import",
         "GET /api/share-qr?origin=&path=",
+        "GET /activity",
         "GET /local",
         "GET /metrics",
         "GET /manifest.webmanifest",
@@ -1230,6 +1267,16 @@ defmodule Keyverse.Router do
       {:halt, conn} -> {:halt, conn}
     end
   end
+
+  defp parse_activity_days(s) when is_binary(s) do
+    case Integer.parse(s) do
+      {n, _} when n >= 7 and n <= 400 -> n
+      _ -> 365
+    end
+  end
+
+  defp parse_activity_days(n) when is_integer(n) and n >= 7 and n <= 400, do: n
+  defp parse_activity_days(_), do: 365
 
   defp html(conn, code, body) do
     conn

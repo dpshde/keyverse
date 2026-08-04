@@ -14,6 +14,7 @@ portability shows up for humans.
 | `door` | Multiword key (optional file; also directory name) |
 | `notes/*.json` | Your notes (plaintext or sealed envelopes) |
 | `attachments/<sha256>` | File bytes you attached |
+| `ops/<slug>/<sha256>.json` | Append-only edit log (merge history, PROTOCOL §10) |
 
 **Not yours / disposable:** scripture text cache (`text/`, host `_cache/`). Never
 required for a complete pack.
@@ -41,8 +42,9 @@ Export includes only user paths above. No account, no proprietary blob format.
 ## Import
 
 ### Browser
-**Import** on the home page. Merges by default. Check **Replace** to clear
-notes first.
+**Import** on the home page (accepts a pack `.zip`). Merges by default.
+Keyverse export zips work as-is; a zip of a pack folder (e.g. Finder
+**Compress**) is also accepted — the single wrapper directory is stripped.
 
 ### HTTP
 ```http

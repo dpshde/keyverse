@@ -218,7 +218,8 @@ defmodule Keyverse.Note do
                     "id" => id,
                     "kind" => "file",
                     "name" => Keyverse.Attach.sanitize_filename(raw["name"] || "file"),
-                    "mime" => Keyverse.Attach.sanitize_mime(raw["mime"] || "application/octet-stream"),
+                    "mime" =>
+                      Keyverse.Attach.sanitize_mime(raw["mime"] || "application/octet-stream"),
                     "sha256" => sha,
                     "bytes" => max(0, trunc(raw["bytes"] || 0)),
                     "created_at" => raw["created_at"] || iso_now()
@@ -271,6 +272,7 @@ defmodule Keyverse.Note do
           "updated_at" => now
         }
 
+        # Sealed notes never log plaintext ops; the log freezes (PROTOCOL §10.6).
         write!(pack_dir, note)
 
       true ->
@@ -291,6 +293,7 @@ defmodule Keyverse.Note do
 
         if blocks_empty?(blocks) and attachments == [] do
           if existing, do: delete!(pack_dir, scope.slug)
+          log_transition(pack_dir, scope.slug, existing, Keyverse.Fold.state_from_note(nil))
           {:deleted, true}
         else
           note = %{
@@ -303,9 +306,22 @@ defmodule Keyverse.Note do
           }
 
           write!(pack_dir, note)
+          log_transition(pack_dir, scope.slug, existing, Keyverse.Fold.state_from_note(note))
           {:ok, note}
         end
     end
+  end
+
+  # Append op records for a plaintext state transition (PROTOCOL §10).
+  # Unsealing (existing encrypted → plaintext) diffs from the fold state,
+  # since the sealed snapshot carries no plaintext to compare.
+  defp log_transition(pack_dir, slug, existing, after_state) do
+    before_state =
+      if existing && encrypted?(existing),
+        do: nil,
+        else: Keyverse.Fold.state_from_note(existing)
+
+    Keyverse.OpLog.record_transition!(pack_dir, slug, before_state, after_state)
   end
 
   def scope_map(scope) do
@@ -362,6 +378,7 @@ defmodule Keyverse.Note do
           }
 
           write!(pack_dir, note)
+          log_transition(pack_dir, scope.slug, existing, Keyverse.Fold.state_from_note(note))
           {:ok, note}
       end
     end)
@@ -380,9 +397,11 @@ defmodule Keyverse.Note do
         if is_nil(removed) do
           {:error, :not_found}
         else
+          before_note = note
           atts = Enum.reject(note["attachments"] || [], &(&1["id"] == att_id))
           note = note |> Map.put("attachments", atts) |> Map.put("updated_at", iso_now())
           write!(pack_dir, note)
+          log_transition(pack_dir, scope.slug, before_note, Keyverse.Fold.state_from_note(note))
 
           if removed["kind"] == "file" && removed["sha256"] do
             unless attachment_referenced?(pack_dir, removed["sha256"], scope.slug) do

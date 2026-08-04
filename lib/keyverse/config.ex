@@ -7,9 +7,15 @@ defmodule Keyverse.Config do
 
   def ip do
     case host() do
-      "0.0.0.0" -> {0, 0, 0, 0}
-      "127.0.0.1" -> {127, 0, 0, 1}
-      "::" -> {0, 0, 0, 0, 0, 0, 0, 0}
+      "0.0.0.0" ->
+        {0, 0, 0, 0}
+
+      "127.0.0.1" ->
+        {127, 0, 0, 1}
+
+      "::" ->
+        {0, 0, 0, 0, 0, 0, 0, 0}
+
       other ->
         case :inet.parse_address(String.to_charlist(other)) do
           {:ok, addr} -> addr
@@ -65,9 +71,9 @@ defmodule Keyverse.Config do
 
   def protocol_name, do: "keyverse"
 
-  # Pack format version (0.2 = ownership transfer + conformance fixtures frozen).
-  # Additive vs 0.1-demo: clients MUST ignore unknown keys.
-  def protocol_version, do: "0.2"
+  # Pack format version (0.3 = append-only op log under ops/, ADR 0020).
+  # Additive vs 0.2 and 0.1-demo: clients MUST ignore unknown keys.
+  def protocol_version, do: "0.3"
 
   def app_version do
     Application.spec(:keyverse, :vsn) |> to_string()

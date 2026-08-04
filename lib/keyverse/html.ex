@@ -374,6 +374,10 @@ defmodule Keyverse.Html do
     <header class="ui home-head">
       <h1>keyverse</h1>
       <div class="home-head-actions">
+        <a class="home-activity-link" href="#{esc(base)}/activity"
+          title="Activity" aria-label="Activity" data-testid="home-activity">
+          #{ico("chart-bar")}
+        </a>
         #{theme_seg()}
         #{door_share_chip(door)}
       </div>
@@ -391,6 +395,50 @@ defmodule Keyverse.Html do
     page("keyverse", body, base: base)
   end
 
+  @doc "Contribution graph + day detail (ops history / note touches)."
+  def render_activity(base, door) do
+    body = """
+    <header class="ui home-head">
+      <h1><a class="activity-home-link" href="#{esc(base)}/">keyverse</a></h1>
+      <div class="home-head-actions">
+        #{theme_seg()}
+        #{door_share_chip(door)}
+      </div>
+    </header>
+    <section class="activity-page" id="activity-page" data-testid="activity-page">
+      <div class="activity-head">
+        <h2 class="ui activity-title">#{ico("chart-bar")} Activity</h2>
+        <p class="muted activity-lead" id="activity-lead">Loading…</p>
+      </div>
+      <div class="activity-graph-wrap" id="activity-graph-wrap">
+        <div class="activity-graph" id="activity-graph" role="grid" aria-label="Note activity"></div>
+        <div class="activity-legend" id="activity-legend" aria-hidden="true">
+          <span>Less</span>
+          <span class="ag-cell" data-level="0"></span>
+          <span class="ag-cell" data-level="1"></span>
+          <span class="ag-cell" data-level="2"></span>
+          <span class="ag-cell" data-level="3"></span>
+          <span class="ag-cell" data-level="4"></span>
+          <span>More</span>
+        </div>
+      </div>
+      <section class="activity-day" id="activity-day" hidden>
+        <div class="activity-day-head">
+          <h3 class="ui activity-day-title" id="activity-day-title"></h3>
+          <button type="button" class="activity-day-close ui" id="activity-day-close" aria-label="Close day">#{ico("x")}</button>
+        </div>
+        <div class="activity-day-body" id="activity-day-body"></div>
+      </section>
+    </section>
+    <footer class="site-foot home-foot ui">
+      <a class="pack-own-link" href="#{esc(base)}/">#{ico_label("arrow-left", "Notes")}</a>
+    </footer>
+    <script type="module" src="/activity.js"></script>
+    """
+
+    page("keyverse · activity", body, base: base)
+  end
+
   defp theme_seg do
     # Single cycle control: system → light → dark (wired in platform.js #theme-toggle)
     """
@@ -403,10 +451,11 @@ defmodule Keyverse.Html do
     """
   end
 
-  # One home foot row: Export · Import · Install (when offered)
+  # One home foot row: Activity · Export · Import · Install (when offered)
   defp home_footer(base) do
     """
     <footer class="site-foot home-foot ui" id="pack-own">
+      <a class="pack-own-link" href="#{esc(base)}/activity">#{ico_label("chart-bar", "Activity")}</a>
       <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>#{ico_label("export", "Export")}</a>
       <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
         <label class="pack-own-link pack-own-file">

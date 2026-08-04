@@ -23,6 +23,7 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0017](./0017-browser-local-pack-mount.md) | Browser local pack mount (directory as door) | **Proposed** |
 | [0018](./0018-react-native-mobile-client.md) | React Native mobile client (web mirror) | Accepted |
 | [0019](./0019-passage-deep-link-sharing.md) | Passage deep-link sharing (verse / range / chapter) | Accepted |
+| [0020](./0020-append-only-op-log.md) | Append-only op log with deterministic fold (protocol 0.3) | Accepted |
 
 ## How to add an ADR
 

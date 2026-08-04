@@ -8,6 +8,7 @@ Machine-readable shapes for pack records. Normative prose remains [PROTOCOL.md](
 | [note.schema.json](./note.schema.json) | `pack/notes/<slug>.json` |
 | [attachment.schema.json](./attachment.schema.json) | attachment rows |
 | [cipher.schema.json](./cipher.schema.json) | encrypted note `cipher` |
+| [op.schema.json](./op.schema.json) | `pack/ops/<slug>/<sha256>.json` op records (PROTOCOL §10) |
 
 Offline CI gate (extra filesystem MUST rules such as slug↔filename and CAS presence):
 

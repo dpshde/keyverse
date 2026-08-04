@@ -1,6 +1,8 @@
-# keyverse protocol v0.2
+# keyverse protocol v0.3
 
-> Supersedes `0.1-demo` additively (ignore-unknown). Older packs with `version: "0.1-demo"` remain valid.
+> Supersedes `0.2` additively (ignore-unknown): adds the append-only op log
+> (§10, ADR 0020). Older packs with `version: "0.2"` or `"0.1-demo"` remain
+> valid; `ops/` is optional.
 
 keyverse is a *pack format*, not an app. The protocol is: how notes are
 addressed, how they are laid out on disk, and what a record contains. Anything
@@ -42,8 +44,8 @@ Every note is addressed by a canonical scripture scope, not a title or key.
   before addressing. The reference client uses `grab-bcv`.
 
 One address, at most one note. The address *is* the identity of the page;
-the note's `id` is the durable identity of the record (it survives nothing in
-v0.1 — reserved for the op-log extension).
+the note's `id` is the durable identity of the record. The op log (§10) keys
+on the address slug and block ids, not the note id.
 
 ## 2. Pack layout
 
@@ -53,10 +55,11 @@ its own pack directory:
 ```
 packs/                         multipack root (PACK_DIR)
   quiet-river-lantern/         one pack = one multiword key
-    protocol.json              {"protocol":"keyverse","version":"0.2","schemas":"schemas/"}
+    protocol.json              {"protocol":"keyverse","version":"0.3","schemas":"schemas/"}
     door                       same phrase (optional; for portability)
     notes/<slug>.json          one record per addressed note
     attachments/<sha256>       content-addressed file bytes
+    ops/<slug>/<sha256>.json   append-only op log (optional, §10)
   stone-path-ember-wind/       another user's (or project's) pack
     …
   _cache/text/bsb/             shared disposable scripture cache (not user data)
@@ -70,6 +73,7 @@ pack/
   door
   notes/<slug>.json
   attachments/<sha256>
+  ops/<slug>/<sha256>.json
 ```
 
 Repo-root `schemas/` holds JSON Schema for protocol manifest, notes, attachments,
@@ -169,7 +173,7 @@ projection of `indent`; it is never stored nested.
 
 - `id`: stable across edits. A client editing text MUST preserve the ids of
   surviving lines (the reference client uses LCS line matching). Ids are the
-  hook for merge, transclusion, and the future op log.
+  hook for merge, transclusion, and the op log (§10).
 - `indent`: non-negative integer, at most one deeper than the previous block
   when projected.
 - `text`: one line, no newlines. Markers for inline formatting stay **in the
@@ -376,30 +380,233 @@ Disable with `CORS_ORIGIN=off`, or restrict with `CORS_ORIGIN=https://app.exampl
 7. Ignore unknown keys; optionally validate with `schemas/` or `mix keyverse.conformance`.
 8. Prefer pack directory or export zip for backup — not host-only APIs
    ([docs/OWNERSHIP.md](docs/OWNERSHIP.md)).
+9. Optional: read/write the op log (§10) for lossless concurrent-edit merge.
+   Snapshot-only clients stay conformant; they MUST simply preserve `ops/`
+   files they don't understand (never delete or rewrite them).
 
 ## 8.1 User-owned transfer (door profile)
 
 When speaking HTTP, doors SHOULD offer:
 
 - `GET /api/pack` — manifest (counts, protocol version)
-- `GET /api/pack/export` — zip of `protocol.json`, `door`, `notes/`, `attachments/`
-- `POST /api/pack/import?mode=merge|replace` — restore zip (conformance after write)
+- `GET /api/pack/export` — zip of `protocol.json`, `door`, `notes/`,
+  `attachments/`, `ops/`
+- `POST /api/pack/import?mode=merge|replace` — restore zip (conformance after
+  write). Merge unions op records by hash (§10.7).
 
 Scripture cache paths MUST NOT appear in exports.
 
-## 9. Reserved extensions (not fully specified in v0.1)
+## 9. Reserved extensions (not fully specified)
 
-**In v0.1 already:** attachments (CAS + URLs), multiword door access, client-side
-note encryption (§3.1), protocol discovery, resolve, CORS, JSON Schema.
+**Already specified:** attachments (CAS + URLs), multiword door access,
+client-side note encryption (§3.1), protocol discovery, resolve, CORS, JSON
+Schema, append-only op log + deterministic block-level merge (§10, v0.3).
 
 **Reserved / deferred** (layer *under* the pack; must not change addressing or
 the no-account capture surface):
 
-- Op log + deterministic block-level merge  
-- Multi-device envelope key exchange / shared sealed packs  
-- Server-side encryption at rest; full attachment-blob encryption  
-- PAKE device pairing  
-- Relay sync / resumable transfer  
-- Arweave (or similar) permanence  
+- Op-log checkpoints / tombstone GC (§10.9)
+- Sync transport for op records (relay, push, resumable transfer)
+- Multi-device envelope key exchange / shared sealed packs
+- Server-side encryption at rest; full attachment-blob encryption
+- PAKE device pairing
+- Arweave (or similar) permanence
 
-See ADRs 0008, 0010–0012.
+See ADRs 0008, 0010–0012, 0020.
+
+## 10. Append-only op log (optional, v0.3)
+
+The op log makes concurrent editing lossless: two clients that edit the same
+note while disconnected converge to identical state by *file-set union*, with
+no server, no negotiation, and no live protocol. It layers **under** the pack:
+`notes/<slug>.json` stays the canonical projection for snapshot-only clients
+(§2, §3), and a pack with no `ops/` directory is fully conformant.
+
+Design decision record: [ADR 0020](docs/adr/0020-append-only-op-log.md).
+Machine shape: [schemas/op.schema.json](schemas/op.schema.json).
+
+### 10.1 Layout and content addressing
+
+```
+ops/<slug>/<sha256>.json
+```
+
+- One file per **op record**. Files are immutable: clients MUST NOT modify or
+  delete an existing record file (checkpoint/GC is reserved, §10.9).
+- The file bytes are exactly the canonical JSON encoding (§10.2) of the
+  record. The filename is the lowercase hex SHA-256 **of the file bytes**,
+  so `shasum -a 256 <file>` verifies any record and identical records dedupe
+  to one file. Writers MUST NOT pretty-print op records.
+- `<slug>` is the note slug (§1) and MUST equal the record's `slug` field.
+- Appending = creating a file. On a plain filesystem this is naturally
+  conflict-free; merging two logs is copying the union of files.
+
+### 10.2 Canonical JSON
+
+The canonical encoding of a record is defined by:
+
+1. Objects: keys sorted bytewise ascending (UTF-8), no duplicate keys.
+2. Arrays: element order preserved.
+3. No insignificant whitespace.
+4. Strings: standard JSON escaping for `"`, `\`, and control characters
+   (U+0000–U+001F); all other characters as raw UTF-8 (no `\uXXXX` escaping
+   of non-ASCII).
+5. Numbers: op records use only non-negative integers, encoded in minimal
+   decimal form (no sign, no fraction, no exponent, no leading zeros).
+
+Reference implementation: `Keyverse.CanonicalJson`.
+
+### 10.3 Record shape
+
+```json
+{
+  "v": 1,
+  "slug": "jhn.3.16",
+  "parents": ["<sha256>", "…"],
+  "lamport": 4,
+  "at": "ISO-8601",
+  "ops": [ { "op": "…", "…": "…" } ]
+}
+```
+
+| Field | Rule |
+|-------|------|
+| `v` | MUST be `1` |
+| `slug` | MUST equal the `ops/<slug>/` directory name |
+| `parents` | Hashes of the records this one causally follows — the writer's view of the log frontier (§10.3.1). `[]` for a root record. |
+| `lamport` | Integer ≥ 1: `max(lamport of all records the writer has seen for this note) + 1` |
+| `at` | Wall-clock creation time. **Informational only — MUST NOT affect ordering.** Optional. |
+| `implicit` | Optional boolean; `true` marks a record synthesized from an out-of-band snapshot edit (§10.5) |
+| `ops` | Non-empty array of primitive ops (§10.4.2), applied atomically in order |
+
+Unknown record fields MUST be ignored on read (and, being part of the file
+bytes, are preserved by content addressing automatically).
+
+#### 10.3.1 Heads and parents
+
+The **heads** of a log are the record hashes not referenced by any record's
+`parents`. A writer appending a record sets `parents` to the heads it can see.
+Two writers appending concurrently produce two records with the same parents —
+a fork; the next append (by whoever sees both) lists both as parents — a join.
+Records whose parents are not present in the set are legal (a partially copied
+log still folds deterministically); validators SHOULD warn on dangling
+parents, not fail.
+
+### 10.4 Deterministic fold
+
+The materialized state of a note is a **pure function of the set of records**
+in `ops/<slug>/`. Any two implementations holding the same files MUST produce
+identical state.
+
+#### 10.4.1 Linearization
+
+1. Order records topologically: every record after all of its `parents` that
+   are present in the set (absent parents impose no constraint).
+2. Among records whose constraints are satisfied ("ready"), always take the
+   least by the pair `(lamport, hash)` — integer compare, then bytewise
+   compare of the lowercase hex hash.
+
+This yields a total order. Replay each record's `ops` array in file order.
+
+#### 10.4.2 Primitive ops (total semantics — no op may fail)
+
+Fold state is a list of blocks (each `{id, indent, text, collapsed?, deleted}`,
+where `deleted` marks a tombstone) plus an ordered attachment list. Field
+sanitization applies on replay: `indent` clamps to `0..32` (non-integers →
+`0`), `text` coerces to string with newlines replaced by spaces.
+
+| Op | Required fields | Semantics |
+|----|-----------------|-----------|
+| `insert` | `block`, `after`, `indent`, `text` (+ optional `collapsed`) | If a block with this id already exists (live **or tombstone**): no-op. Else insert per the anchor rule below. |
+| `set_text` | `block`, `text` | Replace the block's whole text (block-level LWW). Unknown id: no-op. Works on tombstones. |
+| `set_indent` | `block`, `indent` | Replace indent. Unknown id: no-op. |
+| `set_collapsed` | `block`, `collapsed` | `true` sets the flag; anything else clears it. Unknown id: no-op. |
+| `move` | `block`, `after` | Remove the block from its position and re-place per the anchor rule. Unknown id: no-op. |
+| `delete` | `block` | Mark the block as a tombstone (it keeps its list position). Unknown id: **append a tombstone** with that id at the end, so later anchors on it resolve. |
+| `put_attachment` | `attachment` (an attachment row, §5) | Remove any attachment with the same `id`, then append this row at the end. Attachment order = display order. |
+| `remove_attachment` | `id` | Remove the attachment row with that id (later `put_attachment` may re-add it). |
+
+**Anchor rule** (`after`): `null` → place at the head of the list; a block id
+→ immediately after that block (tombstones count — deleted blocks still
+anchor); an id not in the list → append at the end.
+
+Unknown `op` names and structurally malformed primitives MUST be treated as
+no-ops (forward compatibility). Validators SHOULD warn on unknown primitives,
+not fail.
+
+#### 10.4.3 Materialization
+
+To produce the note-shaped state (§3) from fold state:
+
+1. Drop tombstoned blocks; drop the internal `deleted` flag.
+2. Clamp indent to the +1-step rule (§4): each block's indent becomes
+   `min(indent, previous_block_indent + 1)`; the first block clamps to `0`.
+3. Attachments: the remaining rows in list order.
+
+Two clients holding the same record set MUST materialize structurally equal
+`blocks` and `attachments`.
+
+Because block text is whole-line LWW, concurrent edits *to the same block's
+text* keep one wording (deterministically); structure (which blocks exist,
+where, with what children) always converges losslessly. This is deliberate:
+blocks are the product's atom (ADR 0003), not characters.
+
+### 10.5 Snapshot ↔ log relationship
+
+- `notes/<slug>.json` remains authoritative for snapshot-only clients and for
+  human inspection. A log-aware writer keeps them consistent: after a logged
+  edit, the snapshot's `blocks`/`attachments` MUST equal the fold's
+  materialization. Record metadata (`id`, `scope`, timestamps) lives only in
+  the snapshot, not the log.
+- **Implicit reconciliation.** Before logging an edit, a log-aware writer
+  folds the existing log and compares it to the current snapshot. If they
+  differ, a snapshot-only client edited out-of-band; the writer MUST first
+  append a record with `"implicit": true` whose ops transform the fold state
+  into the snapshot state, then append its own edit on top. Nothing a
+  snapshot-only client wrote is ever discarded by a log-aware client.
+- Between reconciliations, two *snapshot-only* clients can still overwrite
+  each other (that is 0.2 behavior); the log bounds the loss to the
+  un-reconciled window instead of eliminating it.
+- Crash model: the reference writer writes the snapshot first, then the op
+  record(s); a failed log write is logged and healed by the next
+  reconciliation. Writers MUST hold the pack's single-writer lock (or
+  equivalent) across fold + append + snapshot for one pack.
+- Deleting a note (empty write, §2) is logged as `delete` ops for its blocks
+  and `remove_attachment` ops for its rows; the log directory persists so a
+  concurrent editor's ops still merge against the tombstones.
+
+### 10.6 Sealed notes (§3.1)
+
+Encrypted notes MUST NOT emit plaintext op records — logging ops for sealed
+content would leak edit structure. While a note is sealed, its log is frozen
+and the cipher envelope is whole-record LWW, as in 0.2. When a plaintext write
+unwraps a sealed note, the writer diffs **from the fold of the frozen log** to
+the new plaintext state (there is no plaintext "before" to compare), appending
+one record that catches the log up.
+
+### 10.7 Export / import
+
+- `ops/` is user data: export zips MUST include it (§8.1,
+  [docs/OWNERSHIP.md](docs/OWNERSHIP.md)).
+- Import(merge) MUST union op records by filename — never overwrite or delete
+  existing records. Since filenames are content hashes, union *is* merge.
+- Import path validation: only entries matching
+  `ops/<slug>/<64-lowercase-hex>.json` are accepted.
+
+### 10.8 Conformance
+
+`mix keyverse.conformance` validates any `ops/` tree: filename shape, file
+bytes hash = filename, record shape (`v`, `slug` match, `parents`, `lamport`,
+non-empty `ops`), known primitives (unknown → warning), dangling parents
+(warning), and fold-vs-snapshot divergence (warning — legal until the next
+reconciliation). Fixture `expect.json` files MAY carry a `"fold"` map of
+`{"<slug>": <clean state>}`; a conforming fold implementation MUST materialize
+exactly that state from the fixture's records. Reference vector:
+[protocol/fixtures/valid/with_ops](protocol/fixtures/valid/with_ops/).
+
+### 10.9 Reserved
+
+Checkpoints (compacting a folded prefix into one record) and tombstone GC are
+deliberately unspecified in v1; until then the log is append-only forever.
+Sync transport for records (push, relay) is a separate future layer — v1
+transport is the filesystem and the export zip.

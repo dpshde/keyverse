@@ -20,7 +20,7 @@ defmodule Keyverse.MetricsTest do
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)
     assert body["ok"] == true
-    assert body["version"] == "0.2"
+    assert body["version"] == Keyverse.Config.protocol_version()
     assert body["app_version"] == "0.2.0"
     assert is_map(body["metrics"])
     assert Map.has_key?(body["metrics"], "uptime_ms")
@@ -29,7 +29,7 @@ defmodule Keyverse.MetricsTest do
     assert conn.status == 200
     snap = Jason.decode!(conn.resp_body)
     assert snap["host"] == "elixir"
-    assert snap["protocol_version"] == "0.2"
+    assert snap["protocol_version"] == Keyverse.Config.protocol_version()
     assert is_map(snap["ops"])
     assert snap["ops"]["http_health"]["count"] >= 1
   end
