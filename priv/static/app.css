@@ -323,17 +323,25 @@
     cursor: default;
     pointer-events: none;
   }
-  /* Home — primary dark segment (RN dockSegPrimary) */
-  .reader-dock-item.reader-dock-home {
-    background: color-mix(in srgb, currentColor 88%, transparent);
-    border-color: color-mix(in srgb, #fff 22%, transparent);
-    color: Canvas;
+  /* Home — primary dark segment (RN dockSegPrimary).
+     Do NOT use currentColor for fill after setting color: light text —
+     that made background + label both Canvas/white (blank middle pill). */
+  .reader-dock-item.reader-dock-home,
+  a.reader-dock-item.reader-dock-home {
+    background: #161616;
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #fff;
     font-weight: 700;
   }
-  a.reader-dock-item.reader-dock-home { color: Canvas; }
-  .reader-dock-item.reader-dock-home:hover:not(.is-disabled) {
-    background: color-mix(in srgb, currentColor 94%, transparent);
-    color: Canvas;
+  .reader-dock-item.reader-dock-home:hover:not(.is-disabled),
+  a.reader-dock-item.reader-dock-home:hover:not(.is-disabled) {
+    background: #0c0c0c;
+    color: #fff;
+    opacity: 1;
+  }
+  .reader-dock-item.reader-dock-home .reader-dock-lbl,
+  a.reader-dock-item.reader-dock-home .reader-dock-lbl {
+    color: inherit;
   }
   @media (prefers-color-scheme: dark) {
     .reader-dock-item {
@@ -343,15 +351,17 @@
     .reader-dock-item:hover:not(.is-disabled) {
       background: color-mix(in srgb, #fff 16%, transparent);
     }
-    .reader-dock-item.reader-dock-home {
-      background: color-mix(in srgb, #fff 92%, transparent);
-      border-color: color-mix(in srgb, #fff 28%, transparent);
+    .reader-dock-item.reader-dock-home,
+    a.reader-dock-item.reader-dock-home {
+      background: #eceae4;
+      border-color: rgba(255, 255, 255, 0.28);
       color: #111;
     }
-    a.reader-dock-item.reader-dock-home { color: #111; }
-    .reader-dock-item.reader-dock-home:hover:not(.is-disabled) {
+    .reader-dock-item.reader-dock-home:hover:not(.is-disabled),
+    a.reader-dock-item.reader-dock-home:hover:not(.is-disabled) {
       background: #fff;
       color: #111;
+      opacity: 1;
     }
   }
   .reader-dock-ico {
