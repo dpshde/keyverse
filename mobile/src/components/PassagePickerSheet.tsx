@@ -87,7 +87,6 @@ export function PassagePickerSheet({
   const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<Phase>("books");
   const [book, setBook] = useState<BibleBook | null>(null);
-  const [highlightOsis, setHighlightOsis] = useState<string | null>(null);
   const [railH, setRailH] = useState(1);
   const [listW, setListW] = useState(0);
   const [bookRailDragging, setBookRailDragging] = useState(false);
@@ -284,11 +283,9 @@ export function PassagePickerSheet({
     if (start) {
       setBook(start);
       setPhase("chapters");
-      setHighlightOsis(start.osis);
     } else {
       setBook(null);
       setPhase("books");
-      setHighlightOsis(null);
     }
   }, [visible, initialBook, books]);
 
@@ -350,7 +347,7 @@ export function PassagePickerSheet({
         hapticSelect();
         lastHapticBook.current = b.osis;
       }
-      setHighlightOsis(b.osis);
+      // Scroll only — no hover/selected row wash on the book list
       scrollBookToIndex(index, false);
     },
     [books, scrollBookToIndex]
@@ -428,7 +425,6 @@ export function PassagePickerSheet({
   const onBookPress = useCallback((b: BibleBook) => {
     hapticLight();
     setBook(b);
-    setHighlightOsis(b.osis);
     setPhase("chapters");
     setBookRailDragging(false);
     setPreviewLetter(null);
@@ -454,18 +450,16 @@ export function PassagePickerSheet({
 
   const renderBook: ListRenderItem<BibleBook> = useCallback(
     ({ item }) => {
-      const on = highlightOsis === item.osis;
       return (
         <Pressable
           onPress={() => onBookPress(item)}
-          style={[styles.bookRow, on && styles.bookRowOn]}
+          style={styles.bookRow}
           accessibilityRole="button"
           accessibilityLabel={`${item.label}, ${item.chapters} chapters`}
-          accessibilityState={{ selected: on }}
         >
           {/* Title + chapter count sit tight as one cluster (Exedra-style meta) */}
           <View style={styles.bookTitleCluster}>
-            <Text style={[styles.bookTxt, on && styles.bookTxtOn]} numberOfLines={1}>
+            <Text style={styles.bookTxt} numberOfLines={1}>
               {item.label}
             </Text>
             <Text style={styles.bookMeta}>{item.chapters}</Text>
@@ -473,7 +467,7 @@ export function PassagePickerSheet({
         </Pressable>
       );
     },
-    [highlightOsis, onBookPress, styles]
+    [onBookPress, styles]
   );
 
   const showChapterRail = book != null && book.chapters > COLS * 2;
@@ -890,9 +884,6 @@ function makeStyles(c: ThemeColors) {
       paddingHorizontal: space[3],
       borderRadius: radius.md,
     },
-    bookRowOn: {
-      backgroundColor: c.fillStrong,
-    },
     bookTitleCluster: {
       flexDirection: "row",
       alignItems: "baseline",
@@ -906,9 +897,6 @@ function makeStyles(c: ThemeColors) {
       fontWeight: "500",
       color: c.ink,
       letterSpacing: -0.2,
-    },
-    bookTxtOn: {
-      fontWeight: "600",
     },
     /** Quiet chapter count — sits immediately after the book name */
     bookMeta: {
