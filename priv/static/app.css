@@ -189,11 +189,19 @@
     gap: .4rem .75rem;
     align-items: center;
   }
-  /* When pack-own sits above: one divider only (pack owns the top rule) */
-  .pack-own + .site-foot {
-    margin-top: .65rem;
-    padding-top: .55rem;
-    border-top: 0;
+  /* Home: Export · Import · Install on one row */
+  .site-foot.home-foot {
+    margin-top: 1.5rem;
+    padding-top: .75rem;
+    gap: .35rem .9rem;
+    font-size: .82rem;
+  }
+  .site-foot.home-foot .pwa-install {
+    margin-left: auto;
+  }
+  .site-foot.home-foot .pack-own-status {
+    flex: 1 0 100%;
+    margin: .15rem 0 0;
   }
   .site-foot a {
     color: inherit;
@@ -3114,20 +3122,7 @@
     .reader-dock-item { min-height: var(--tap-comfy); }
   }
 
-/* Pack backup — Export · Import only (no counts, icons, or Replace chrome) */
-.pack-own{
-  margin:1.5rem 0 0;
-  padding:.65rem 0 0;
-  border-top:1px solid var(--line-soft);
-  font-family:-apple-system, system-ui, sans-serif;
-}
-.pack-own-row{
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  gap:.15rem .85rem;
-  font-size:.82rem;
-}
+/* Pack backup links (live inside .home-foot) */
 .pack-own-link{
   display:inline-flex;
   align-items:center;
@@ -3160,7 +3155,7 @@
   position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;
 }
 .pack-own-status{
-  margin:.4rem 0 0;
+  margin:0;
   font-size:.82rem;
   color:var(--muted);
 }
@@ -3168,11 +3163,10 @@
 .pack-own-replace,
 .pack-own-btn,
 .pack-own-hint,
-.pack-own h2{ display:none; }
+.pack-own h2,
+.pack-own-dot{ display:none; }
 
-/* Home foot: install only when offered — no brand line clutter */
 .site-foot:empty{ display:none; }
-.site-foot:not(:has(*)){ display:none; }
 .site-foot.site-foot-tagline{
   justify-content:center;
   border-top:0;

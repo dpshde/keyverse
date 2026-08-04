@@ -385,8 +385,7 @@ defmodule Keyverse.Html do
       <h2 class="ui muted home-notes-h">#{ico("notebook")} Notes</h2>
       #{tree}
     </section>
-    #{pack_ownership_html(base, man)}
-    #{site_footer(true)}
+    #{home_footer(base)}
     <script src="/home-tree.js"></script>
     """
 
@@ -405,21 +404,20 @@ defmodule Keyverse.Html do
     """
   end
 
-  defp pack_ownership_html(base, _man) do
-    # Quiet backup strip: Export · Import only (merge). No counts, icons, or Replace chrome.
+  # One home foot row: Export · Import · Install (when offered)
+  defp home_footer(base) do
     """
-    <section class="pack-own ui" id="pack-own" aria-label="Backup">
-      <div class="pack-own-row">
-        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>#{ico_label("export", "Export")}</a>
-        <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
-          <label class="pack-own-link pack-own-file">
-            #{ico_label("upload-simple", "Import")}
-            <input type="file" name="pack" accept=".zip,application/zip" required hidden>
-          </label>
-        </form>
-      </div>
+    <footer class="site-foot home-foot ui" id="pack-own">
+      <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>#{ico_label("export", "Export")}</a>
+      <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
+        <label class="pack-own-link pack-own-file">
+          #{ico_label("upload-simple", "Import")}
+          <input type="file" name="pack" accept=".zip,application/zip" required hidden>
+        </label>
+      </form>
+      <button type="button" class="pwa-install" id="pwa-install">#{ico_label("device-mobile", "Install app")}</button>
       <p id="pack-import-status" class="pack-own-status" role="status" hidden></p>
-    </section>
+    </footer>
     <script>
     (function () {
       var form = document.getElementById("pack-import-form");
