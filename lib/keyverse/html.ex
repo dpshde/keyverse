@@ -410,10 +410,10 @@ defmodule Keyverse.Html do
     """
     <section class="pack-own ui" id="pack-own" aria-label="Backup">
       <div class="pack-own-row">
-        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>Export</a>
+        <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>#{ico_label("export", "Export")}</a>
         <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
           <label class="pack-own-link pack-own-file">
-            Import
+            #{ico_label("upload-simple", "Import")}
             <input type="file" name="pack" accept=".zip,application/zip" required hidden>
           </label>
         </form>

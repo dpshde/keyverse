@@ -3129,6 +3129,9 @@
   font-size:.82rem;
 }
 .pack-own-link{
+  display:inline-flex;
+  align-items:center;
+  gap:.3rem;
   color:var(--muted);
   text-decoration:none;
   cursor:pointer;
@@ -3137,6 +3140,16 @@
   background:none;
   border:0;
   padding:.15rem 0;
+}
+.pack-own-link .ui-ico-label{
+  display:inline-flex;
+  align-items:center;
+  gap:.3rem;
+}
+.pack-own-link .ph{
+  font-size:1em;
+  opacity:.85;
+  line-height:1;
 }
 @media (hover: hover) and (pointer: fine) {
   .pack-own-link:hover{ color:var(--ink); }
