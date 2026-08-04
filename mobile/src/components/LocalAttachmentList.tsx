@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,9 @@ import type { Attachment } from "../api/types";
 import * as Local from "../lib/localPack";
 import { newBlockId } from "../api/client";
 import { hapticLight, hapticSelect, hapticSuccess, hapticWarning } from "../lib/haptics";
-import { color, type, ui } from "../theme";
+import { useTheme } from "../context/ThemeContext";
+import type { ThemeColors } from "../theme";
+
 
 // simple sha256 via expo-crypto
 import * as Crypto from "expo-crypto";
@@ -28,6 +30,8 @@ type Props = {
 };
 
 export function LocalAttachmentList({ attachments, onChange }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeLocalAttachStyles(color), [color]);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -249,7 +253,8 @@ function b64ToArrayBuffer(b64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-const styles = StyleSheet.create({
+function makeLocalAttachStyles(color: ThemeColors) {
+  return StyleSheet.create({
   wrap: { gap: 4 },
   row: {
     flexDirection: "row",
@@ -298,3 +303,4 @@ const styles = StyleSheet.create({
     color: color.inkSoft,
   },
 });
+}

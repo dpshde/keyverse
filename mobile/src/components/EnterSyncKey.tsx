@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -10,9 +10,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { parseKeyInput, plainSyncError } from "@/src/lib/syncInvite";
-import { hapticError, hapticLight, hapticSuccess } from "@/src/lib/haptics";
-import { color, space, type, ui } from "@/src/theme";
+import * as Clipboard from "expo-clipboard";
+import { formatKeyForDisplay, parseKeyInput, plainSyncError } from "@/src/lib/syncInvite";
+import { hapticError, hapticLight, hapticSelect, hapticSuccess } from "@/src/lib/haptics";
+import { useTheme } from "@/src/context/ThemeContext";
+import { space, type ThemeColors } from "@/src/theme";
 
 type Props = {
   visible: boolean;
@@ -22,11 +24,47 @@ type Props = {
   onSubmit: (door: string) => Promise<void>;
 };
 
+/**
+ * Sheet to type or paste a multiword sync key.
+ * “Paste key” reads the clipboard and parses in one step.
+ */
 export function EnterSyncKey({ visible, busy: busyProp, onCancel, onSubmit }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeEnterKeyStyles(color, type), [color, type]);
   const [raw, setRaw] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
   const busy = busyProp || localBusy;
+
+  useEffect(() => {
+    if (!visible) return;
+    setErr(null);
+    setRaw("");
+  }, [visible]);
+
+  const pasteAndParse = useCallback(async () => {
+    try {
+      const clip = (await Clipboard.getStringAsync())?.trim() ?? "";
+      if (!clip) {
+        setErr("Clipboard is empty.");
+        hapticLight();
+        return;
+      }
+      const door = parseKeyInput(clip);
+      if (!door) {
+        setErr("Clipboard doesn’t look like a key.");
+        hapticLight();
+        return;
+      }
+      // Show the normalized words in the field
+      setRaw(formatKeyForDisplay(door));
+      setErr(null);
+      hapticSelect();
+    } catch {
+      setErr("Couldn’t read the clipboard.");
+      hapticLight();
+    }
+  }, []);
 
   const submit = async () => {
     const door = parseKeyInput(raw);
@@ -74,10 +112,19 @@ export function EnterSyncKey({ visible, busy: busyProp, onCancel, onSubmit }: Pr
           onSubmitEditing={submit}
           returnKeyType="go"
         />
+        <Pressable
+          style={ui.secondaryBtn}
+          onPress={() => void pasteAndParse()}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel="Paste and parse key from clipboard"
+        >
+          <Text style={ui.secondaryBtnTxt}>Paste key</Text>
+        </Pressable>
         {err ? <Text style={ui.err}>{err}</Text> : null}
         <Pressable style={ui.primaryBtn} onPress={submit} disabled={busy}>
           {busy ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={color.primaryOn} />
           ) : (
             <Text style={ui.primaryBtnTxt}>Continue</Text>
           )}
@@ -98,17 +145,29 @@ export function EnterSyncKey({ visible, busy: busyProp, onCancel, onSubmit }: Pr
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: color.paper,
-    padding: space[6],
-    paddingTop: space[12],
-    gap: space[3],
-  },
-  title: {
-    ...type.title,
-    fontSize: 28,
-    lineHeight: 34,
-  },
-});
+function makeEnterKeyStyles(
+  color: ThemeColors,
+  type: {
+    caption: object;
+    meta: object;
+    bodyStrong: object;
+    title: object;
+    label: object;
+    [k: string]: object;
+  }
+) {
+  return StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: color.paper,
+      padding: space[6],
+      paddingTop: space[12],
+      gap: space[3],
+    },
+    title: {
+      ...type.title,
+      fontSize: 28,
+      lineHeight: 34,
+    },
+  });
+}

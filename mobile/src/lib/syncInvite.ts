@@ -45,10 +45,19 @@ export function parseKeyInput(raw: string): string {
   return normalizeDoorPhrase(raw);
 }
 
-/** Last sync ISO → short calm label. */
+/** Parse door/pack ISO as UTC when zone is omitted. */
+function parseSyncTime(iso: string): number {
+  const s = iso.trim();
+  if (!s) return NaN;
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) return Date.parse(s);
+  const normalized = (s.includes("T") ? s : s.replace(" ", "T")) + (s.endsWith("Z") ? "" : "Z");
+  return Date.parse(normalized);
+}
+
+/** Last sync ISO → short calm label (relative to local now). */
 export function formatLastSynced(iso?: string): string {
   if (!iso) return "Not synced yet";
-  const t = Date.parse(iso);
+  const t = parseSyncTime(iso);
   if (!Number.isFinite(t)) return "Not synced yet";
   const sec = Math.round((Date.now() - t) / 1000);
   if (sec < 45) return "Last synced just now";

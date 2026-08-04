@@ -5,7 +5,7 @@ import { Linking, StyleSheet, Text, type TextStyle } from "react-native";
  * Render base inline markdown (PROTOCOL §4.0) — markers stay in storage.
  * Flat (non-nested) forms only.
  */
-export function InlineMarkdown({
+export const InlineMarkdown = React.memo(function InlineMarkdown({
   text,
   style,
 }: {
@@ -13,6 +13,10 @@ export function InlineMarkdown({
   style?: TextStyle | TextStyle[];
 }) {
   const nodes = useMemo(() => parseInline(text || ""), [text]);
+  // Fast path: no markers — single Text (no nested tree)
+  if (nodes.length === 1 && nodes[0].type === "text") {
+    return <Text style={style}>{nodes[0].value}</Text>;
+  }
   return (
     <Text style={style}>
       {nodes.map((n, i) => {
@@ -57,7 +61,7 @@ export function InlineMarkdown({
       })}
     </Text>
   );
-}
+});
 
 type Node =
   | { type: "text"; value: string }

@@ -71,11 +71,21 @@ function randomBytes(n: number): Uint8Array {
   return out;
 }
 
+/** Session cache — PBKDF2 210k is expensive; reuse key for same (passphrase, salt). */
+const keyCache = new Map<string, Uint8Array>();
+
 function deriveKey(passphrase: string, salt: Uint8Array): Uint8Array {
-  return pbkdf2(sha256, utf8ToBytes(passphrase), salt, {
+  const cacheKey = passphrase + "\0" + b64(salt);
+  const hit = keyCache.get(cacheKey);
+  if (hit) return hit;
+  const key = pbkdf2(sha256, utf8ToBytes(passphrase), salt, {
     c: CRYPTO_ITER,
     dkLen: 32,
   });
+  // Cap cache size (few sealed notes per session)
+  if (keyCache.size > 32) keyCache.clear();
+  keyCache.set(cacheKey, key);
+  return key;
 }
 
 export type PlainPayload = { blocks: Block[]; attachments: Attachment[] };

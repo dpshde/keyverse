@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -34,7 +35,9 @@ import {
 } from "@/src/lib/syncInvite";
 import { hapticError, hapticLight, hapticSelect, hapticSuccess, hapticWarning } from "@/src/lib/haptics";
 import { CountPill } from "@/src/components/CountPill";
-import { color, fontRead, radius, space, tap, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { pushOnce, releasePushLock } from "@/src/lib/nav";
+import { fontRead, radius, space, tap, type ThemeColors } from "@/src/theme";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
 
@@ -48,6 +51,8 @@ const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
  */
 export default function HomeScreen() {
   const { cloudEnabled, cloudHost, translation, enableCloud } = useSession();
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeHomeStyles(color), [color]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [notes, setNotes] = useState<Note[]>([]);
@@ -141,6 +146,8 @@ export default function HomeScreen() {
   // Refresh list only when notes actually changed elsewhere (note editor / sync / import)
   useFocusEffect(
     useCallback(() => {
+      // Allow opening Settings/Share again immediately after dismissing a sheet
+      releasePushLock();
       const ep = Local.getNotesCacheEpoch();
       if (ep !== notesEpochRef.current) {
         load({ quiet: true });
@@ -200,15 +207,16 @@ export default function HomeScreen() {
   const tree = useMemo(() => buildNoteTree(notes), [notes]);
   const flat = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed]);
 
-  const toggle = async (id: string) => {
+  const toggle = useCallback(async (id: string) => {
     hapticSelect();
-    const was = !!collapsed[id];
-    const map2 = { ...collapsed };
-    if (was) delete map2[id];
-    else map2[id] = true;
-    setCollapsed(map2);
-    await AsyncStorage.setItem(foldKey, JSON.stringify(map2));
-  };
+    setCollapsed((prev) => {
+      const map2 = { ...prev };
+      if (map2[id]) delete map2[id];
+      else map2[id] = true;
+      AsyncStorage.setItem(foldKey, JSON.stringify(map2)).catch(() => {});
+      return map2;
+    });
+  }, []);
 
   const openPassage = async (query?: string) => {
     const qq = (query ?? q).trim();
@@ -222,10 +230,19 @@ export default function HomeScreen() {
     setSuggestions([]);
     setQ("");
     setErr(null);
-    router.push(`/read/${encodeURIComponent(r.scope.slug)}`);
+    pushOnce(router, `/read/${encodeURIComponent(r.scope.slug)}`);
   };
 
   const dockPad = passageSelectorListPad(suggestions.length, insets.bottom, kbHeight);
+  const listContentStyle = useMemo(
+    () => ({
+      paddingHorizontal: space[4],
+      paddingTop: space[3],
+      paddingBottom: dockPad,
+    }),
+    [dockPad]
+  );
+  const homeKeyExtractor = useCallback((item: { key: string }) => item.key, []);
 
   return (
     <View style={ui.screen}>
@@ -239,7 +256,7 @@ export default function HomeScreen() {
               <Pressable
                 onPress={() => {
                   hapticSelect();
-                  router.push("/share");
+                  pushOnce(router, "/share");
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Sync on, open sync"
@@ -258,25 +275,25 @@ export default function HomeScreen() {
             <Pressable
               onPress={() => {
                 hapticSelect();
-                router.push("/share");
+                pushOnce(router, "/activity");
               }}
               style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
               accessibilityRole="button"
-              accessibilityLabel="Sync"
+              accessibilityLabel="Activity"
               hitSlop={8}
             >
               <SymbolView
-                name="arrow.triangle.2.circlepath"
+                name="chart.bar"
                 size={22}
                 weight="semibold"
                 tintColor={color.ink}
-                fallback={<Text style={styles.gearFallback}>{"\u21BB"}</Text>}
+                fallback={<Text style={styles.gearFallback}>{"\u2593"}</Text>}
               />
             </Pressable>
             <Pressable
               onPress={() => {
                 hapticSelect();
-                router.push("/settings");
+                pushOnce(router, "/settings");
               }}
               style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
               accessibilityRole="button"
@@ -315,17 +332,18 @@ export default function HomeScreen() {
       ) : (
         <FlatList
           data={flat}
-          keyExtractor={(item) => item.key}
+          keyExtractor={homeKeyExtractor}
           refreshControl={
             <RefreshControl refreshing={busy} onRefresh={load} tintColor={color.muted} />
           }
-          contentContainerStyle={{
-            paddingHorizontal: space[4],
-            paddingTop: space[3],
-            paddingBottom: dockPad,
-          }}
+          contentContainerStyle={listContentStyle}
           keyboardShouldPersistTaps="handled"
           onScrollBeginDrag={closeOpenSwipe}
+          windowSize={10}
+          maxToRenderPerBatch={10}
+          initialNumToRender={16}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={Platform.OS === "android"}
           ListEmptyComponent={
             <Text style={styles.empty}>
               Notes stay on this device. Open a passage below in {translation} and write under a
@@ -340,10 +358,10 @@ export default function HomeScreen() {
               const a11y = f.accessibilityLabel || f.label;
               const noteWord = f.noteCount === 1 ? "note" : "notes";
               /**
-               * Expand/collapse without left chevrons.
-               * State is carried by layout + trailing count:
-               * - Collapsed → filled count pill (packed, “open me”)
-               * - Expanded → plain count / open meta (children visible)
+               * Same trailing CountPill for books and chapters:
+               * - Collapsed → filled (packed)
+               * - Expanded → ghost (open; children visible)
+               * Title column only — no under-title “N notes” (that fought the pill).
                */
               return (
                 <Pressable
@@ -362,38 +380,16 @@ export default function HomeScreen() {
                   }`}
                   accessibilityHint={isCol ? "Expands section" : "Collapses section"}
                 >
-                  {isBook ? (
-                    <>
-                      <View style={styles.folderText}>
-                        <Text
-                          style={[
-                            styles.folderTitleBook,
-                            isCol && styles.folderTitleBookCollapsed,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {f.label}
-                        </Text>
-                        {!isCol ? (
-                          <Text style={styles.folderMeta}>
-                            {f.noteCount} {noteWord}
-                          </Text>
-                        ) : null}
-                      </View>
-                      {isCol ? <CountPill label={f.noteCount} /> : null}
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.folderTitleChapter} numberOfLines={1}>
-                        {f.label}
-                      </Text>
-                      {isCol ? (
-                        <CountPill label={f.noteCount} />
-                      ) : (
-                        <Text style={styles.folderChapterCount}>{f.noteCount}</Text>
-                      )}
-                    </>
-                  )}
+                  <Text
+                    style={isBook ? styles.folderTitleBook : styles.folderTitleChapter}
+                    numberOfLines={1}
+                  >
+                    {f.label}
+                  </Text>
+                  <CountPill
+                    label={f.noteCount}
+                    variant={isCol ? "filled" : "ghost"}
+                  />
                 </Pressable>
               );
             }
@@ -407,7 +403,7 @@ export default function HomeScreen() {
                 onDelete={() => deleteNote(leaf)}
                 onEdit={() => {
                   hapticLight();
-                  router.push(`/note/${encodeURIComponent(leaf.slug)}`);
+                  pushOnce(router, `/note/${encodeURIComponent(leaf.slug)}`);
                 }}
               >
                 <Pressable
@@ -415,7 +411,7 @@ export default function HomeScreen() {
                   onPress={() => {
                     closeOpenSwipe();
                     hapticSelect();
-                    router.push(`/read/${encodeURIComponent(leaf.slug)}`);
+                    pushOnce(router, `/read/${encodeURIComponent(leaf.slug)}`);
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={`Open ${leaf.label} in reader. Swipe left for options.`}
@@ -486,190 +482,176 @@ function flattenTree(
   return out;
 }
 
-const styles = StyleSheet.create({
-  top: {
-    paddingHorizontal: space[4],
-    paddingBottom: space[3] + 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: color.line,
-    backgroundColor: color.paperRaised,
-    gap: space[1],
-    // Slight lift so the bar reads as chrome, not page wash
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  topRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: space[3],
-    minHeight: 48,
-  },
-  topMeta: { flex: 1, minWidth: 0, gap: 2, paddingRight: space[3] },
-  topActions: { flexDirection: "row", alignItems: "center" },
-  brand: {
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-    color: color.ink,
-  },
-  iconBtn: {
-    width: tap,
-    height: tap,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconBtnPressed: {
-    opacity: 0.45,
-  },
-  gearFallback: { fontSize: 20, color: color.ink, lineHeight: 22, fontWeight: "700" },
-  status: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: color.inkSoft,
-    letterSpacing: -0.1,
-  },
-  metaLine: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: color.faint,
-    letterSpacing: -0.1,
-  },
-  syncBusyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space[2],
-    marginTop: space[2],
-  },
-  empty: {
-    textAlign: "center",
-    color: color.muted,
-    marginTop: space[10],
-    paddingHorizontal: space[6],
-    lineHeight: 22,
-    fontSize: 15,
-  },
+function makeHomeStyles(color: ThemeColors) {
+  return StyleSheet.create({
+    top: {
+      paddingHorizontal: space[4],
+      paddingBottom: space[3] + 2,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: color.line,
+      backgroundColor: color.paperRaised,
+      gap: space[1],
+      // Slight lift so the bar reads as chrome, not page wash
+      shadowColor: "#000",
+      shadowOpacity: 0.04,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
+    },
+    topRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: space[3],
+      minHeight: 48,
+    },
+    topMeta: { flex: 1, minWidth: 0, gap: 2, paddingRight: space[3] },
+    topActions: { flexDirection: "row", alignItems: "center" },
+    brand: {
+      fontSize: 20,
+      fontWeight: "800",
+      letterSpacing: -0.5,
+      color: color.ink,
+    },
+    iconBtn: {
+      width: tap,
+      height: tap,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    iconBtnPressed: {
+      opacity: 0.45,
+    },
+    gearFallback: { fontSize: 20, color: color.ink, lineHeight: 22, fontWeight: "700" },
+    status: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: color.inkSoft,
+      letterSpacing: -0.1,
+    },
+    metaLine: {
+      fontSize: 12,
+      fontWeight: "500",
+      color: color.faint,
+      letterSpacing: -0.1,
+    },
+    syncBusyRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+      marginTop: space[2],
+    },
+    empty: {
+      textAlign: "center",
+      color: color.muted,
+      marginTop: space[10],
+      paddingHorizontal: space[6],
+      lineHeight: 22,
+      fontSize: 15,
+    },
 
-  folder: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space[2],
-    marginBottom: space[1],
-    minHeight: 36,
-  },
-  folderBook: {
-    marginTop: space[3],
-    marginBottom: space[2],
-    paddingVertical: space[1],
-    minHeight: 48,
-  },
-  /** Soft left rail when a book is open — structure without chevrons */
-  folderBookOpen: {
-    borderLeftWidth: 2,
-    borderLeftColor: color.line,
-    paddingLeft: space[2],
-    marginLeft: 0,
-  },
-  /**
-   * Chapter rows: large hit target, no fill — sits on paper like book labels.
-   * Note cards carry the surface weight; chapter is structure, not a chip.
-   */
-  folderChapter: {
-    minHeight: tap, // 44
-    paddingVertical: space[2],
-    paddingHorizontal: space[1],
-    marginBottom: space[1],
-    borderRadius: radius.sm,
-    backgroundColor: "transparent",
-  },
-  folderChapterPressed: {
-    backgroundColor: color.fill,
-  },
-  folderText: { flex: 1, minWidth: 0 },
-  folderTitleBook: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: color.ink,
-    letterSpacing: -0.2,
-  },
-  /** Collapsed books sit as a single dense line (count lives in the pill) */
-  folderTitleBookCollapsed: {
-    lineHeight: 22,
-  },
-  folderTitleChapter: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: "600",
-    color: color.inkSoft,
-    letterSpacing: -0.1,
-  },
-  /** Expanded: quiet tabular count — children already show the content */
-  folderChapterCount: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: color.faint,
-    fontVariant: ["tabular-nums"],
-    minWidth: 20,
-    textAlign: "right",
-    paddingRight: 2,
-  },
-  folderMeta: {
-    fontSize: 12,
-    color: color.faint,
-    marginTop: 1,
-  },
+    folder: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[3],
+      marginBottom: space[1],
+      minHeight: 44,
+      paddingRight: 2,
+    },
+    folderBook: {
+      marginTop: space[3],
+      marginBottom: space[2],
+      paddingVertical: space[2],
+      minHeight: 48,
+    },
+    /** Soft left rail when a book is open — structure without chevrons */
+    folderBookOpen: {
+      borderLeftWidth: 2,
+      borderLeftColor: color.line,
+      paddingLeft: space[2],
+      marginLeft: 0,
+    },
+    /**
+     * Chapter rows: large hit target, no fill — sits on paper like book labels.
+     * Note cards carry the surface weight; chapter is structure, not a chip.
+     */
+    folderChapter: {
+      minHeight: tap, // 44
+      paddingVertical: space[2],
+      paddingHorizontal: space[1],
+      marginBottom: space[1],
+      borderRadius: radius.sm,
+      backgroundColor: "transparent",
+    },
+    folderChapterPressed: {
+      backgroundColor: color.fill,
+    },
+    folderTitleBook: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 17,
+      fontWeight: "700",
+      color: color.ink,
+      letterSpacing: -0.2,
+    },
+    folderTitleChapter: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 15,
+      fontWeight: "600",
+      color: color.inkSoft,
+      letterSpacing: -0.1,
+    },
 
-  card: {
-    backgroundColor: color.paperRaised,
-    borderRadius: radius.md,
-    // margin lives on NoteSwipeRow so swipe actions align under the card
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.lineSoft,
-    paddingVertical: space[3],
-    paddingHorizontal: space[3] + 2,
-    gap: space[1],
-    // Soft lift without fighting the paper field
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  cardHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space[2],
-  },
-  cardTitle: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: "700",
-    color: color.ink,
-    letterSpacing: -0.2,
-  },
-  badge: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: color.muted,
-    backgroundColor: color.fill,
-    overflow: "hidden",
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  cardBody: {
-    fontSize: 15,
-    lineHeight: 21,
-    color: color.inkSoft,
-    fontFamily: fontRead,
-  },
-  cardBodyMuted: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: color.faint,
-    fontStyle: "italic",
-  },
-});
+    card: {
+      backgroundColor: color.paperRaised,
+      borderRadius: radius.md,
+      // margin lives on NoteSwipeRow so swipe actions align under the card
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.lineSoft,
+      paddingVertical: space[3],
+      paddingHorizontal: space[3] + 2,
+      gap: space[1],
+      // Soft lift without fighting the paper field
+      shadowColor: "#000",
+      shadowOpacity: 0.04,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 1,
+    },
+    cardHead: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+    },
+    cardTitle: {
+      flex: 1,
+      fontSize: 15,
+      fontWeight: "700",
+      color: color.ink,
+      letterSpacing: -0.2,
+    },
+    badge: {
+      fontSize: 11,
+      fontWeight: "600",
+      color: color.muted,
+      backgroundColor: color.fill,
+      overflow: "hidden",
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: radius.pill,
+    },
+    cardBody: {
+      fontSize: 15,
+      lineHeight: 21,
+      color: color.inkSoft,
+      fontFamily: fontRead,
+    },
+    cardBodyMuted: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: color.faint,
+      fontStyle: "italic",
+    },
+  });
+}

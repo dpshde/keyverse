@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +13,9 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import type { Attachment } from "../api/types";
 import type { KeyverseClient } from "../api/client";
-import { color, ui } from "../theme";
+import { useTheme } from "../context/ThemeContext";
+import type { ThemeColors } from "../theme";
+
 
 type Props = {
   slug: string;
@@ -25,6 +27,8 @@ type Props = {
 };
 
 export function AttachmentList({ slug, attachments, client, onChange, onNoteFromServer }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeAttachStyles(color), [color]);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -190,38 +194,46 @@ function b64ToArrayBuffer(b64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-const styles = StyleSheet.create({
-  wrap: { marginTop: 16, gap: 8 },
-  h: { fontSize: 15, fontWeight: "700", color: "#222" },
-  sub: { fontSize: 13, fontWeight: "600", marginTop: 8, color: "#444" },
-  empty: { color: "#888", fontSize: 13 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(0,0,0,0.1)",
-  },
-  main: { flex: 1, gap: 2 },
-  kind: { fontSize: 11, textTransform: "uppercase", color: "#888", letterSpacing: 0.4 },
-  name: { fontSize: 15, color: "#111" },
-  rm: { color: "#a33", fontWeight: "600", fontSize: 13 },
-  input: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,0.2)",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    backgroundColor: "#fff",
-  },
-  actions: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 },
-  btn: {
-    backgroundColor: "#1a1a1a",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  btnTxt: { color: "#fff", fontWeight: "600", fontSize: 14 },
-});
+function makeAttachStyles(color: ThemeColors) {
+  return StyleSheet.create({
+    wrap: { marginTop: 16, gap: 8 },
+    h: { fontSize: 15, fontWeight: "700", color: color.ink },
+    sub: { fontSize: 13, fontWeight: "600", marginTop: 8, color: color.inkSoft },
+    empty: { color: color.faint, fontSize: 13 },
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingVertical: 8,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: color.lineSoft,
+    },
+    main: { flex: 1, gap: 2 },
+    kind: {
+      fontSize: 11,
+      textTransform: "uppercase",
+      color: color.faint,
+      letterSpacing: 0.4,
+    },
+    name: { fontSize: 15, color: color.ink },
+    rm: { color: color.danger, fontWeight: "600", fontSize: 13 },
+    input: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.line,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+      backgroundColor: color.paperRaised,
+      color: color.ink,
+    },
+    actions: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 },
+    btn: {
+      backgroundColor: color.primaryFill,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 10,
+    },
+    btnTxt: { color: color.primaryOn, fontWeight: "600", fontSize: 14 },
+  });
+}

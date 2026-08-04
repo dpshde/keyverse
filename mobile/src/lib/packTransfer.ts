@@ -267,12 +267,18 @@ async function clearLocalNotesAndAttachments() {
 
 function normalizeRel(name: string): string | null {
   let rel = name.replace(/\\/g, "/").replace(/^\/+/, "");
-  // strip single top-level folder prefix if zip was nested
-  if (rel.includes("/") && !rel.startsWith("notes/") && !rel.startsWith("attachments/")) {
+  // strip single top-level folder prefix if zip was nested (Finder Compress)
+  if (
+    rel.includes("/") &&
+    !rel.startsWith("notes/") &&
+    !rel.startsWith("attachments/") &&
+    !rel.startsWith("ops/")
+  ) {
     const parts = rel.split("/");
-    if (parts[0] && !["notes", "attachments", "protocol.json", "door"].includes(parts[0])) {
+    const roots = ["notes", "attachments", "ops", "protocol.json", "door"];
+    if (parts[0] && !roots.includes(parts[0])) {
       // e.g. pack/notes/x.json
-      if (parts[1] === "notes" || parts[1] === "attachments" || parts[1] === "protocol.json" || parts[1] === "door") {
+      if (roots.includes(parts[1])) {
         rel = parts.slice(1).join("/");
       }
     }
@@ -281,6 +287,7 @@ function normalizeRel(name: string): string | null {
   if (rel === "protocol.json" || rel === "door") return rel;
   if (rel.startsWith("notes/") && rel.endsWith(".json")) return rel;
   if (rel.startsWith("attachments/") && !rel.endsWith("/")) return rel;
+  if (rel.startsWith("ops/") && rel.endsWith(".json")) return rel;
   return null;
 }
 

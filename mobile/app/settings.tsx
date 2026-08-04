@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -42,9 +42,16 @@ import {
   hapticSuccess,
   hapticWarning,
 } from "@/src/lib/haptics";
-import { color, radius, space, tap, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { radius, space, tap, type ThemeColors, type ThemePreference } from "@/src/theme";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
+
+const APPEARANCE: { id: ThemePreference; label: string }[] = [
+  { id: "system", label: "System" },
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
+];
 
 export default function SettingsScreen() {
   const {
@@ -62,6 +69,8 @@ export default function SettingsScreen() {
     setPassphrase,
     clearPassphrase,
   } = useSession();
+  const { color, ui, type, preference, setPreference } = useTheme();
+  const styles = useMemo(() => makeSettingsStyles(color), [color]);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const [host, setHost] = useState(cloudHost || DEFAULT_HOST);
@@ -334,6 +343,27 @@ export default function SettingsScreen() {
         </View>
 
         <View style={ui.group}>
+          <Text style={type.section}>Appearance</Text>
+          <Text style={type.meta}>Warm paper by day, night paper after dark — or lock one.</Text>
+          <View style={styles.row}>
+            {APPEARANCE.map((opt) => (
+              <Pressable
+                key={opt.id}
+                style={[styles.chip, preference === opt.id && styles.chipOn]}
+                onPress={() => {
+                  hapticSelect();
+                  setPreference(opt.id);
+                }}
+              >
+                <Text style={[styles.chipTxt, preference === opt.id && styles.chipTxtOn]}>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={ui.group}>
           <Text style={type.section}>Sync</Text>
 
           {cloudEnabled ? (
@@ -367,7 +397,7 @@ export default function SettingsScreen() {
               {syncErr ? <Text style={ui.err}>{syncErr}</Text> : null}
               <Pressable style={ui.primaryBtn} onPress={turnOnSync} disabled={busy}>
                 {busy ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={color.primaryOn} />
                 ) : (
                   <Text style={ui.primaryBtnTxt}>Turn on sync</Text>
                 )}
@@ -547,49 +577,51 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  scroll: { flex: 1 },
-  scrollContent: {
-    padding: space[4],
-    gap: space[2],
-  },
-  row: { flexDirection: "row", gap: space[2], marginTop: space[1] },
-  chip: {
-    minHeight: tap,
-    paddingHorizontal: space[4],
-    paddingVertical: space[2],
-    borderRadius: radius.pill,
-    backgroundColor: color.fillStrong,
-    justifyContent: "center",
-  },
-  chipOn: { backgroundColor: color.ink },
-  chipTxt: { fontWeight: "700", color: color.inkSoft },
-  chipTxtOn: { color: "#fff" },
-  keyPreview: {
-    fontSize: 17,
-    lineHeight: 26,
-    fontWeight: "700",
-    color: color.ink,
-    padding: space[3],
-    backgroundColor: color.paper,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.lineSoft,
-    overflow: "hidden",
-  },
-  advancedHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space[2],
-    minHeight: 44,
-  },
-  advancedHeadOpen: {
-    borderLeftWidth: 2,
-    borderLeftColor: color.line,
-    paddingLeft: space[2],
-    marginLeft: -2,
-  },
-  advancedHeadText: { flex: 1, minWidth: 0, gap: 2 },
-  pwActions: { flexDirection: "row", flexWrap: "wrap", gap: space[2], marginTop: space[1] },
-  pwActionBtn: { flexGrow: 1, minWidth: 120 },
-});
+function makeSettingsStyles(color: ThemeColors) {
+  return StyleSheet.create({
+    scroll: { flex: 1 },
+    scrollContent: {
+      padding: space[4],
+      gap: space[2],
+    },
+    row: { flexDirection: "row", flexWrap: "wrap", gap: space[2], marginTop: space[1] },
+    chip: {
+      minHeight: tap,
+      paddingHorizontal: space[4],
+      paddingVertical: space[2],
+      borderRadius: radius.pill,
+      backgroundColor: color.fillStrong,
+      justifyContent: "center",
+    },
+    chipOn: { backgroundColor: color.primaryFill },
+    chipTxt: { fontWeight: "700", color: color.inkSoft },
+    chipTxtOn: { color: color.primaryOn },
+    keyPreview: {
+      fontSize: 17,
+      lineHeight: 26,
+      fontWeight: "700",
+      color: color.ink,
+      padding: space[3],
+      backgroundColor: color.paper,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.lineSoft,
+      overflow: "hidden",
+    },
+    advancedHead: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+      minHeight: 44,
+    },
+    advancedHeadOpen: {
+      borderLeftWidth: 2,
+      borderLeftColor: color.line,
+      paddingLeft: space[2],
+      marginLeft: -2,
+    },
+    advancedHeadText: { flex: 1, minWidth: 0, gap: 2 },
+    pwActions: { flexDirection: "row", flexWrap: "wrap", gap: space[2], marginTop: space[1] },
+    pwActionBtn: { flexGrow: 1, minWidth: 120 },
+  });
+}

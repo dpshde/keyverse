@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -14,7 +14,7 @@ import { SymbolView } from "expo-symbols";
 import type { Block } from "../api/types";
 import { newBlockId } from "../api/client";
 import { hapticLight, hapticSelect } from "../lib/haptics";
-import { color } from "../theme";
+import { useTheme } from "../context/ThemeContext";
 
 type Props = {
   blocks: Block[];
@@ -28,6 +28,11 @@ type Props = {
    * (full editor also gets Add line / Delete line).
    */
   compact?: boolean;
+  /**
+   * Compact footer trailing control (e.g. “Open full note”) — same row as
+   * nest/unnest, not stacked below.
+   */
+  footerEnd?: ReactNode;
 };
 
 type Selection = { start: number; end: number };
@@ -47,7 +52,9 @@ export const Outliner = React.memo(function Outliner({
   editable = true,
   onDirty,
   compact = false,
+  footerEnd,
 }: Props) {
+  const { colors: c } = useTheme();
   const [focusId, setFocusId] = useState<string | null>(blocks[0]?.id ?? null);
   /** Focus a row that is not mounted yet (Enter / Line+). Never used for merge/delete. */
   const wantFocusId = useRef<string | null>(null);
@@ -378,38 +385,57 @@ export const Outliner = React.memo(function Outliner({
         />
       ))}
       {editable ? (
-        <View style={[styles.tools, compact && styles.toolsCompact]}>
-          <ToolIcon
-            symbol="decrease.indent"
-            fallback="⇤"
-            label="Unnest"
-            compact={compact}
-            onPress={() => indent(fi, -1)}
-          />
-          <ToolIcon
-            symbol="increase.indent"
-            fallback="⇥"
-            label="Nest"
-            compact={compact}
-            onPress={() => indent(fi, 1)}
-          />
-          {!compact ? (
-            <>
+        compact ? (
+          // One footer row: nest/unnest left · optional “Open full note” right
+          <View style={[styles.toolsCompactRow, { borderTopColor: c.hairline }]}>
+            <View style={styles.toolsCluster}>
               <ToolIcon
-                symbol="plus"
-                fallback="+"
-                label="Add line"
-                onPress={() => addAfter(fi)}
+                symbol="decrease.indent"
+                fallback="⇤"
+                label="Unnest"
+                compact
+                onPress={() => indent(fi, -1)}
               />
               <ToolIcon
-                symbol="trash"
-                fallback="⌫"
-                label="Delete line"
-                onPress={() => removeAt(fi)}
+                symbol="increase.indent"
+                fallback="⇥"
+                label="Nest"
+                compact
+                onPress={() => indent(fi, 1)}
               />
-            </>
-          ) : null}
-        </View>
+            </View>
+            {footerEnd ? <View style={styles.footerEnd}>{footerEnd}</View> : null}
+          </View>
+        ) : (
+          <View style={[styles.tools, { borderTopColor: c.hairline }]}>
+            <ToolIcon
+              symbol="decrease.indent"
+              fallback="⇤"
+              label="Unnest"
+              onPress={() => indent(fi, -1)}
+            />
+            <ToolIcon
+              symbol="increase.indent"
+              fallback="⇥"
+              label="Nest"
+              onPress={() => indent(fi, 1)}
+            />
+            <ToolIcon
+              symbol="plus"
+              fallback="+"
+              label="Add line"
+              onPress={() => addAfter(fi)}
+            />
+            <ToolIcon
+              symbol="trash"
+              fallback="⌫"
+              label="Delete line"
+              onPress={() => removeAt(fi)}
+            />
+          </View>
+        )
+      ) : footerEnd ? (
+        <View style={[styles.toolsCompactRow, { borderTopColor: c.hairline }]}>{footerEnd}</View>
       ) : null}
     </View>
   );
@@ -451,17 +477,18 @@ const BlockRow = React.memo(
     onSubmitEditing,
     setRowRef,
   }: BlockRowProps) {
+    const { colors: c } = useTheme();
     return (
       <View
         style={[styles.row, compact && styles.rowCompact, { paddingLeft: indent * indentStep }]}
       >
         <View style={[styles.dotCol, compact && styles.dotColCompact]}>
-          <View style={styles.dot} />
+          <View style={[styles.dot, { backgroundColor: c.verseNum }]} />
         </View>
         {editable ? (
           <TextInput
             ref={(r) => setRowRef(id, r)}
-            style={[styles.input, compact && styles.inputCompact]}
+            style={[styles.input, compact && styles.inputCompact, { color: c.ink }]}
             value={text}
             onChangeText={(t) => onChangeText(id, t)}
             onFocus={() => onFocus(id)}
@@ -474,14 +501,14 @@ const BlockRow = React.memo(
             onSubmitEditing={() => onSubmitEditing(id)}
             onKeyPress={(e) => onKeyPress(id, e)}
             placeholder={placeholder}
-            placeholderTextColor="#999"
+            placeholderTextColor={c.faint}
             autoCorrect
             scrollEnabled={false}
             showSoftInputOnFocus
             textAlignVertical="top"
           />
         ) : (
-          <Text style={styles.viewTxt}>{text || " "}</Text>
+          <Text style={[styles.viewTxt, { color: c.inkSoft }]}>{text || " "}</Text>
         )}
       </View>
     );
@@ -528,6 +555,7 @@ function ToolIcon({
   onPress: () => void;
   compact?: boolean;
 }) {
+  const { colors: c } = useTheme();
   return (
     <Pressable
       onPress={() => {
@@ -537,7 +565,7 @@ function ToolIcon({
       style={({ pressed }) => [
         styles.toolIcon,
         compact && styles.toolIconCompact,
-        pressed && styles.toolIconPressed,
+        pressed && { backgroundColor: c.pressFill },
       ]}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -547,10 +575,10 @@ function ToolIcon({
         name={symbol as any}
         size={compact ? 17 : 18}
         weight="semibold"
-        tintColor={color.inkSoft}
+        tintColor={c.inkSoft}
         // Same optical lift as header glyphs — SF Symbols sit low in the hit box
         style={styles.toolGlyph}
-        fallback={<Text style={styles.toolFallback}>{fallback}</Text>}
+        fallback={<Text style={[styles.toolFallback, { color: c.inkSoft }]}>{fallback}</Text>}
       />
     </Pressable>
   );
@@ -584,7 +612,6 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "rgba(0,0,0,0.28)",
     transform: [{ translateY: -1 }],
   },
   input: {
@@ -593,14 +620,13 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     padding: 0,
     margin: 0,
-    color: "#111",
   } as TextStyle,
   inputCompact: {
     fontSize: 17,
     lineHeight: 24,
     minWidth: 0,
   } as TextStyle,
-  viewTxt: { flex: 1, fontSize: 15, lineHeight: 22, color: "#333" },
+  viewTxt: { flex: 1, fontSize: 15, lineHeight: 22 },
   tools: {
     flexDirection: "row",
     alignItems: "center",
@@ -609,17 +635,30 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(0,0,0,0.1)",
   },
-  /** Reader tray: nest/unnest only, left-aligned cluster */
-  toolsCompact: {
-    justifyContent: "flex-start",
-    gap: 4,
+  /** Compact tray: nest/unnest + trailing action on ONE row */
+  toolsCompactRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
     marginTop: 4,
     paddingTop: 4,
     paddingBottom: 0,
+    minHeight: 44,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(0,0,0,0.08)",
+  },
+  toolsCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    flexShrink: 0,
+  },
+  footerEnd: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "flex-end",
+    justifyContent: "center",
   },
   toolIcon: {
     width: 40,
@@ -632,15 +671,11 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
   },
-  toolIconPressed: {
-    backgroundColor: "rgba(0,0,0,0.06)",
-  },
   toolGlyph: {
     transform: [{ translateY: -1 }],
   },
   toolFallback: {
     fontSize: 16,
     fontWeight: "600",
-    color: color.inkSoft,
   },
 });

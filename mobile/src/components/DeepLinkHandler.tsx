@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
 import { useSession } from "../context/SessionContext";
 import { parseDeepLink } from "../lib/deepLink";
+import { pushOnce } from "../lib/nav";
 
 /**
  * Opens inbound keyverse / https door links into the reader (default) or note.
@@ -41,15 +42,15 @@ export function DeepLinkHandler() {
         }
 
         if (target.kind === "read" && target.slug) {
-          router.push(`/read/${encodeURIComponent(target.slug)}`);
+          pushOnce(router, `/read/${encodeURIComponent(target.slug)}`);
           return;
         }
         if (target.kind === "note" && target.slug) {
-          router.push(`/note/${encodeURIComponent(target.slug)}`);
+          pushOnce(router, `/note/${encodeURIComponent(target.slug)}`);
           return;
         }
         if (target.kind === "home") {
-          router.push("/home");
+          pushOnce(router, "/home");
         }
       } finally {
         busy.current = false;

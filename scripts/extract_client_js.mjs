@@ -189,7 +189,17 @@ function findPageTemplate(fnMarker, mustInclude) {
 fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync(path.join(OUT, "icons"), { recursive: true });
 
-write("app.css", evalConst("CSS"));
+// app.css + pwa-head are managed in priv/static (theme dual-mode, modern chrome).
+// server.mjs CSS is legacy/stale — do not clobber unless EXTRACT_CSS=1.
+if (process.env.EXTRACT_CSS === "1") {
+  write("app.css", evalConst("CSS"));
+  write("pwa-head.html", evalConst("PWA_HEAD"));
+  console.log("extract_client_js: wrote app.css + pwa-head (EXTRACT_CSS=1)");
+} else {
+  console.log(
+    "extract_client_js: skipping app.css + pwa-head (priv/static is SOT; set EXTRACT_CSS=1 to overwrite from server.mjs)",
+  );
+}
 write(
   "outliner.js",
   evalConst("OUTLINER_JS") +
@@ -197,7 +207,6 @@ write(
 );
 write("crypto.js", evalConst("CRYPTO_JS"));
 write("pwa-boot.js", evalConst("PWA_BOOT_JS"));
-write("pwa-head.html", evalConst("PWA_HEAD"));
 
 // door-share
 {

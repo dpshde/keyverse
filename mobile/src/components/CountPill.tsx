@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View, type ViewStyle } from "react-native";
-import { color, radius } from "../theme";
+import { useTheme } from "../context/ThemeContext";
+import { radius } from "../theme";
 
 type Props = {
   /** Numeric count, or a short label (e.g. "All", "More") */
@@ -20,12 +21,18 @@ export function CountPill({
   style,
   accessibilityElementsHidden = true,
 }: Props) {
+  const { colors: c } = useTheme();
   return (
     <View
       style={[
         styles.pill,
-        variant === "ghost" && styles.ghost,
-        variant === "active" && styles.active,
+        { backgroundColor: c.fillStrong },
+        variant === "ghost" && {
+          backgroundColor: "transparent",
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: c.lineSoft,
+        },
+        variant === "active" && { backgroundColor: c.primaryFill },
         style,
       ]}
       accessibilityElementsHidden={accessibilityElementsHidden}
@@ -34,8 +41,9 @@ export function CountPill({
       <Text
         style={[
           styles.text,
-          variant === "ghost" && styles.textGhost,
-          variant === "active" && styles.textActive,
+          { color: c.inkSoft },
+          variant === "ghost" && { fontWeight: "600", color: c.faint },
+          variant === "active" && { color: c.primaryOn },
         ]}
       >
         {label}
@@ -45,35 +53,21 @@ export function CountPill({
 }
 
 const styles = StyleSheet.create({
+  /** Fixed geometry so book + chapter trailing counts align on one vertical rail */
   pill: {
-    minWidth: 28,
-    height: 26,
-    paddingHorizontal: 9,
+    minWidth: 30,
+    height: 28,
+    paddingHorizontal: 8,
     borderRadius: radius.pill,
-    backgroundColor: color.fillStrong,
     alignItems: "center",
     justifyContent: "center",
-  },
-  ghost: {
-    backgroundColor: "transparent",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.line,
-  },
-  active: {
-    backgroundColor: color.ink,
+    flexShrink: 0,
   },
   text: {
     fontSize: 13,
     fontWeight: "700",
-    color: color.inkSoft,
     fontVariant: ["tabular-nums"],
     letterSpacing: -0.2,
-  },
-  textGhost: {
-    fontWeight: "600",
-    color: color.muted,
-  },
-  textActive: {
-    color: color.paperRaised,
+    textAlign: "center",
   },
 });

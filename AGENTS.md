@@ -46,7 +46,7 @@ scripts/extract_client_js.mjs  → priv/static (re-run after editing server.mjs 
 2. **Compose, don’t absorb** — reader projection; never merge note bodies across addresses (ADR 0004).
 3. **Door vs pack** — multiword path is access (ADR 0011); client passphrase seals note text (ADR 0012).
 4. **Passage share v1** — default URL is `/{door}/read/{slug}` (ADR 0019). Link includes the key (full pack access). No opaque share tokens unless a new ADR.
-5. **Web static pipeline** — prefer editing `server.mjs` templates then `node scripts/extract_client_js.mjs`. Hand-edits to `priv/static/*` may be overwritten.
+5. **Web static pipeline** — JS client scripts: prefer `server.mjs` templates then `node scripts/extract_client_js.mjs`. **`app.css` + `pwa-head.html` live in `priv/static`** (theme tokens, dual mode); extract skips them unless `EXTRACT_CSS=1`.
 6. **Tests gate** — `mix test` and `mix keyverse.conformance` for protocol-facing changes.
 7. **Mobile local-first** — default notes path is device pack; cloud is optional mirror (Settings / Share).
 
@@ -67,7 +67,8 @@ MIX_ENV=prod mix run --no-halt
 ### Web static extract
 
 ```sh
-node scripts/extract_client_js.mjs   # writes priv/static + syntax-checks JS
+node scripts/extract_client_js.mjs   # writes priv/static JS (skips app.css / pwa-head)
+# EXTRACT_CSS=1 node scripts/extract_client_js.mjs   # also overwrite CSS from server.mjs (legacy)
 ```
 
 ### Mobile (sim)
@@ -129,8 +130,8 @@ Full host + mobile deploy: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 
 ### Web UX only
 
-1. Prefer `server.mjs` client scripts/CSS → extract.
-2. Match mobile product intent when both surfaces share a flow (share, reader).
+1. Prefer `server.mjs` client **JS** → extract; edit **CSS/theme in `priv/static/app.css`**.
+2. Match mobile product intent when both surfaces share a flow (share, reader, appearance).
 3. No LiveView redesign of capture.
 
 ### Mobile product UX

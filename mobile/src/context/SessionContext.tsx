@@ -176,28 +176,52 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [ready, cloudEnabled, quietSync]);
 
-  const value: Ctx = {
-    ready,
-    localMode: true,
-    translation,
-    setTranslation,
-    cloudEnabled,
-    cloudDoor,
-    cloudHost,
-    lastSyncAt: meta?.cloud?.last_sync_at,
-    client,
-    protocol,
-    passphrase,
-    hasPassphrase: !!passphrase,
-    setPassphrase,
-    clearPassphrase,
-    enableCloud,
-    disableCloud,
-    syncCloud,
-    refreshProtocol,
-    host: cloudHost,
-    door: cloudDoor,
-  };
+  const lastSyncAt = meta?.cloud?.last_sync_at;
+  const hasPassphrase = !!passphrase;
+
+  const value = useMemo<Ctx>(
+    () => ({
+      ready,
+      localMode: true,
+      translation,
+      setTranslation,
+      cloudEnabled,
+      cloudDoor,
+      cloudHost,
+      lastSyncAt,
+      client,
+      protocol,
+      passphrase,
+      hasPassphrase,
+      setPassphrase,
+      clearPassphrase,
+      enableCloud,
+      disableCloud,
+      syncCloud,
+      refreshProtocol,
+      host: cloudHost,
+      door: cloudDoor,
+    }),
+    [
+      ready,
+      translation,
+      setTranslation,
+      cloudEnabled,
+      cloudDoor,
+      cloudHost,
+      lastSyncAt,
+      client,
+      protocol,
+      passphrase,
+      hasPassphrase,
+      setPassphrase,
+      clearPassphrase,
+      enableCloud,
+      disableCloud,
+      syncCloud,
+      refreshProtocol,
+    ]
+  );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

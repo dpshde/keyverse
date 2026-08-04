@@ -3295,3 +3295,431 @@
 }
 /* Keep global pack-own max-width from bleeding into local layout oddly */
 .local-shell .pack-own{max-width:none;margin-left:0;margin-right:0}
+
+/* ---------- Activity (contribution graph) ---------- */
+.activity-page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 0 var(--page-pad-x) 2rem;
+}
+.activity-home-link {
+  color: inherit;
+  text-decoration: none;
+}
+.activity-home-link:hover { text-decoration: underline; text-underline-offset: .12em; }
+.activity-head { margin: .35rem 0 1rem; }
+.activity-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 .35rem;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+.activity-lead { margin: 0; font-size: .88rem; line-height: 1.4; }
+.activity-graph-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  padding: .35rem 0 .75rem;
+  margin: 0 -.15rem;
+}
+.activity-graph {
+  display: block;
+  width: max-content;
+  max-width: none;
+  min-width: 0;
+}
+/* Scoped under .activity-graph so global button/touch rules cannot blow open cells */
+.activity-graph .ag-board {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: max-content;
+}
+.activity-graph .ag-months,
+.activity-graph .ag-weeks {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 3px;
+  width: max-content;
+}
+.activity-graph .ag-months {
+  height: 1.1rem;
+  margin: 0 0 2px;
+}
+.activity-graph .ag-month-col {
+  box-sizing: border-box;
+  position: relative;
+  width: 11px;
+  min-width: 11px;
+  max-width: 11px;
+  flex: 0 0 11px;
+  height: 1.1rem;
+  overflow: visible;
+  font-size: 10px;
+  line-height: 1.1rem;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.activity-graph .ag-month-lab {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 10px;
+  line-height: 1.1rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+  letter-spacing: .01em;
+}
+.activity-graph .ag-week {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 3px;
+  width: 11px;
+  min-width: 11px;
+  max-width: 11px;
+  flex: 0 0 11px;
+}
+.activity-graph .ag-cell,
+.activity-graph button.ag-cell {
+  display: block;
+  box-sizing: border-box;
+  width: 11px !important;
+  height: 11px !important;
+  min-width: 11px !important;
+  min-height: 11px !important;
+  max-width: 11px !important;
+  max-height: 11px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 2px !important;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  cursor: pointer;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  flex: 0 0 11px;
+  touch-action: manipulation;
+}
+.activity-graph .ag-cell:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.activity-graph .ag-cell.ag-out {
+  opacity: 0;
+  pointer-events: none;
+  cursor: default;
+}
+.activity-graph .ag-cell[data-level="0"] { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.activity-graph .ag-cell[data-level="1"] { background: #9bbfa8; }
+.activity-graph .ag-cell[data-level="2"] { background: #6d9a7c; }
+.activity-graph .ag-cell[data-level="3"] { background: #457a58; }
+.activity-graph .ag-cell[data-level="4"] { background: #2a5139; }
+html[data-theme="dark"] .activity-graph .ag-cell[data-level="0"] { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+html[data-theme="dark"] .activity-graph .ag-cell[data-level="1"] { background: #3a5c48; }
+html[data-theme="dark"] .activity-graph .ag-cell[data-level="2"] { background: #4d7a5e; }
+html[data-theme="dark"] .activity-graph .ag-cell[data-level="3"] { background: #6dba86; }
+html[data-theme="dark"] .activity-graph .ag-cell[data-level="4"] { background: #8fd0a4; }
+.activity-graph .ag-cell.is-selected {
+  box-shadow: 0 0 0 2px var(--ink);
+  outline: none;
+}
+/* Kill touch-target media rules that enlarge bare buttons on coarse pointers */
+@media (max-width: 640px), (pointer: coarse) {
+  .activity-graph .ag-cell,
+  .activity-graph button.ag-cell {
+    width: 11px !important;
+    height: 11px !important;
+    min-width: 11px !important;
+    min-height: 11px !important;
+    max-width: 11px !important;
+    max-height: 11px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}
+/* Floating hover tip (date + change count) */
+.activity-tip {
+  position: fixed;
+  z-index: 80;
+  max-width: min(18rem, calc(100vw - 1rem));
+  padding: .35rem .55rem;
+  border-radius: var(--control-radius-sm, .4rem);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: .75rem;
+  line-height: 1.3;
+  font-weight: 500;
+  pointer-events: none;
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 22%, transparent);
+  white-space: nowrap;
+}
+.activity-tip[hidden] { display: none !important; }
+.activity-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: .65rem;
+  font-size: .75rem;
+  color: var(--muted);
+}
+.activity-legend .ag-cell {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  min-width: 11px;
+  min-height: 11px;
+  border-radius: 2px;
+  cursor: default;
+  pointer-events: none;
+  vertical-align: middle;
+}
+.activity-day {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line-soft);
+}
+.activity-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-bottom: .75rem;
+}
+.activity-day-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.activity-day-close {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--control-radius);
+  cursor: pointer;
+}
+.activity-day-close:hover { background: var(--fill); color: var(--ink); }
+.activity-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+}
+.activity-event {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--control-radius-lg);
+  background: var(--paper-raised);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+.activity-event-toggle {
+  appearance: none;
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  width: 100%;
+  margin: 0;
+  padding: .7rem .8rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.activity-event-toggle:hover { background: var(--fill); }
+.activity-event-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  outline-offset: -2px;
+}
+.activity-event-chev {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: transform .14s ease;
+}
+.activity-event-chev::before {
+  content: "";
+  display: block;
+  width: .45rem;
+  height: .45rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-left: .1rem;
+}
+.activity-event.is-open .activity-event-chev {
+  transform: rotate(90deg);
+}
+.activity-event-head-text,
+.activity-event-static {
+  display: flex;
+  flex-direction: column;
+  gap: .12rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.activity-event-static {
+  padding: .7rem .8rem;
+}
+.activity-event-label {
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.activity-event-meta {
+  font-size: .82rem;
+  line-height: 1.35;
+}
+.activity-event-body {
+  padding: 0 .8rem .8rem;
+  border-top: 1px solid var(--line-soft);
+  padding-top: .65rem;
+  margin-top: 0;
+}
+.activity-event-body[hidden] { display: none; }
+.activity-event:not(.is-open) .activity-event-body { display: none; }
+.activity-event-open {
+  display: inline-block;
+  margin-top: .55rem;
+  font-size: .85rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+.activity-event-open:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: .12em;
+}
+.activity-diff-empty {
+  margin: 0;
+  font-size: .88rem;
+}
+/* Outline-shaped unified diff (matches reader bullets + indent) */
+.activity-outline-diff {
+  --note-gutter: 1.15rem;
+  --bullet: 0.4rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: auto;
+  max-height: 22rem;
+  font-family: inherit;
+  font-size: .92rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+/* Multi-line only: soft panel so a long outline reads as one unit */
+.activity-outline-diff:not(.is-compact) {
+  padding: .3rem .2rem .35rem 0;
+  border-radius: var(--control-radius);
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--ink) 2.5%, var(--paper));
+}
+.activity-oline {
+  display: grid;
+  grid-template-columns: 1.15rem var(--note-gutter) minmax(0, 1fr);
+  align-items: start;
+  box-sizing: border-box;
+  width: auto;
+  min-height: 1.5em;
+  margin: 0 0 0 calc(var(--depth, 0) * var(--note-gutter));
+  padding: .2rem .55rem .2rem .25rem;
+  border-radius: .4rem;
+  position: relative;
+}
+/* Single/short diffs: one wash row, no double frame */
+.activity-outline-diff.is-compact .activity-oline {
+  margin-left: 0;
+}
+.activity-omark {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .78rem;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
+  color: transparent;
+  user-select: none;
+}
+.activity-odot {
+  box-sizing: border-box;
+  width: var(--note-gutter);
+  height: 1.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.activity-odot::before {
+  content: "";
+  display: block;
+  width: var(--bullet);
+  height: var(--bullet);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+.activity-otxt {
+  min-width: 0;
+  padding: .05rem 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+}
+.activity-otxt-blank {
+  color: var(--faint);
+  font-style: italic;
+}
+.activity-oline.apd-add {
+  background: color-mix(in srgb, #2f5a40 14%, transparent);
+}
+.activity-oline.apd-del {
+  background: color-mix(in srgb, #a33 12%, transparent);
+}
+.activity-oline.apd-add .activity-omark { color: #2f5a40; }
+.activity-oline.apd-del .activity-omark { color: #a33; }
+.activity-oline.apd-del .activity-otxt {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, #a33 55%, transparent);
+  color: color-mix(in srgb, var(--ink) 72%, transparent);
+}
+.activity-oline.apd-del .activity-odot::before {
+  background: color-mix(in srgb, #a33 55%, transparent);
+}
+.activity-oline.apd-add .activity-odot::before {
+  background: color-mix(in srgb, #2f5a40 70%, transparent);
+}
+html[data-theme="dark"] .activity-oline.apd-add {
+  background: color-mix(in srgb, #6dba86 16%, transparent);
+}
+html[data-theme="dark"] .activity-oline.apd-del {
+  background: color-mix(in srgb, #e88 14%, transparent);
+}
+html[data-theme="dark"] .activity-oline.apd-add .activity-omark { color: #8fd0a4; }
+html[data-theme="dark"] .activity-oline.apd-del .activity-omark { color: #f0a0a0; }
+html[data-theme="dark"] .activity-oline.apd-add .activity-odot::before {
+  background: color-mix(in srgb, #8fd0a4 80%, transparent);
+}
+html[data-theme="dark"] .activity-oline.apd-del .activity-odot::before {
+  background: color-mix(in srgb, #f0a0a0 70%, transparent);
+}

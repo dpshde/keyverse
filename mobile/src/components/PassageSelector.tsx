@@ -8,14 +8,14 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
   type KeyboardEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SuggestItem } from "../api/types";
+import { useTheme } from "../context/ThemeContext";
 import { hapticLight, hapticSelect } from "../lib/haptics";
-import { color, radius, space, tap, tapComfy } from "../theme";
+import { radius, space, tap, tapComfy } from "../theme";
 
 type Props = {
   value: string;
@@ -39,8 +39,8 @@ export function PassageSelector({
   onKeyboardHeightChange,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const scheme = useColorScheme();
-  const dark = scheme === "dark";
+  const { colors: c } = useTheme();
+  const g = c.glass;
   const restPad = Math.max(insets.bottom, space[3]);
 
   /**
@@ -104,23 +104,34 @@ export function PassageSelector({
       ]}
     >
       {shown.length > 0 ? (
-        <View style={[styles.sugOuter, dark && styles.sugOuterDark]}>
-          <View style={[styles.glassFill, dark && styles.glassFillDark]} />
-          <View style={[styles.glassHighlight, dark && styles.glassHighlightDark]} />
+        <View
+          style={[
+            styles.sugOuter,
+            {
+              backgroundColor: g.sugBg,
+              borderColor: g.sugBorder,
+              borderBottomColor: g.capsuleBorderBottom,
+            },
+          ]}
+        >
+          <View style={[styles.glassFill, { backgroundColor: g.field }]} />
+          <View style={[styles.glassHighlight, { backgroundColor: g.specular }]} />
           {shown.map((s, i) => (
             <Pressable
               key={s.canonical + s.label}
               style={[
                 styles.sugRow,
-                i < shown.length - 1 && styles.sugRowBorder,
-                dark && styles.sugRowBorderDark,
+                i < shown.length - 1 && {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: g.sugRowBorder,
+                },
               ]}
               onPress={() => {
                 hapticSelect();
                 onSubmit(s.insertText || s.canonical);
               }}
             >
-              <Text style={[styles.sugTxt, dark && styles.sugTxtDark]} numberOfLines={1}>
+              <Text style={[styles.sugTxt, { color: c.ink }]} numberOfLines={1}>
                 {s.label}
               </Text>
             </Pressable>
@@ -129,32 +140,46 @@ export function PassageSelector({
       ) : null}
 
       <View style={styles.capsuleOuter}>
-        <View style={[styles.glow, dark && styles.glowDark]} />
-        <View style={[styles.capsule, dark && styles.capsuleDark]}>
-          <View style={[styles.specular, dark && styles.specularDark]} pointerEvents="none" />
+        {/* Soft outer lift only — no scaled “halo” that reads as a second rim */}
+        <View
+          style={[
+            styles.capsule,
+            {
+              backgroundColor: g.capsule,
+              borderColor: g.capsuleBorder,
+              borderBottomColor: g.capsuleBorderBottom,
+            },
+          ]}
+        >
+          <View
+            style={[styles.specular, { backgroundColor: g.specular }]}
+            pointerEvents="none"
+          />
           <View style={styles.capsuleInner}>
-            <View style={[styles.fieldShell, dark && styles.fieldShellDark]}>
-              <TextInput
-                style={[styles.field, dark && styles.fieldDark]}
-                value={value}
-                onChangeText={onChangeText}
-                placeholder="John 3:16 · psa 33"
-                placeholderTextColor={dark ? "rgba(255,255,255,0.38)" : "rgba(22,22,22,0.38)"}
-                autoCapitalize="none"
-                autoCorrect={false}
-                onSubmitEditing={() => {
-                  hapticLight();
-                  onSubmit();
-                }}
-                returnKeyType="go"
-                accessibilityLabel="Passage search"
-                selectionColor={dark ? "rgba(255,255,255,0.35)" : "rgba(22,22,22,0.18)"}
-              />
-            </View>
+            {/* Field is flush with the glass — no nested fieldShell pill */}
+            <TextInput
+              style={[styles.field, { color: c.ink }]}
+              value={value}
+              onChangeText={onChangeText}
+              placeholder="John 3:16 · psa 33"
+              placeholderTextColor={g.placeholder}
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={() => {
+                hapticLight();
+                onSubmit();
+              }}
+              returnKeyType="go"
+              accessibilityLabel="Passage search"
+              selectionColor={g.selection}
+            />
             <Pressable
               style={({ pressed }) => [
                 styles.go,
-                dark && styles.goDark,
+                {
+                  backgroundColor: c.primaryFill,
+                  borderColor: "transparent",
+                },
                 pressed && styles.goPressed,
               ]}
               onPress={() => {
@@ -164,7 +189,7 @@ export function PassageSelector({
               accessibilityRole="button"
               accessibilityLabel="Go to passage"
             >
-              <Text style={[styles.goTxt, dark && styles.goTxtDark]}>Go</Text>
+              <Text style={[styles.goTxt, { color: c.primaryOn }]}>Go</Text>
             </Pressable>
           </View>
         </View>
@@ -197,27 +222,15 @@ const styles = StyleSheet.create({
   sugOuter: {
     borderRadius: radius.lg,
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.94)",
     borderWidth: StyleSheet.hairlineWidth * 2,
-    borderColor: "rgba(255,255,255,0.9)",
-    borderBottomColor: "rgba(22,22,22,0.1)",
     shadowColor: "#000",
     shadowOpacity: 0.14,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
-  sugOuterDark: {
-    backgroundColor: "rgba(28,30,36,0.94)",
-    borderColor: "rgba(255,255,255,0.16)",
-    borderBottomColor: "rgba(0,0,0,0.4)",
-  },
   glassFill: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(246,245,242,0.55)",
-  },
-  glassFillDark: {
-    backgroundColor: "rgba(0,0,0,0.28)",
   },
   glassHighlight: {
     position: "absolute",
@@ -225,10 +238,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     height: 1,
-    backgroundColor: "rgba(255,255,255,0.9)",
-  },
-  glassHighlightDark: {
-    backgroundColor: "rgba(255,255,255,0.22)",
   },
   sugRow: {
     minHeight: tap,
@@ -237,75 +246,33 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 1,
   },
-  sugRowBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(22,22,22,0.08)",
-  },
-  sugRowBorderDark: {
-    borderBottomColor: "rgba(255,255,255,0.1)",
-  },
   sugTxt: {
     fontSize: 16,
     fontWeight: "500",
-    color: color.ink,
     letterSpacing: -0.2,
-  },
-  sugTxtDark: {
-    color: "rgba(255,255,255,0.92)",
   },
   capsuleOuter: {
     borderRadius: 28,
     shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
     elevation: 14,
-  },
-  glow: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.55)",
-    transform: [{ scale: 1.03 }],
-    opacity: 0.5,
-  },
-  glowDark: {
-    backgroundColor: "rgba(90,100,140,0.32)",
   },
   capsule: {
     borderRadius: 28,
     overflow: "hidden",
-    backgroundColor: Platform.select({
-      ios: "rgba(255,255,255,0.94)",
-      default: "rgba(255,255,255,0.97)",
-    }),
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    borderColor: "rgba(255,255,255,0.92)",
-    borderBottomColor: "rgba(22,22,22,0.12)",
-    borderLeftColor: "rgba(255,255,255,0.7)",
-    borderRightColor: "rgba(255,255,255,0.7)",
-  },
-  capsuleDark: {
-    backgroundColor: Platform.select({
-      ios: "rgba(32,34,40,0.94)",
-      default: "rgba(28,30,36,0.97)",
-    }),
-    borderColor: "rgba(255,255,255,0.2)",
-    borderBottomColor: "rgba(0,0,0,0.45)",
-    borderLeftColor: "rgba(255,255,255,0.12)",
-    borderRightColor: "rgba(255,255,255,0.12)",
+    borderWidth: StyleSheet.hairlineWidth,
   },
   specular: {
     position: "absolute",
-    left: 12,
-    right: 12,
+    left: 14,
+    right: 14,
     top: 0,
-    height: 14,
+    height: 12,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.55)",
-  },
-  specularDark: {
-    backgroundColor: "rgba(255,255,255,0.1)",
+    opacity: 0.9,
   },
   capsuleInner: {
     flexDirection: "row",
@@ -314,39 +281,16 @@ const styles = StyleSheet.create({
     padding: space[2],
     minHeight: tapComfy + space[2] * 2,
   },
-  fieldShell: {
-    flex: 1,
-    minHeight: tapComfy,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.88)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(22,22,22,0.08)",
-    justifyContent: "center",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOpacity: 0.04,
-        shadowRadius: 3,
-        shadowOffset: { width: 0, height: 1 },
-      },
-      default: {},
-    }),
-  },
-  fieldShellDark: {
-    backgroundColor: "rgba(0,0,0,0.4)",
-    borderColor: "rgba(255,255,255,0.12)",
-  },
   field: {
+    flex: 1,
     minHeight: tapComfy,
     paddingHorizontal: space[4],
     paddingVertical: space[3],
     fontSize: 17,
     fontWeight: "500",
     letterSpacing: -0.2,
-    color: color.ink,
-  },
-  fieldDark: {
-    color: "rgba(255,255,255,0.95)",
+    // Transparent field on glass — no nested bg/border
+    backgroundColor: "transparent",
   },
   go: {
     minHeight: tapComfy,
@@ -355,26 +299,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: space[4],
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(22,22,22,0.9)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.22)",
-    borderTopColor: "rgba(255,255,255,0.4)",
-  },
-  goDark: {
-    backgroundColor: "rgba(255,255,255,0.94)",
-    borderColor: "rgba(255,255,255,0.55)",
   },
   goPressed: {
     opacity: 0.88,
     transform: [{ scale: 0.98 }],
   },
   goTxt: {
-    color: "#fff",
     fontWeight: "700",
     fontSize: 16,
     letterSpacing: -0.2,
-  },
-  goTxtDark: {
-    color: color.ink,
   },
 });

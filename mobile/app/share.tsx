@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -27,7 +27,8 @@ import {
   hapticSuccess,
   hapticWarning,
 } from "@/src/lib/haptics";
-import { color, radius, space, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { radius, space, type ThemeColors } from "@/src/theme";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
 
@@ -35,6 +36,8 @@ const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
  * Sync home — key management only. Sync runs under the hood (save + app open).
  */
 export default function ShareScreen() {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeShareStyles(color), [color]);
   const {
     cloudEnabled,
     cloudHost,
@@ -208,7 +211,8 @@ export default function ShareScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function makeShareStyles(color: ThemeColors) {
+  return StyleSheet.create({
   pad: {
     padding: space[4],
     gap: space[1],
@@ -227,3 +231,4 @@ const styles = StyleSheet.create({
     color: color.ink,
   },
 });
+}

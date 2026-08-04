@@ -1,13 +1,7 @@
 import { type ReactNode } from "react";
-import {
-  Platform,
-  StyleSheet,
-  useColorScheme,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "../context/ThemeContext";
 import { space } from "../theme";
 
 type Props = {
@@ -32,7 +26,8 @@ export function LiquidGlassBar({
   contentStyle,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const dark = useColorScheme() === "dark";
+  const { colors: c } = useTheme();
+  const g = c.glass;
   const padBottom = Math.max(insets.bottom, compact ? space[2] : bottomGutter);
   const r = compact ? 20 : 28;
 
@@ -40,21 +35,34 @@ export function LiquidGlassBar({
     <View pointerEvents="box-none" style={[styles.wrap, { paddingBottom: padBottom }, style]}>
       <View style={[styles.capsuleOuter, { borderRadius: r }, compact && styles.capsuleOuterCompact]}>
         <View
-          style={[styles.glow, { borderRadius: r }, dark && styles.glowDark, compact && styles.glowCompact]}
+          style={[
+            styles.glow,
+            { borderRadius: r, backgroundColor: g.glow },
+            compact && styles.glowCompact,
+          ]}
         />
         <View
           style={[
             styles.capsule,
-            { borderRadius: r },
-            dark && styles.capsuleDark,
+            {
+              borderRadius: r,
+              backgroundColor: g.capsule,
+              borderColor: g.capsuleBorder,
+              borderBottomColor: g.capsuleBorderBottom,
+              borderLeftColor: g.capsuleBorder,
+              borderRightColor: g.capsuleBorder,
+            },
             compact && styles.capsuleCompact,
           ]}
         >
           <View
             style={[
               styles.specular,
-              { borderTopLeftRadius: r, borderTopRightRadius: r },
-              dark && styles.specularDark,
+              {
+                borderTopLeftRadius: r,
+                borderTopRightRadius: r,
+                backgroundColor: g.specular,
+              },
               compact && styles.specularCompact,
             ]}
             pointerEvents="none"
@@ -100,7 +108,6 @@ const styles = StyleSheet.create({
   glow: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.55)",
     transform: [{ scale: 1.03 }],
     opacity: 0.5,
   },
@@ -108,34 +115,13 @@ const styles = StyleSheet.create({
     opacity: 0.35,
     transform: [{ scale: 1.02 }],
   },
-  glowDark: {
-    backgroundColor: "rgba(90,100,140,0.32)",
-  },
   capsule: {
     borderRadius: 28,
     overflow: "hidden",
-    backgroundColor: Platform.select({
-      ios: "rgba(255,255,255,0.94)",
-      default: "rgba(255,255,255,0.97)",
-    }),
     borderWidth: StyleSheet.hairlineWidth * 2,
-    borderColor: "rgba(255,255,255,0.92)",
-    borderBottomColor: "rgba(22,22,22,0.12)",
-    borderLeftColor: "rgba(255,255,255,0.7)",
-    borderRightColor: "rgba(255,255,255,0.7)",
   },
   capsuleCompact: {
     borderWidth: StyleSheet.hairlineWidth,
-  },
-  capsuleDark: {
-    backgroundColor: Platform.select({
-      ios: "rgba(32,34,40,0.94)",
-      default: "rgba(28,30,36,0.97)",
-    }),
-    borderColor: "rgba(255,255,255,0.2)",
-    borderBottomColor: "rgba(0,0,0,0.45)",
-    borderLeftColor: "rgba(255,255,255,0.12)",
-    borderRightColor: "rgba(255,255,255,0.12)",
   },
   specular: {
     position: "absolute",
@@ -145,15 +131,11 @@ const styles = StyleSheet.create({
     height: 14,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.55)",
   },
   specularCompact: {
     left: 10,
     right: 10,
     height: 10,
-  },
-  specularDark: {
-    backgroundColor: "rgba(255,255,255,0.08)",
   },
   inner: {
     flexDirection: "row",

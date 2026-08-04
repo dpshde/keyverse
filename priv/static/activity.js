@@ -197,10 +197,13 @@
         var sel = selectedDate === c.date ? " is-selected" : "";
         var level = c.empty ? 0 : c.level | 0;
         var tip = cellTipText(c);
+        // div[role=button] — avoids global button min-height / padding rules
         html +=
-          '<button type="button" class="ag-cell' +
+          '<div class="ag-cell' +
           out +
           sel +
+          '" role="button" tabindex="' +
+          (c.empty ? "-1" : "0") +
           '" data-level="' +
           level +
           '" data-date="' +
@@ -212,18 +215,25 @@
           '" aria-label="' +
           esc(tip) +
           '"' +
-          (c.empty ? " disabled" : "") +
-          "></button>";
+          (c.empty ? ' aria-disabled="true"' : "") +
+          "></div>";
       }
       html += "</div>";
     }
     html += "</div></div>";
     graphEl.innerHTML = html;
 
-    graphEl.querySelectorAll(".ag-cell[data-date]:not([disabled])").forEach(function (btn) {
-      btn.addEventListener("click", function () {
+    graphEl.querySelectorAll(".ag-cell[data-date]:not([aria-disabled])").forEach(function (btn) {
+      function activate() {
         hideTip();
         openDay(btn.getAttribute("data-date"));
+      }
+      btn.addEventListener("click", activate);
+      btn.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          activate();
+        }
       });
       btn.addEventListener("mouseenter", function () {
         showTip(btn, btn.getAttribute("data-tip") || "");

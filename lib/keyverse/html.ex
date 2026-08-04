@@ -374,10 +374,6 @@ defmodule Keyverse.Html do
     <header class="ui home-head">
       <h1>keyverse</h1>
       <div class="home-head-actions">
-        <a class="home-activity-link" href="#{esc(base)}/activity"
-          title="Activity" aria-label="Activity" data-testid="home-activity">
-          #{ico("chart-bar")}
-        </a>
         #{theme_seg()}
         #{door_share_chip(door)}
       </div>

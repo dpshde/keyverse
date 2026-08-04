@@ -220,10 +220,10 @@ defmodule Keyverse.Activity do
     end)
   end
 
-  # Human summary aligned with the day-card preview (outline + attachments/links).
+  # Human summary: block text changes + attachment/link changes (separate).
   defp net_content_summary(before_state, after_state) do
-    a = outline_lines(outline_text(before_state || %{"blocks" => [], "attachments" => []}))
-    b = outline_lines(outline_text(after_state || %{"blocks" => [], "attachments" => []}))
+    a = block_text_lines(before_state)
+    b = block_text_lines(after_state)
     {att_add, att_del} = attachment_diff_counts(before_state, after_state)
 
     text_parts =
@@ -252,14 +252,6 @@ defmodule Keyverse.Activity do
           |> Enum.reverse()
       end
 
-    # Drop bare "Added" when we also have att labels (use att wording instead for attach-only).
-    text_parts =
-      if text_parts == ["Added"] and att_add > 0 and length(a) == 0 and length(b) == 0 do
-        []
-      else
-        text_parts
-      end
-
     att_parts =
       []
       |> then(fn p -> if att_del > 0, do: [att_word(att_del, "removed") | p], else: p end)
@@ -274,6 +266,16 @@ defmodule Keyverse.Activity do
       true -> "Edited"
     end
   end
+
+  defp block_text_lines(nil), do: []
+
+  defp block_text_lines(state) when is_map(state) do
+    outline_lines(
+      outline_text(%{"blocks" => Map.get(state, "blocks") || [], "attachments" => []})
+    )
+  end
+
+  defp block_text_lines(_), do: []
 
   defp att_word(1, "attached"), do: "1 attachment"
   defp att_word(n, "attached"), do: "#{n} attachments"
@@ -618,6 +620,11 @@ defmodule Keyverse.Activity do
           _ -> []
         end
       end)
+
+    parts =
+      parts
+      |> then(fn p -> if att_n > 0, do: p ++ [att_word(att_n, "attached")], else: p end)
+      |> then(fn p -> if det_n > 0, do: p ++ [att_word(det_n, "removed")], else: p end)
 
     case parts do
       [] -> "#{length(ops)} change(s)"

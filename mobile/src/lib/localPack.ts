@@ -140,7 +140,8 @@ async function readJson<T>(uri: string): Promise<T | null> {
 
 async function writeJson(uri: string, obj: unknown) {
   await ensureDirs();
-  await FileSystem.writeAsStringAsync(uri, JSON.stringify(obj, null, 2));
+  // Compact JSON — faster autosave on the JS thread (pretty-print not needed on device)
+  await FileSystem.writeAsStringAsync(uri, JSON.stringify(obj));
 }
 
 export async function getMeta(): Promise<LocalMeta> {

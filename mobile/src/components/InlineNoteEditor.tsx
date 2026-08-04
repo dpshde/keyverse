@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import type { Attachment, Block, Note } from "../api/types";
@@ -8,7 +8,10 @@ import * as Local from "../lib/localPack";
 import { blocksEqual } from "../lib/blocksEqual";
 import { mirrorNoteIfCloud } from "../lib/cloudSync";
 import { hapticLight } from "../lib/haptics";
-import { color, radius, space, type, ui } from "../theme";
+import { pushOnce } from "../lib/nav";
+import { useTheme } from "../context/ThemeContext";
+import { radius, space, type ThemeColors } from "../theme";
+
 
 type Props = {
   slug: string;
@@ -58,6 +61,8 @@ export function InlineNoteEditor({
   compact = true,
   allowFullPage = true,
 }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeInlineNoteStyles(color, type), [color, type]);
   const router = useRouter();
   const [blocks, setBlocks] = useState<Block[]>(() =>
     initialBlocks?.length ? initialBlocks : Local.emptyBlocks()
@@ -163,7 +168,7 @@ export function InlineNoteEditor({
     if (timer.current != null || dirtyRef.current) {
       await save();
     }
-    router.push(`/note/${encodeURIComponent(slug)}`);
+    pushOnce(router, `/note/${encodeURIComponent(slug)}`);
   }, [save, router, slug]);
 
   useEffect(() => {
@@ -200,6 +205,23 @@ export function InlineNoteEditor({
     );
   }
 
+  // Stable element so Outliner React.memo is not defeated every parent render
+  const fullNoteLink = useMemo(
+    () =>
+      allowFullPage ? (
+        <Pressable
+          onPress={openFullPage}
+          accessibilityRole="button"
+          accessibilityLabel="Open full note page"
+          hitSlop={8}
+          style={({ pressed }) => [styles.fullLink, pressed && styles.fullLinkPressed]}
+        >
+          <Text style={styles.fullTxt}>Open full note</Text>
+        </Pressable>
+      ) : null,
+    [allowFullPage, openFullPage]
+  );
+
   return (
     <View style={[styles.tray, compact && styles.trayCompact]}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
@@ -209,22 +231,18 @@ export function InlineNoteEditor({
         editable
         compact={compact}
         onDirty={scheduleSave}
+        // Same footer row as nest/unnest (not stacked above Open full note)
+        footerEnd={compact ? fullNoteLink : undefined}
       />
-      {allowFullPage ? (
-        <Pressable
-          onPress={openFullPage}
-          accessibilityRole="button"
-          accessibilityLabel="Open full note page"
-          style={({ pressed }) => [styles.fullRow, pressed && styles.fullRowPressed]}
-        >
-          <Text style={styles.fullTxt}>Open full note</Text>
-        </Pressable>
+      {!compact && fullNoteLink ? (
+        <View style={styles.fullRow}>{fullNoteLink}</View>
       ) : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function makeInlineNoteStyles(color: ThemeColors, type: { caption: object; meta: object; bodyStrong: object; title: object; label: object; [k: string]: object }) {
+  return StyleSheet.create({
   tray: {
     marginTop: space[2],
     padding: space[3],
@@ -253,7 +271,12 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.lineSoft,
   },
-  fullRowPressed: {
+  fullLink: {
+    minHeight: 40,
+    justifyContent: "center",
+    paddingVertical: 8,
+  },
+  fullLinkPressed: {
     opacity: 0.65,
   },
   fullTxt: {
@@ -268,3 +291,4 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+}

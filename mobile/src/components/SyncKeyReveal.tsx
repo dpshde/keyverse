@@ -1,8 +1,11 @@
+import { useMemo } from "react";
 import { Modal, Pressable, Share, StyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { formatKeyForDisplay } from "@/src/lib/syncInvite";
 import { hapticLight, hapticSuccess } from "@/src/lib/haptics";
-import { color, radius, space, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { radius, space, type ThemeColors } from "@/src/theme";
+
 
 type Props = {
   visible: boolean;
@@ -13,6 +16,8 @@ type Props = {
 
 /** Full-attention reveal after first Turn on sync (claim). */
 export function SyncKeyReveal({ visible, door, onDone }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeRevealStyles(color, type), [color, type]);
   const display = formatKeyForDisplay(door);
 
   const copy = async () => {
@@ -50,7 +55,8 @@ export function SyncKeyReveal({ visible, door, onDone }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+function makeRevealStyles(color: ThemeColors, type: { caption: object; meta: object; bodyStrong: object; title: object; label: object; [k: string]: object }) {
+  return StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: color.paper,
@@ -78,3 +84,4 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 });
+}

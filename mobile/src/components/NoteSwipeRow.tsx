@@ -1,11 +1,13 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { SymbolView } from "expo-symbols";
 import Swipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { hapticLight, hapticSelect, hapticWarning } from "@/src/lib/haptics";
-import { color, radius, space, tap } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { radius, space, tap, type ThemeColors } from "@/src/theme";
+
 
 type Props = {
   children: React.ReactNode;
@@ -32,6 +34,8 @@ export function NoteSwipeRow({
   onEdit,
   onWillOpen,
 }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeSwipeStyles(color), [color]);
   const ref = useRef<SwipeableMethods | null>(null);
 
   const close = useCallback(() => {
@@ -113,7 +117,8 @@ export function NoteSwipeRow({
   );
 }
 
-const styles = StyleSheet.create({
+function makeSwipeStyles(color: ThemeColors) {
+  return StyleSheet.create({
   container: {
     overflow: "hidden",
     borderRadius: radius.md,
@@ -164,3 +169,4 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
+}

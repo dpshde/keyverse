@@ -26,7 +26,9 @@ import { mirrorNoteIfCloud } from "@/src/lib/cloudSync";
 import { displayScope, resolveLocal } from "@/src/lib/resolveLocal";
 import { passageShareUrls } from "@/src/lib/shareUrl";
 import { hapticError, hapticLight, hapticSelect } from "@/src/lib/haptics";
-import { color, radius, space, tap, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { pushOnce } from "@/src/lib/nav";
+import { radius, space, tap, type ThemeColors } from "@/src/theme";
 
 /** Natural-language title: "Hebrews 7:1" not "heb.7.1" or raw query text. */
 function titleForSlug(slug: string, note: Note | null): string {
@@ -47,6 +49,8 @@ function titleForSlug(slug: string, note: Note | null): string {
  * - Editor stays the hero; secondary actions recede into icons
  */
 export default function NoteScreen() {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeNoteStyles(color), [color]);
   const { slug: raw } = useLocalSearchParams<{ slug: string }>();
   const slug = decodeURIComponent(String(raw || ""));
   const { passphrase, hasPassphrase, cloudEnabled, cloudHost, cloudDoor } = useSession();
@@ -246,7 +250,7 @@ export default function NoteScreen() {
     hapticLight();
     const m = /^([a-z0-9]+)\.(\d+)/i.exec(slug);
     const chapter = m ? `${m[1].toLowerCase()}.${m[2]}` : slug;
-    router.push(`/read/${encodeURIComponent(chapter)}`);
+    pushOnce(router, `/read/${encodeURIComponent(chapter)}`);
   }, [slug, router]);
 
   const sharePassage = useCallback(async () => {
@@ -383,7 +387,8 @@ export default function NoteScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function makeNoteStyles(color: ThemeColors) {
+  return StyleSheet.create({
   center: {
     flex: 1,
     alignItems: "center",
@@ -438,7 +443,9 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   hint: {
-    ...type.caption,
+    fontSize: 12,
+    lineHeight: 16,
+    color: color.faint,
     paddingHorizontal: space[1],
   },
   warn: {
@@ -469,3 +476,4 @@ const styles = StyleSheet.create({
     gap: 0,
   },
 });
+}

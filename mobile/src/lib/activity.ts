@@ -23,6 +23,12 @@ export type ActivityHeatmap = {
   source: string;
 };
 
+export type ActivityAttachment = {
+  id?: string | null;
+  kind?: string;
+  label: string;
+};
+
 export type ActivityEvent = {
   kind: string;
   slug: string;
@@ -34,6 +40,8 @@ export type ActivityEvent = {
   op_count?: number;
   before_text?: string | null;
   after_text?: string | null;
+  before_attachments?: ActivityAttachment[];
+  after_attachments?: ActivityAttachment[];
   encrypted?: boolean;
   has_diff?: boolean;
 };
@@ -217,16 +225,39 @@ export function dayFromNotes(notes: Note[], date: string): ActivityDay {
     const created = isoDate(note.created_at);
     if (created !== date) continue;
 
+    const afterAtts = (note.attachments || []).map((a) => ({
+      id: (a as { id?: string }).id,
+      kind: (a as { kind?: string }).kind || "file",
+      label:
+        (a as { title?: string }).title ||
+        (a as { filename?: string }).filename ||
+        (a as { url?: string }).url ||
+        "attachment",
+    }));
+    const hasBodyText = !!(after && after.split("\n").some((l) => l.trim() && !/^[🔗📎]/.test(l)));
+    const hasContent = hasBodyText || afterAtts.length > 0;
+    let summary = "Note created";
+    if (!hasBodyText && afterAtts.length === 1) summary = "1 attachment";
+    else if (!hasBodyText && afterAtts.length > 1) summary = `${afterAtts.length} attachments`;
+    else if (hasBodyText && afterAtts.length > 0) {
+      summary =
+        afterAtts.length === 1
+          ? "Added · 1 attachment"
+          : `Added · ${afterAtts.length} attachments`;
+    }
+
     events.push({
       kind: "created",
       slug,
       label,
       at: note.created_at || date,
-      summary: "Note created",
+      summary,
       before_text: "",
       after_text: after,
+      before_attachments: [],
+      after_attachments: afterAtts,
       encrypted,
-      has_diff: !encrypted && !!after,
+      has_diff: !encrypted && hasContent,
     });
   }
 
@@ -236,12 +267,30 @@ export function dayFromNotes(notes: Note[], date: string): ActivityDay {
 
 export function outlineText(note: Note): string {
   const blocks = note.blocks || [];
-  return blocks
+  const body = blocks
     .map((b) => {
       const indent = Math.max(0, b.indent | 0);
       return "  ".repeat(indent) + (b.text || "");
     })
-    .join("\n");
+    // Drop trailing blank caret lines
+    .reduceRight<string[]>((acc, line) => {
+      if (acc.length === 0 && !line.trim()) return acc;
+      acc.unshift(line);
+      return acc;
+    }, []);
+
+  const atts = note.attachments || [];
+  const attLines = atts.map((a) => {
+    const kind = (a as { kind?: string }).kind || "file";
+    const title =
+      (a as { title?: string }).title ||
+      (a as { filename?: string }).filename ||
+      (a as { url?: string }).url ||
+      (kind === "url" ? "link" : "file");
+    return kind === "url" ? `🔗 ${title}` : `📎 ${title}`;
+  });
+
+  return [...body, ...attLines].join("\n");
 }
 
 /** Line-level LCS diff for outline text (RN-friendly, no Shiki). */

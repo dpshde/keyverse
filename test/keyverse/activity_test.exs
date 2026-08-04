@@ -142,4 +142,34 @@ defmodule Keyverse.ActivityTest do
 
     assert Activity.outline_text(state) == "Root\n  Child"
   end
+
+  test "attachment-only note counts as notes taken and surfaces in day detail", %{pack: pack} do
+    scope = Scope.parse("John 3:18")
+
+    {:ok, _} =
+      Note.put_note(pack, scope, %{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => ""}],
+        "attachments" => [
+          %{
+            "id" => "att1",
+            "kind" => "url",
+            "url" => "https://example.com/article",
+            "title" => "Example article"
+          }
+        ]
+      })
+
+    heat = Activity.heatmap(pack)
+    assert heat.notes_taken_ytd >= 1
+
+    today = Date.utc_today() |> Date.to_iso8601()
+    detail = Activity.day(pack, today)
+    ev = Enum.find(detail.events, &(&1.slug == scope.slug))
+    assert ev
+    assert ev.has_diff
+    assert String.contains?(ev.after_text || "", "Example article")
+    assert is_list(ev.after_attachments)
+    assert Enum.any?(ev.after_attachments, &(&1.label == "Example article"))
+    assert ev.summary =~ ~r/attachment|Added|attached/i
+  end
 end

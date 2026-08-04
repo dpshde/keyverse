@@ -1,6 +1,9 @@
+import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { hapticSelect } from "@/src/lib/haptics";
-import { color, radius, space, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { radius, space, type ThemeColors } from "@/src/theme";
+
 
 type Props = {
   onTurnOn: () => void;
@@ -10,6 +13,8 @@ type Props = {
 
 /** Soft home invite after first note — job-first copy, no key preview. */
 export function SyncInviteBanner({ onTurnOn, onEnterKey, onDismiss }: Props) {
+  const { color, ui, type } = useTheme();
+  const styles = useMemo(() => makeInviteStyles(color, type), [color, type]);
   return (
     <View style={styles.wrap} accessibilityRole="summary">
       <Text style={styles.q}>Use these notes on another device?</Text>
@@ -47,7 +52,8 @@ export function SyncInviteBanner({ onTurnOn, onEnterKey, onDismiss }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+function makeInviteStyles(color: ThemeColors, type: { caption: object; meta: object; bodyStrong: object; title: object; label: object; [k: string]: object }) {
+  return StyleSheet.create({
   wrap: {
     marginHorizontal: space[4],
     marginTop: space[3],
@@ -75,3 +81,4 @@ const styles = StyleSheet.create({
     color: color.muted,
   },
 });
+}
