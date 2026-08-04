@@ -1754,14 +1754,30 @@ const CSS = `
    * not painted as part of the mark. Opaque mix avoids transparency seam bars.
    * ::before stays free for the has-notes left rail.
    */
-  .verse.sel {
-    --sel-fill: color-mix(in srgb, #6b5a3e 18%, #f3efe6);
-    --sel-edge: color-mix(in srgb, #5c5330 22%, #e8e2d4);
-    --sel-ring: color-mix(in srgb, #5c5330 28%, transparent);
-    --sel-rail: color-mix(in srgb, #5c5330 55%, #8a7a55);
-    --sel-x: .75rem;
-    --sel-y: .45rem;
-    --sel-radius: .7rem;
+  .verse.sel,
+  .verse.notes-open:not(.sel),
+  .verse.editing:not(.sel) {
+    --mark-fill: color-mix(in srgb, #ff9f43 16%, #fff8ef);
+    --mark-edge: color-mix(in srgb, #ff9f43 20%, #ffe8cc);
+    --mark-ring: color-mix(in srgb, #ff9f43 26%, transparent);
+    --mark-rail: color-mix(in srgb, #ff9f43 58%, #ffc078);
+    --mark-x: .75rem;
+    --mark-y: .45rem;
+    --mark-radius: .85rem;
+    --sel-fill: var(--mark-fill);
+    --sel-edge: var(--mark-edge);
+    --sel-ring: var(--mark-ring);
+    --sel-rail: var(--mark-rail);
+    --sel-x: var(--mark-x);
+    --sel-y: var(--mark-y);
+    --sel-radius: var(--mark-radius);
+    --open-fill: var(--mark-fill);
+    --open-edge: var(--mark-edge);
+    --open-ring: var(--mark-ring);
+    --open-rail: var(--mark-rail);
+    --open-x: var(--mark-x);
+    --open-y: var(--mark-y);
+    --open-radius: var(--mark-radius);
     background: transparent;
     padding: 0;
     margin: 0;
@@ -1772,11 +1788,13 @@ const CSS = `
     overflow: visible;
   }
   @media (prefers-color-scheme: dark) {
-    .verse.sel {
-      --sel-fill: color-mix(in srgb, #d4c4a0 16%, Canvas);
-      --sel-edge: color-mix(in srgb, #d4c4a0 28%, Canvas);
-      --sel-ring: color-mix(in srgb, #d4c4a0 32%, transparent);
-      --sel-rail: color-mix(in srgb, #e8d9b0 70%, transparent);
+    .verse.sel,
+    .verse.notes-open:not(.sel),
+    .verse.editing:not(.sel) {
+      --mark-fill: color-mix(in srgb, #ff9f43 18%, Canvas);
+      --mark-edge: color-mix(in srgb, #ffb366 24%, Canvas);
+      --mark-ring: color-mix(in srgb, #ff9f43 30%, transparent);
+      --mark-rail: color-mix(in srgb, #ffb366 55%, transparent);
     }
   }
   /* Continuous selection fill — scripture only */
@@ -1935,28 +1953,7 @@ const CSS = `
    * Click-to-toggle open tray (notes-open / editing, not multi-verse .sel).
    * Left edge always square; right corners soft.
    */
-  .verse.notes-open:not(.sel),
-  .verse.editing:not(.sel) {
-    --open-fill: color-mix(in srgb, #6b5a3e 18%, #f3efe6);
-    --open-rail: color-mix(in srgb, #5c5330 55%, #8a7a55);
-    --open-ring: color-mix(in srgb, #5c5330 28%, transparent);
-    --open-radius: .7rem;
-    --open-x: .75rem;
-    --open-y: .45rem;
-    background: transparent;
-    border-radius: 0;
-    padding: 0;
-    position: relative;
-    overflow: visible;
-  }
-  @media (prefers-color-scheme: dark) {
-    .verse.notes-open:not(.sel),
-    .verse.editing:not(.sel) {
-      --open-fill: color-mix(in srgb, #d4c4a0 16%, Canvas);
-      --open-rail: color-mix(in srgb, #e8d9b0 70%, transparent);
-      --open-ring: color-mix(in srgb, #d4c4a0 32%, transparent);
-    }
-  }
+  /* Open-tray colors come from shared .verse.sel / notes-open / editing tokens above */
   .verse.notes-open:not(.sel) > .vtext,
   .verse.editing:not(.sel) > .vtext {
     position: relative;
