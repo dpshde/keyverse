@@ -27,14 +27,19 @@
     --danger-soft: #f5e6e4;
     --warn-soft: #f5efd9;
     --warn-ink: #5c5330;
-    /* Passage mark (sel + open-tray) — pastel apricot highlighter; edit once */
-    --mark-fill: color-mix(in srgb, #ff9f43 16%, #fff8ef);
-    --mark-edge: color-mix(in srgb, #ff9f43 20%, #ffe8cc);
-    --mark-ring: color-mix(in srgb, #ff9f43 26%, transparent);
-    --mark-rail: color-mix(in srgb, #ff9f43 58%, #ffc078);
+    /*
+     * Passage mark — RN parity (mobile theme.ts sel / fill):
+     * quiet warm grey wash, not apricot highlighter.
+     */
+    --mark-fill: #e5e4e1;
+    --mark-edge: #d6d5d1;
+    --mark-ring: color-mix(in srgb, var(--ink) 10%, transparent);
+    --mark-rail: color-mix(in srgb, var(--ink) 18%, transparent);
     --mark-x: .75rem;
-    --mark-y: .45rem;
-    --mark-radius: .85rem;
+    --mark-y: .5rem;
+    --mark-radius: .65rem; /* ≈ radius.sel 10pt */
+    --tray-fill: var(--fill);
+    --tray-radius: .75rem; /* ≈ radius.md 12 */
     --sel-fill: var(--mark-fill);
     --sel-edge: var(--mark-edge);
     --sel-ring: var(--mark-ring);
@@ -75,10 +80,11 @@
     --danger-soft: #3a2220;
     --warn-soft: #3a3520;
     --warn-ink: #e8d9a0;
-    --mark-fill: color-mix(in srgb, #ff9f43 18%, Canvas);
-    --mark-edge: color-mix(in srgb, #ffb366 24%, Canvas);
-    --mark-ring: color-mix(in srgb, #ff9f43 30%, transparent);
-    --mark-rail: color-mix(in srgb, #ffb366 55%, transparent);
+    --mark-fill: #2a2820;
+    --mark-edge: #3d3a30;
+    --mark-ring: color-mix(in srgb, var(--ink) 14%, transparent);
+    --mark-rail: color-mix(in srgb, var(--ink) 22%, transparent);
+    --tray-fill: var(--fill);
     --glass-bg: color-mix(in srgb, Canvas 42%, transparent);
     --glass-border: color-mix(in srgb, #fff 12%, transparent);
     --card-shadow: 0 1px 2px color-mix(in srgb, #000 35%, transparent);
@@ -107,10 +113,11 @@
       --danger-soft: #3a2220;
       --warn-soft: #3a3520;
       --warn-ink: #e8d9a0;
-      --mark-fill: color-mix(in srgb, #ff9f43 18%, Canvas);
-      --mark-edge: color-mix(in srgb, #ffb366 24%, Canvas);
-      --mark-ring: color-mix(in srgb, #ff9f43 30%, transparent);
-      --mark-rail: color-mix(in srgb, #ffb366 55%, transparent);
+      --mark-fill: #2a2820;
+      --mark-edge: #3d3a30;
+      --mark-ring: color-mix(in srgb, #eceae4 14%, transparent);
+      --mark-rail: color-mix(in srgb, #eceae4 22%, transparent);
+      --tray-fill: var(--fill);
       --glass-bg: color-mix(in srgb, Canvas 42%, transparent);
       --glass-border: color-mix(in srgb, #fff 12%, transparent);
       --card-shadow: 0 1px 2px color-mix(in srgb, #000 35%, transparent);
@@ -1552,13 +1559,12 @@
   }
   /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
   /*
-   * Passage mark — ONE shared token set for:
-   *   • multi-verse .sel (range / paintSelection)
-   *   • single-verse .notes-open / .editing (tap tray)
-   * Soft apricot highlighter. Left edge ALWAYS square (rail never curves);
-   * right corners soft. Change tokens here only — both paths inherit.
+   * RN reader parity:
+   *   • Multi-verse .sel → quiet grey wash on scripture (theme sel #e5e4e1)
+   *   • Single-verse notes-open / editing → NO wash on verse (plain text)
+   *   • Note tray → soft fill card, full rounded corners (InlineNoteEditor tray)
+   * Left edge of selection wash stays square (rail never curves).
    */
-  /* Layout only — colors/radius from :root --mark-* (shared with open tray) */
   .verse.sel,
   .verse.notes-open:not(.sel),
   .verse.editing:not(.sel) {
@@ -1571,18 +1577,14 @@
     position: relative;
     overflow: visible;
   }
-  /* Shared scripture wash — .sel and open-tray both use this */
-  .verse.sel .vtext,
-  .verse.notes-open:not(.sel) > .vtext,
-  .verse.editing:not(.sel) > .vtext {
+  /* Selection wash — multi-verse .sel only (not open-tray alone) */
+  .verse.sel .vtext {
     position: relative;
     isolation: isolate;
     padding: var(--mark-y) var(--mark-x);
     margin: 0;
   }
-  .verse.sel .vtext::after,
-  .verse.notes-open:not(.sel) > .vtext::after,
-  .verse.editing:not(.sel) > .vtext::after {
+  .verse.sel .vtext::after {
     content: "";
     position: absolute;
     left: 0;
@@ -1591,31 +1593,23 @@
     bottom: 0;
     z-index: -1;
     background-color: var(--mark-fill);
-    /* Rail is an inset left bar — only looks straight when left radius is 0 */
     box-shadow:
-      inset 3px 0 0 0 var(--mark-rail),
+      inset 2px 0 0 0 var(--mark-rail),
       inset 0 0 0 1px var(--mark-ring);
     pointer-events: none;
-    /* Default single-mark: square left, soft right */
-    border-radius: 0 var(--mark-radius) var(--mark-radius) 0;
-  }
-  /* Multi-verse .sel run: square left always; round only the RIGHT outer corners */
-  .verse.sel .vtext::after {
-    border-radius: 0; /* mid-run members: fully square seams */
+    border-radius: 0; /* mid-run square seams */
   }
   .verse.sel.sel-lo .vtext::after {
-    border-radius: 0 var(--mark-radius) 0 0; /* top-right only */
+    border-radius: 0 var(--mark-radius) 0 0;
   }
   .verse.sel.sel-hi .vtext::after {
-    border-radius: 0 0 var(--mark-radius) 0; /* bottom-right only */
+    border-radius: 0 0 var(--mark-radius) 0;
   }
   .verse.sel.sel-lo.sel-hi .vtext::after {
     border-radius: 0 var(--mark-radius) var(--mark-radius) 0;
   }
   /*
-   * Stitch: extend each following selected verse's fill up into the previous
-   * so subpixel gaps cannot show page background as a seam. Collapse doubled
-   * vertical padding between run members so the range reads as one block.
+   * Stitch multi-verse selection run.
    */
   .verse.sel:not(.sel-lo) .vtext::after {
     top: -4px;
@@ -1633,7 +1627,6 @@
   .verse.sel.sel-hi.editing {
     overflow: visible;
   }
-  /* Keep left square when tray is open under a selection */
   .verse.sel.sel-hi.notes-open .vtext::after,
   .verse.sel.sel-hi.editing .vtext::after {
     border-bottom-right-radius: var(--mark-radius);
@@ -1643,35 +1636,38 @@
   .verse.sel.sel-lo.sel-hi.editing .vtext::after {
     border-radius: 0 var(--mark-radius) var(--mark-radius) 0;
   }
-  /* Shared note tray card under mark (sel + open-tray) */
+  /*
+   * Note tray — RN InlineNoteEditor tray:
+   * soft fill, full radius, no white card / border / drop shadow.
+   */
   .verse.sel .vnotes,
   .verse.notes-open:not(.sel) > .vnotes,
   .verse.editing:not(.sel) > .vnotes {
-    background-color: #fff;
-    margin: .45rem 0 0;
-    padding: .55rem var(--mark-x) .7rem;
-    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-    /* Square left — match the mark above */
-    border-radius: 0 var(--mark-radius) var(--mark-radius) 0;
-    box-shadow:
-      0 1px 3px color-mix(in srgb, #000 5%, transparent),
-      0 6px 16px color-mix(in srgb, #000 4%, transparent);
+    background-color: var(--tray-fill, var(--fill));
+    margin: .5rem 0 0;
+    padding: .65rem .75rem .55rem;
+    border: 0;
+    border-radius: var(--tray-radius, .75rem);
+    box-shadow: none;
     position: relative;
     box-sizing: border-box;
     width: 100%;
   }
-  @media (prefers-color-scheme: dark) {
-    .verse.sel .vnotes,
-    .verse.notes-open:not(.sel) > .vnotes,
-    .verse.editing:not(.sel) > .vnotes {
-      background-color: color-mix(in srgb, Canvas 82%, #fff 18%);
-      border-color: color-mix(in srgb, currentColor 16%, transparent);
-    }
-  }
   .verse.sel.sel-hi.notes-open .vnotes,
   .verse.sel.sel-hi.editing .vnotes {
-    border-radius: 0 var(--mark-radius) var(--mark-radius) 0;
-    padding-bottom: .7rem;
+    border-radius: var(--tray-radius, .75rem);
+    padding-bottom: .55rem;
+  }
+  /* Open tray alone: restore normal verse padding (no mark inset) */
+  .verse.notes-open:not(.sel) > .vtext,
+  .verse.editing:not(.sel) > .vtext {
+    padding: var(--v-pad-y) 0;
+    margin: 0;
+  }
+  .verse.notes-open:not(.sel) > .vtext::after,
+  .verse.editing:not(.sel) > .vtext::after {
+    content: none;
+    display: none;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
   body.pick-range-end .verse { cursor: cell; }
