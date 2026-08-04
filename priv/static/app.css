@@ -1311,20 +1311,20 @@
   }
   /* .hl marks deep-link targets (scroll / open notes); selection owns the surface */
   /*
-   * Passage mark — warm reading highlight (not UI-blue, not ghost grey).
-   * Opaque-enough wash + left rail + ring so it never dissolves into paper.
-   * Wash on .vtext only; .vnotes is a raised white sibling under the run.
+   * Passage mark — pastel orange highlighter (not muddy brown, not UI-blue).
+   * Full rounded capsule; multi-verse run rounds only outer corners.
+   * Wash on .vtext; .vnotes is a matching-radius white tray under the run.
    * ::before on .verse stays free for the has-notes left rail.
    */
   .verse.sel {
-    /* Warm parchment mark — readable on #f6f5f2 and pure white */
-    --sel-fill: color-mix(in srgb, #6b5a3e 18%, #f3efe6);
-    --sel-edge: color-mix(in srgb, #5c5330 22%, #e8e2d4);
-    --sel-ring: color-mix(in srgb, #5c5330 28%, transparent);
-    --sel-rail: color-mix(in srgb, #5c5330 55%, #8a7a55);
+    /* Soft apricot highlighter on warm paper */
+    --sel-fill: color-mix(in srgb, #ff9f43 16%, #fff8ef);
+    --sel-edge: color-mix(in srgb, #ff9f43 20%, #ffe8cc);
+    --sel-ring: color-mix(in srgb, #ff9f43 26%, transparent);
+    --sel-rail: color-mix(in srgb, #ff9f43 58%, #ffc078);
     --sel-x: .75rem;
     --sel-y: .45rem;
-    --sel-radius: .7rem;
+    --sel-radius: .85rem;
     background: transparent;
     padding: 0;
     margin: 0;
@@ -1336,10 +1336,10 @@
   }
   @media (prefers-color-scheme: dark) {
     .verse.sel {
-      --sel-fill: color-mix(in srgb, #d4c4a0 16%, Canvas);
-      --sel-edge: color-mix(in srgb, #d4c4a0 28%, Canvas);
-      --sel-ring: color-mix(in srgb, #d4c4a0 32%, transparent);
-      --sel-rail: color-mix(in srgb, #e8d9b0 70%, transparent);
+      --sel-fill: color-mix(in srgb, #ff9f43 18%, Canvas);
+      --sel-edge: color-mix(in srgb, #ffb366 24%, Canvas);
+      --sel-ring: color-mix(in srgb, #ff9f43 30%, transparent);
+      --sel-rail: color-mix(in srgb, #ffb366 55%, transparent);
     }
   }
   /* Continuous selection fill — scripture only */
@@ -1358,22 +1358,22 @@
     bottom: 0;
     z-index: -1;
     background-color: var(--sel-fill);
-    /* Left rail is always square (no radius on the left edge) */
+    /* Soft ring + thin accent rail (rail follows border-radius) */
     box-shadow:
-      inset 3px 0 0 0 var(--sel-rail),
-      inset 0 0 0 1.5px var(--sel-ring);
+      inset 2.5px 0 0 0 var(--sel-rail),
+      inset 0 0 0 1px var(--sel-ring);
     pointer-events: none;
-    border-radius: 0; /* default: square */
+    border-radius: 0; /* mid-run: square seams */
   }
-  /* Outer curve on the RIGHT only — left edge stays square */
+  /* Outer corners of the run — both left and right (symmetric capsule) */
   .verse.sel.sel-lo .vtext::after {
-    border-radius: 0 var(--sel-radius) 0 0;
+    border-radius: var(--sel-radius) var(--sel-radius) 0 0;
   }
   .verse.sel.sel-hi .vtext::after {
-    border-radius: 0 0 var(--sel-radius) 0;
+    border-radius: 0 0 var(--sel-radius) var(--sel-radius);
   }
   .verse.sel.sel-lo.sel-hi .vtext::after {
-    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
+    border-radius: var(--sel-radius);
   }
   /*
    * Stitch: extend each following selected verse's fill up into the previous
@@ -1393,33 +1393,31 @@
     margin-top: 0;
   }
   /*
-   * Note tray open: scripture keeps full end radius; tray is a raised card
-   * under the mark (not the same wash — selection must stay distinct).
+   * Note tray open: scripture keeps end radius; tray is a raised card
+   * under the mark with matching full corner radius.
    */
   .verse.sel.sel-hi.notes-open,
   .verse.sel.sel-hi.editing {
     overflow: visible;
   }
-  /* Tray outside mark — bottom-right curve only (left stays square) */
   .verse.sel.sel-hi.notes-open .vtext::after,
   .verse.sel.sel-hi.editing .vtext::after {
+    border-bottom-left-radius: var(--sel-radius);
     border-bottom-right-radius: var(--sel-radius);
-    border-bottom-left-radius: 0;
   }
   .verse.sel.sel-lo.sel-hi.notes-open .vtext::after,
   .verse.sel.sel-lo.sel-hi.editing .vtext::after {
-    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
+    border-radius: var(--sel-radius);
   }
   .verse.sel .vnotes {
     /* Distinct tool surface — not another shade of the selection wash */
     background-color: #fff;
-    margin: .55rem 0 0;
+    margin: .45rem 0 0;
     padding: .55rem var(--sel-x) .65rem;
-    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-    /* Left edge square */
-    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
+    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    border-radius: var(--sel-radius);
     box-shadow:
-      0 1px 3px color-mix(in srgb, #000 6%, transparent),
+      0 1px 3px color-mix(in srgb, #000 5%, transparent),
       0 6px 16px color-mix(in srgb, #000 4%, transparent);
     position: relative;
     box-sizing: border-box;
@@ -1433,7 +1431,7 @@
   }
   .verse.sel.sel-hi.notes-open .vnotes,
   .verse.sel.sel-hi.editing .vnotes {
-    border-radius: 0 var(--sel-radius) var(--sel-radius) 0;
+    border-radius: var(--sel-radius);
     padding-bottom: .7rem;
   }
   body.selecting-verses { user-select: none; -webkit-user-select: none; cursor: pointer; }
