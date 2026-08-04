@@ -1,11 +1,11 @@
 # keyverse HTTP door API
 
-Reference door contract for `server.mjs` (**protocol `0.1-demo`**).  
+Reference door contract for the Elixir multipack host (**protocol `0.2`**).  
 Pack-on-disk remains the durable interop surface ([PROTOCOL.md](../PROTOCOL.md)).  
 This document is the **HTTP status / body matrix** for second clients.
 
 All pack routes below are under the multiword door base. The door phrase **selects
-the pack** (`PACK_DIR/{door}/` on the reference host):
+the pack** (`PACK_DIR/p_<hex>/` via DoorIndex on the reference host):
 
 ```text
 BASE = http://host:port/{door}
@@ -13,6 +13,24 @@ BASE = http://host:port/{door}
 # Create pack: POST /setup  (form field door=…)
 # Open pack:   GET  /enter?door=…
 ```
+
+## Public (no-door) scripture routes
+
+Used by share targets and `route.bible` weblinks. These do **not** open a personal pack;
+notes stay empty until the user opens with a key or mounts a local folder.
+
+| Method | Path | Behavior |
+|--------|------|----------|
+| `GET` | `/go?q=<passage>` | Parse human/OSIS input → `302` to `/read/<slug>` |
+| `GET` | `/read/<slug>` | BSB chapter reader (shared `_public` pack, empty notes) |
+| `GET` | `/api/text/bsb/<BOOK>/<chapter>` | Immutable BSB chapter JSON (same as door path) |
+| `GET` | `/api/read/<slug>` | Reader SPA bundle for public base (`BASE=""`) |
+
+Examples:
+
+- `https://keyverse-production.up.railway.app/read/jhn.3.16`
+- `https://keyverse-production.up.railway.app/go?q=John%203%3A16`
+- App deep link (Expo scheme): `keyverse://read/jhn.3.16`
 
 ## Discovery
 

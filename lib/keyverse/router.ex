@@ -110,6 +110,25 @@ defmodule Keyverse.Router do
     html(conn, 200, Html.render_local_mount())
   end
 
+  # Public (no-door) scripture routes for route.bible weblinks and share targets.
+  # Uses a shared read-only pack so BSB reader works without claiming a key.
+  get "/go" do
+    public_go(conn)
+  end
+
+  get "/read/*path" do
+    slug = path |> List.wrap() |> Enum.join("/")
+    public_read_page(conn, slug)
+  end
+
+  get "/api/text/bsb/:book/:chapter" do
+    handle_api_text(conn, "GET", book, chapter)
+  end
+
+  get "/api/read/:slug" do
+    handle_api_read(conn, public_pack_dir(), "", "GET", slug)
+  end
+
   get "/manifest.webmanifest" do
     send_json(conn, 200, Html.web_manifest("/"))
   end
@@ -260,6 +279,57 @@ defmodule Keyverse.Router do
   defp fetch_query(conn) do
     conn = Plug.Conn.fetch_query_params(conn)
     conn.query_params
+  end
+
+  defp public_pack_dir do
+    dir = Path.join(Config.packs_root(), "_public")
+    Pack.ensure_dirs!(dir, pack_id: "public")
+    dir
+  end
+
+  defp public_go(conn) do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    case Scope.parse(conn.query_params["q"] || "") do
+      nil ->
+        html(
+          conn,
+          200,
+          Html.page(
+            "keyverse",
+            "<p>Could not parse that passage. <a href=\"/\">Back</a> · <a href=\"/local\">Open notes on this device</a></p>",
+            base: ""
+          )
+        )
+
+      scope ->
+        # Always land on the reader for public handoff (notes require a personal key).
+        redirect(conn, "/read/#{scope.slug}")
+    end
+  end
+
+  defp public_read_page(conn, slug) do
+    slug = slug |> to_string() |> String.trim() |> URI.decode()
+
+    case Scope.parse(slug) do
+      nil ->
+        html(
+          conn,
+          404,
+          Html.page(
+            "not found",
+            "<p>Not a valid passage address. <a href=\"/\">Back</a></p>",
+            base: ""
+          )
+        )
+
+      scope ->
+        if scope.slug != slug do
+          redirect(conn, "/read/#{scope.slug}")
+        else
+          html(conn, 200, Html.render_read(public_pack_dir(), scope, ""))
+        end
+    end
   end
 
   defp serve_pack(conn, path, pack_dir, base, door \\ "", access \\ %{})
