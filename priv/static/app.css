@@ -3125,12 +3125,8 @@
   display:flex;
   flex-wrap:wrap;
   align-items:center;
-  gap:.15rem .45rem;
+  gap:.15rem .85rem;
   font-size:.82rem;
-}
-.pack-own-dot{
-  color:var(--faint);
-  user-select:none;
 }
 .pack-own-link{
   color:var(--muted);

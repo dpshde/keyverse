@@ -411,7 +411,6 @@ defmodule Keyverse.Html do
     <section class="pack-own ui" id="pack-own" aria-label="Backup">
       <div class="pack-own-row">
         <a class="pack-own-link" href="#{esc(base)}/api/pack/export" download>Export</a>
-        <span class="pack-own-dot" aria-hidden="true">·</span>
         <form class="pack-own-import" id="pack-import-form" action="#{esc(base)}/api/pack/import?mode=merge" method="post" enctype="multipart/form-data">
           <label class="pack-own-link pack-own-file">
             Import
