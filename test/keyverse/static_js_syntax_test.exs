@@ -43,6 +43,18 @@ defmodule Keyverse.StaticJsSyntaxTest do
     """
   end
 
+  test "platform.js prefers saved multiword key on public /read weblinks" do
+    path =
+      Enum.find(static_js_files(), &String.ends_with?(&1, "platform.js")) ||
+        flunk("platform.js missing")
+
+    src = File.read!(path)
+    assert src =~ "vp_door_key"
+    assert src =~ ~S|/read/|
+    assert src =~ "/api/protocol"
+    assert src =~ "location.replace"
+  end
+
   test "outliner paste splits on real newlines (evaluated template form)" do
     path =
       Enum.find(static_js_files(), &String.ends_with?(&1, "outliner.js")) ||

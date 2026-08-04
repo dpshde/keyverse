@@ -16,8 +16,8 @@ BASE = http://host:port/{door}
 
 ## Public (no-door) scripture routes
 
-Used by share targets and `route.bible` weblinks. These do **not** open a personal pack;
-notes stay empty until the user opens with a key or mounts a local folder.
+Used by share targets and `route.bible` weblinks. These do **not** open a personal pack by
+default; notes stay empty until the user opens with a key or mounts a local folder.
 
 | Method | Path | Behavior |
 |--------|------|----------|
@@ -31,6 +31,14 @@ Examples:
 - `https://keyverse-production.up.railway.app/read/jhn.3.16`
 - `https://keyverse-production.up.railway.app/go?q=John%203%3A16`
 - App deep link (Expo scheme): `keyverse://read/jhn.3.16`
+
+### Preferred library handoff (browser)
+
+If this browser already has a multiword key in `localStorage` (`vp_door_key` — set on
+enter/setup/share and whenever a pack page loads), the public `/read/<slug>` shell
+validates `GET /{key}/api/protocol` and, on success, `location.replace`s to
+`/{key}/read/<slug>`. Stale keys (404) are cleared so the public reader remains the
+fallback. This is client-side only — server routes stay door-agnostic and cacheable.
 
 ## Discovery
 

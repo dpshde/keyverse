@@ -3,9 +3,12 @@
  * Theme boot is also inlined in page head for FOUC; this file exposes KV_THEME API.
  *
  * Home control: single #theme-toggle button that cycles system → light → dark.
+ *
+ * Also remembers the multiword key and prefers it on public /read weblinks.
  */
 (function () {
   var KEY = "kv.theme";
+  var DOOR_KEY = "vp_door_key";
   var PAPER = { light: "#f6f5f2", dark: "#121211" };
   var ORDER = ["system", "light", "dark"];
   /** Phosphor class per preference (current state) */
@@ -180,7 +183,36 @@
     bindToggle();
   }
 
-  // Platform flags
+  // Platform flags + preferred library handoff for public weblinks
+  function normKey(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+  }
+
+  function readSavedDoor() {
+    try {
+      return normKey(localStorage.getItem(DOOR_KEY));
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function writeSavedDoor(k) {
+    k = normKey(k);
+    if (!k || /[^a-z0-9\-]/.test(k)) return;
+    try {
+      localStorage.setItem(DOOR_KEY, k);
+    } catch (e) {}
+  }
+
+  function clearSavedDoor() {
+    try {
+      localStorage.removeItem(DOOR_KEY);
+    } catch (e) {}
+  }
+
   try {
     var root = document.documentElement;
     var standalone =
@@ -188,6 +220,45 @@
       window.navigator.standalone === true;
     if (standalone) root.classList.add("kv-standalone");
     root.dataset.platform = "web";
+  } catch (e) {
+    /* ignore */
+  }
+
+  try {
+    var base = typeof window.BASE === "string" ? window.BASE : "";
+    if (base && base.charAt(0) === "/") {
+      // Inside a pack URL — keep the key warm for next public weblink.
+      var door = normKey(base.replace(/^\//, "").split("/")[0] || "");
+      if (door) writeSavedDoor(door);
+      return;
+    }
+
+    // Public origin reader (route.bible weblinks, /go handoff): if this browser
+    // already has a working key, open the same passage in that library.
+    var m = String(location.pathname || "").match(/^\/read\/([^/]+)\/?$/i);
+    if (!m) return;
+    var saved = readSavedDoor();
+    if (!saved) return;
+
+    var slug = m[1];
+    var dest =
+      "/" + saved + "/read/" + slug + (location.search || "") + (location.hash || "");
+
+    fetch("/" + saved + "/api/protocol", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    })
+      .then(function (r) {
+        if (r.ok) {
+          location.replace(dest);
+        } else if (r.status === 404 || r.status === 400) {
+          // Stale/rotated key — fall through to public reader.
+          clearSavedDoor();
+        }
+      })
+      .catch(function () {
+        /* stay on public reader */
+      });
   } catch (e) {
     /* ignore */
   }
