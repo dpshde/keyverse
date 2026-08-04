@@ -1038,8 +1038,9 @@ defmodule Keyverse.Html do
               href="#{esc(base)}/note/#{esc(chapter_note_slug)}"
               title="Chapter note" aria-label="Chapter note">#{ico_note_pencil()}</a>
             <button type="button" class="reader-expand-all head-icon-btn head-icon-plain" id="expand-notes"
-              aria-pressed="false" aria-label="Expand all verse notes"
-              title="Expand all verse notes">#{ico_list_bullets()}</button>
+              aria-pressed="false" aria-disabled="true" disabled
+              aria-label="Expand note previews (no notes yet)"
+              title="No notes on this page yet">#{ico_list_bullets()}</button>
           </div>
         </header>
         <nav class="reader-dock" id="reader-dock" aria-label="Chapter navigation">

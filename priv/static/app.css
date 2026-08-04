@@ -335,6 +335,13 @@
   .reader-head .reader-expand-all.head-icon-plain[aria-pressed="true"] {
     opacity: 1;
   }
+  .reader-head .reader-expand-all:disabled,
+  .reader-head .reader-expand-all[aria-disabled="true"] {
+    opacity: .28 !important;
+    cursor: default;
+    pointer-events: none;
+    color: var(--faint);
+  }
   /* Back: slot stays full width; glyph is the real control surface */
   .reader-head > .reader-back.head-icon-btn {
     width: 7.5rem;

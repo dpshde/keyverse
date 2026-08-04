@@ -27,6 +27,11 @@ import { passageShareUrls } from "@/src/lib/shareUrl";
 import { LiquidGlassBar, liquidGlassBarListPad } from "@/src/components/LiquidGlassBar";
 import { HeaderIconButton } from "@/src/components/HeaderIconButton";
 import {
+  IconListBullets,
+  IconNotePencil,
+  IconShare,
+} from "@/src/components/HeaderIcons";
+import {
   VerseRowItem,
   type RangeNoteHit,
   type VerseRowData,
@@ -34,6 +39,7 @@ import {
 import * as Local from "@/src/lib/localPack";
 import { hapticLight, hapticMedium, hapticSelect } from "@/src/lib/haptics";
 import { useTheme } from "@/src/context/ThemeContext";
+import { pushOnce } from "@/src/lib/nav";
 import { space, type ThemeColors } from "@/src/theme";
 
 type VerseRow = VerseRowData;
@@ -581,13 +587,40 @@ export default function ReaderScreen() {
     hapticLight();
     setOpen({});
     setPendingRange(null);
-    router.push(`/note/${encodeURIComponent(chapterSlug)}`);
+    pushOnce(router, `/note/${encodeURIComponent(chapterSlug)}`);
   }, [chapterSlug, router]);
 
   const toggleExpandAll = useCallback(() => {
     hapticSelect();
     setExpandAll((x) => !x);
   }, []);
+
+  /** Expand-all only useful when at least one verse/range note has content. */
+  const hasExpandableNotes = useMemo(() => {
+    if (!bookChapter) return false;
+    const prefix = `${bookChapter.book}.${bookChapter.chapter}`.toLowerCase();
+    const chapterSlugLc = prefix;
+    for (const n of Object.values(notesBySlug)) {
+      const sl = (n.scope?.slug || "").toLowerCase();
+      if (!sl.startsWith(prefix)) continue;
+      // Pure chapter note is opened via the chapter button, not expand-all trays
+      if (sl === chapterSlugLc) continue;
+      if (noteHasContent(n, resolvedBlocks[n.scope?.slug || ""])) return true;
+    }
+    for (const [sl, has] of Object.entries(liveText)) {
+      if (!has) continue;
+      const s = sl.toLowerCase();
+      if (s.startsWith(prefix + ".") || (s.startsWith(prefix) && s !== chapterSlugLc)) {
+        if (s !== chapterSlugLc) return true;
+      }
+    }
+    return false;
+  }, [bookChapter, notesBySlug, resolvedBlocks, liveText]);
+
+  // Don't leave expand-all stuck on after the last note is removed
+  useEffect(() => {
+    if (!hasExpandableNotes && expandAll) setExpandAll(false);
+  }, [hasExpandableNotes, expandAll]);
 
   useLayoutEffect(() => {
     const displayTitle = title.length > 26 ? title.slice(0, 26) + "…" : title;
@@ -604,26 +637,33 @@ export default function ReaderScreen() {
       headerRight: () => (
         <View style={styles.headerActions}>
           <HeaderIconButton
-            symbol="square.and.arrow.up"
             accessibilityLabel="Share passage link"
             onPress={sharePassage}
+            icon={(c) => <IconShare color={c} size={22} />}
             fallback={"\u2197"}
           />
           <HeaderIconButton
-            symbol={hasChapterNote ? "note.text" : "square.and.pencil"}
             accessibilityLabel={hasChapterNote ? "Open chapter note" : "Add chapter note"}
             muted={!hasChapterNote}
             active={hasChapterNote}
             fallback={hasChapterNote ? "N" : "+"}
             onPress={openChapterNote}
+            icon={(c) => <IconNotePencil color={c} size={22} />}
           />
           <HeaderIconButton
-            symbol={expandAll ? "list.bullet.rectangle.fill" : "list.bullet.rectangle"}
-            accessibilityLabel={expandAll ? "Fold note previews" : "Expand note previews"}
-            active={expandAll}
-            muted={!expandAll}
+            accessibilityLabel={
+              !hasExpandableNotes
+                ? "Expand note previews (no notes yet)"
+                : expandAll
+                  ? "Fold note previews"
+                  : "Expand note previews"
+            }
+            active={expandAll && hasExpandableNotes}
+            muted={!expandAll || !hasExpandableNotes}
+            disabled={!hasExpandableNotes}
             fallback={"≡"}
             onPress={toggleExpandAll}
+            icon={(c) => <IconListBullets color={c} size={22} />}
           />
         </View>
       ),
@@ -634,6 +674,7 @@ export default function ReaderScreen() {
     title,
     expandAll,
     hasChapterNote,
+    hasExpandableNotes,
     openChapterNote,
     toggleExpandAll,
   ]);

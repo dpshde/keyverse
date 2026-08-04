@@ -764,7 +764,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       // --- expand / collapse all verse notes (VBV analysis) ---
       function versesWithNoteEls() {
         return [...document.querySelectorAll(".verse")].filter((v) =>
-          v.querySelector(".vnotes .note")
+          [...v.querySelectorAll(".vnotes .note")].some((n) => noteHasContent(n))
         );
       }
 
@@ -777,13 +777,19 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const btn = document.getElementById("expand-notes");
         if (!btn) return;
         const vs = versesWithNoteEls();
-        if (!vs.length) {
-          btn.hidden = true;
+        const has = vs.length > 0;
+        // Always visible; disabled when this page has no verse/range notes yet
+        btn.hidden = false;
+        btn.disabled = !has;
+        btn.setAttribute("aria-disabled", has ? "false" : "true");
+        if (!has) {
+          btn.setAttribute("aria-pressed", "false");
+          btn.classList.remove("is-active");
+          btn.setAttribute("aria-label", "Expand note previews (no notes yet)");
+          btn.title = "No notes on this page yet";
           return;
         }
-        btn.hidden = false;
         const open = allNotesExpanded();
-        // Icon-only control — pressed state is the only chrome flip
         btn.setAttribute("aria-pressed", open ? "true" : "false");
         btn.classList.toggle("is-active", open);
         btn.setAttribute(
@@ -817,6 +823,8 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       document.getElementById("expand-notes")?.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const btn = e.currentTarget;
+        if (btn && btn.disabled) return;
         if (allNotesExpanded()) collapseAllNotes();
         else expandAllNotes();
       });

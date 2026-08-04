@@ -1,12 +1,16 @@
+import { type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { SymbolView, type SFSymbol } from "expo-symbols";
-import { color } from "../theme";
+import { useTheme } from "../context/ThemeContext";
 
 type Props = {
-  symbol: string;
   onPress: () => void;
   accessibilityLabel: string;
-  /** Glyph point size — default 20 */
+  /** SF Symbol name — ignored when `icon` is provided */
+  symbol?: string;
+  /** Custom glyph (e.g. Phosphor SVG). Receives resolved ink color. */
+  icon?: (color: string) => ReactNode;
+  /** Glyph point size — default 20 (SF) / 22 (SVG box) */
   size?: number;
   weight?: "regular" | "medium" | "semibold" | "bold";
   tint?: string;
@@ -14,6 +18,8 @@ type Props = {
   muted?: boolean;
   /** Active / filled state for the control */
   active?: boolean;
+  /** Non-interactive (e.g. expand-all with no notes on the page) */
+  disabled?: boolean;
   fallback?: string;
   style?: ViewStyle;
   hitSlop?: number;
@@ -26,6 +32,7 @@ type Props = {
  */
 export function HeaderIconButton({
   symbol,
+  icon,
   onPress,
   accessibilityLabel,
   size = 20,
@@ -33,34 +40,51 @@ export function HeaderIconButton({
   tint,
   muted,
   active,
+  disabled = false,
   fallback = "·",
   style,
   hitSlop = 6,
 }: Props) {
-  const ink = tint ?? (muted && !active ? color.inkSoft : color.ink);
+  const { colors } = useTheme();
+  const ink =
+    tint ??
+    (disabled
+      ? colors.faint
+      : muted && !active
+        ? colors.inkSoft
+        : colors.ink);
   return (
     <Pressable
-      onPress={onPress}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
       style={({ pressed }) => [
         styles.btn,
-        active && styles.btnActive,
-        pressed && styles.pressed,
+        active && !disabled && styles.btnActive,
+        disabled && styles.btnDisabled,
+        pressed && !disabled && styles.pressed,
         style,
       ]}
       hitSlop={hitSlop}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={active != null ? { selected: !!active } : undefined}
+      accessibilityState={{
+        disabled: !!disabled,
+        ...(active != null ? { selected: !!active && !disabled } : null),
+      }}
     >
       <View style={styles.glyphBox} pointerEvents="none">
-        <SymbolView
-          name={symbol as SFSymbol}
-          size={size}
-          weight={weight}
-          tintColor={ink}
-          style={styles.glyph}
-          fallback={<Text style={[styles.fallback, { color: ink }]}>{fallback}</Text>}
-        />
+        {icon ? (
+          <View style={styles.svgWrap}>{icon(ink)}</View>
+        ) : (
+          <SymbolView
+            name={(symbol || "circle") as SFSymbol}
+            size={size}
+            weight={weight}
+            tintColor={ink}
+            style={styles.glyph}
+            fallback={<Text style={[styles.fallback, { color: ink }]}>{fallback}</Text>}
+          />
+        )}
       </View>
     </Pressable>
   );
@@ -78,6 +102,9 @@ const styles = StyleSheet.create({
   btnActive: {
     opacity: 1,
   },
+  btnDisabled: {
+    opacity: 0.32,
+  },
   pressed: {
     opacity: 0.45,
   },
@@ -94,6 +121,10 @@ const styles = StyleSheet.create({
   },
   glyph: {
     transform: [{ translateY: -2 }],
+  },
+  svgWrap: {
+    // SVGs are geometrically centered; slight lift matches SF optical nudge
+    transform: [{ translateY: -1 }],
   },
   fallback: {
     fontSize: 17,
