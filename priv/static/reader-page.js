@@ -226,6 +226,27 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         for (const slug of slugs) await closeNoteEditor(slug);
       }
 
+      /** RN InlineNoteEditor “Open full note” — quiet link under tray body. */
+      function ensureFullNoteLink(noteEl) {
+        if (!noteEl) return;
+        const slug = noteEl.dataset.slug;
+        if (!slug) return;
+        let a = noteEl.querySelector(":scope > .note-full-link");
+        if (!a) {
+          a = document.createElement("a");
+          a.className = "note-full-link";
+          a.textContent = "Open full note";
+          noteEl.appendChild(a);
+        }
+        const base = typeof BASE === "string" ? BASE : "";
+        a.href = base + "/note/" + encodeURIComponent(slug);
+      }
+
+      function ensureFullNoteLinksIn(root) {
+        const scope = root || document;
+        scope.querySelectorAll(".vnotes .note[data-slug], .chapter-note .note[data-slug]").forEach(ensureFullNoteLink);
+      }
+
       function openNoteEditor(noteEl) {
         const slug = noteEl.dataset.slug;
         // Encrypted notes have no plaintext seeds — open full editor unlock flow.
@@ -235,8 +256,11 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         if (editors.has(slug)) { editors.get(slug).api.focus(); return; }
         const verse = noteEl.closest(".verse");
+        // RN: tray open = no multi-verse selection wash on the verse
+        clearSelection();
         if (verse) verse.classList.add("notes-open", "editing");
         noteEl.classList.add("editing");
+        ensureFullNoteLink(noteEl);
         const host = noteEl.querySelector(".note-edit");
         host.hidden = false;
         host.innerHTML = "";
@@ -508,10 +532,12 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const localVerseNote = verse.querySelector('.note[data-kind="verse"]');
         const hasLocalVerse = localVerseNote && noteHasContent(localVerseNote);
         if (hasLocalVerse || verse.querySelector('.note[data-kind="verse"] .oline, .note[data-kind="verse"] .otxt')) {
+          clearSelection();
           verse.classList.add("notes-open");
           const only = verse.querySelectorAll(".vnotes .note");
           // Single local note → edit-ready; multiple (passage host + verse) → show tray.
           if (only.length === 1) openNoteEditor(only[0]);
+          else ensureFullNoteLinksIn(verse);
           syncExpandNotesBtn();
           return;
         }
@@ -527,9 +553,11 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         // Other local content (e.g. only a hosted range on this end verse) or empty.
         if (verse.classList.contains("has-notes") || verse.querySelector(".note .oline, .note .otxt")) {
+          clearSelection();
           verse.classList.add("notes-open");
           const only = verse.querySelectorAll(".vnotes .note");
           if (only.length === 1) openNoteEditor(only[0]);
+          else ensureFullNoteLinksIn(verse);
           syncExpandNotesBtn();
           return;
         }
@@ -768,7 +796,10 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       function expandAllNotes() {
         clearSelection();
         // View only — do not open editors. Show every note tray that has content.
-        versesWithNoteEls().forEach((v) => v.classList.add("notes-open"));
+        versesWithNoteEls().forEach((v) => {
+          v.classList.add("notes-open");
+          ensureFullNoteLinksIn(v);
+        });
         syncExpandNotesBtn();
       }
 
@@ -797,10 +828,14 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const hlVerses = [...document.querySelectorAll(".verse.hl")];
         if (hlVerses.length) {
           const nums = hlVerses.map(verseNum).filter((n) => n != null);
-          if (nums.length) paintSelection(Math.min(...nums), Math.max(...nums));
+          // Multi-verse deep link only — single verse with a note opens tray without sel wash
+          if (nums.length > 1) paintSelection(Math.min(...nums), Math.max(...nums));
         }
         document.querySelectorAll(".verse.hl").forEach((v) => {
-          if (v.querySelector(".vnotes .note")) v.classList.add("notes-open");
+          if (v.querySelector(".vnotes .note")) {
+            v.classList.add("notes-open");
+            ensureFullNoteLinksIn(v);
+          }
         });
         syncExpandNotesBtn();
       }
