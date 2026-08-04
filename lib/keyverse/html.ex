@@ -16,8 +16,16 @@ defmodule Keyverse.Html do
     ~s(<span class="ui-ico-label">#{ico(name)}<span class="ui-ico-txt">#{esc(text)}</span></span>)
   end
 
-  # Inline list-dashes (Phosphor) — reader header notes controls; currentColor, no bg plate.
-  defp ico_list_dashes do
+  # Phosphor note-pencil — chapter note control
+  defp ico_note_pencil do
+    """
+    <svg class="head-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1.2em" height="1.2em" aria-hidden="true" focusable="false"><polygon points="128 160 96 160 96 128 192 32 224 64 128 160" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="168" y1="56" x2="200" y2="88" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M216,128v80a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V48a8,8,0,0,1,8-8h80" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>
+    """
+    |> String.trim()
+  end
+
+  # Phosphor list-bullets — expand all verse notes
+  defp ico_list_bullets do
     """
     <svg class="head-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1.2em" height="1.2em" aria-hidden="true" focusable="false"><line x1="88" y1="64" x2="216" y2="64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="88" y1="128" x2="216" y2="128" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="88" y1="192" x2="216" y2="192" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><circle cx="44" cy="64" r="12" fill="currentColor"/><circle cx="44" cy="128" r="12" fill="currentColor"/><circle cx="44" cy="192" r="12" fill="currentColor"/></svg>
     """
@@ -1028,10 +1036,10 @@ defmodule Keyverse.Html do
               aria-label="Share passage link">#{ico("export")}</button>
             <a class="muted head-icon-btn head-icon-plain" id="chapter-note-link"
               href="#{esc(base)}/note/#{esc(chapter_note_slug)}"
-              title="Chapter note" aria-label="Chapter note">#{ico_list_dashes()}</a>
+              title="Chapter note" aria-label="Chapter note">#{ico_note_pencil()}</a>
             <button type="button" class="reader-expand-all head-icon-btn head-icon-plain" id="expand-notes"
               aria-pressed="false" aria-label="Expand all verse notes"
-              title="Expand all verse notes">#{ico_list_dashes()}</button>
+              title="Expand all verse notes">#{ico_list_bullets()}</button>
           </div>
         </header>
         <nav class="reader-dock" id="reader-dock" aria-label="Chapter navigation">
