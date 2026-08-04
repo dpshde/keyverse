@@ -205,14 +205,11 @@
   }
   .site-foot a {
     color: inherit;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    text-decoration-color: color-mix(in srgb, var(--ink) 22%, transparent);
+    text-decoration: none;
   }
   .site-foot a:hover {
     color: var(--ink);
     opacity: 1;
-    text-decoration-color: color-mix(in srgb, var(--ink) 45%, transparent);
   }
   .login .site-foot { justify-content: center; border-top: 0; margin-top: 2rem; padding-top: 0; }
   /* Reader: sticky top bar sits flush with viewport (RN stack header) */
@@ -3123,12 +3120,14 @@
   }
 
 /* Pack backup links (live inside .home-foot) */
-.pack-own-link{
+.pack-own-link,
+.site-foot .pack-own-link,
+.site-foot.home-foot a.pack-own-link{
   display:inline-flex;
   align-items:center;
   gap:.3rem;
   color:var(--muted);
-  text-decoration:none;
+  text-decoration:none !important;
   cursor:pointer;
   font:inherit;
   font-weight:500;
