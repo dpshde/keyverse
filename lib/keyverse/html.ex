@@ -371,12 +371,14 @@ defmodule Keyverse.Html do
   end
 
   defp theme_seg do
+    # Single cycle control: system → light → dark (wired in platform.js #theme-toggle)
     """
-    <div class="theme-seg" id="theme-seg" role="group" aria-label="Appearance">
-      <button type="button" data-theme-pref="system" aria-pressed="true">System</button>
-      <button type="button" data-theme-pref="light" aria-pressed="false">Light</button>
-      <button type="button" data-theme-pref="dark" aria-pressed="false">Dark</button>
-    </div>
+    <button type="button" class="theme-toggle" id="theme-toggle"
+      data-theme-pref="system"
+      aria-label="Appearance: System"
+      title="Appearance: System — click to change">
+      <i class="ph ph-circle-half" aria-hidden="true"></i>
+    </button>
     """
   end
 

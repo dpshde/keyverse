@@ -667,40 +667,48 @@
     margin-left: auto;
     min-width: 0;
   }
-  /* Appearance: System | Light | Dark */
-  .theme-seg {
-    display: inline-flex;
-    align-items: stretch;
-    gap: 0;
-    padding: 2px;
-    border-radius: 999px;
-    background: var(--fill-strong);
-    border: 1px solid var(--line-soft);
-    font-family: -apple-system, system-ui, sans-serif;
-    flex-shrink: 0;
-  }
-  .theme-seg button {
+  /*
+   * Appearance — single cycle icon (system → light → dark).
+   * Quiet header chrome; icon swaps in platform.js (circle-half / sun / moon).
+   */
+  .theme-toggle {
     appearance: none;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 2.25rem;
+    height: 2.25rem;
     margin: 0;
+    padding: 0;
     border: 0;
+    border-radius: var(--control-radius-sm, .4rem);
     background: transparent;
     color: var(--muted);
-    font: inherit;
-    font-size: .72rem;
-    font-weight: 600;
-    letter-spacing: -.01em;
-    padding: .28rem .5rem;
-    min-height: 1.7rem;
-    border-radius: 999px;
     cursor: pointer;
+    font: inherit;
+    line-height: 1;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: color .12s ease, background-color .12s ease, opacity .12s ease;
   }
-  .theme-seg button[aria-pressed="true"] {
-    background: var(--primary-fill);
-    color: var(--primary-on);
+  .theme-toggle .ph {
+    font-size: 1.2rem;
+    line-height: 1;
   }
-  .theme-seg button:hover:not([aria-pressed="true"]) {
-    color: var(--ink);
+  @media (hover: hover) and (pointer: fine) {
+    .theme-toggle:hover {
+      color: var(--ink);
+      background: var(--fill);
+    }
+  }
+  .theme-toggle:active {
+    opacity: .7;
+  }
+  .theme-toggle:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--ink) 35%, transparent);
+    outline-offset: 2px;
   }
   /* Notes section — less air under search, quieter label */
   .home-notes {
