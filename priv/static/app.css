@@ -21,6 +21,9 @@
     /* Shared home / chrome control geometry */
     --control-radius: .5rem;
     --control-radius-sm: .4rem;
+    --control-radius-lg: .75rem; /* trays, large cards */
+    --page-max: 38rem;
+    --page-pad-x: 1.1rem;
     --field-pad-y: .65rem;
     --field-pad-x: .85rem;
     --danger: #a33;
@@ -39,7 +42,7 @@
     --mark-y: .5rem;
     --mark-radius: .65rem; /* ≈ radius.sel 10pt */
     --tray-fill: var(--fill);
-    --tray-radius: .75rem; /* ≈ radius.md 12 */
+    --tray-radius: var(--control-radius-lg); /* ≈ radius.md 12 */
     --sel-fill: var(--mark-fill);
     --sel-edge: var(--mark-edge);
     --sel-ring: var(--mark-ring);
@@ -176,7 +179,11 @@
   body:has(.reader-head) {
     padding-top: 0;
   }
-  /* Reader chapter chrome — sticky top bar like RN stack header */
+  /*
+   * Sticky reader app bar — square, full-bleed, design tokens.
+   * Not a floating card: radius 0 matches native nav chrome (not control-radius).
+   * Width 100vw so the bar doesn’t sit as a rounded island inside --page-max.
+   */
   .reader-head {
     position: sticky;
     top: 0;
@@ -185,26 +192,36 @@
     flex-wrap: nowrap;
     align-items: center;
     gap: .2rem .35rem;
+    box-sizing: border-box;
+    width: 100vw;
+    max-width: 100vw;
     margin:
       0
-      calc(-1 * max(1.1rem, env(safe-area-inset-right, 0px)))
+      calc(50% - 50vw)
       .85rem
-      calc(-1 * max(1.1rem, env(safe-area-inset-left, 0px)));
+      calc(50% - 50vw);
+    /* Align inner chrome with body column (page-max + page pad) */
     padding:
       max(.45rem, env(safe-area-inset-top, 0px))
-      max(1.1rem, env(safe-area-inset-right, 0px))
+      max(
+        var(--page-pad-x),
+        env(safe-area-inset-right, 0px),
+        calc((100vw - var(--page-max)) / 2 + var(--page-pad-x))
+      )
       .45rem
-      max(1.1rem, env(safe-area-inset-left, 0px));
+      max(
+        var(--page-pad-x),
+        env(safe-area-inset-left, 0px),
+        calc((100vw - var(--page-max)) / 2 + var(--page-pad-x))
+      );
     min-height: 2.75rem;
-    background: color-mix(in srgb, Canvas 88%, transparent);
-    backdrop-filter: blur(16px) saturate(1.4);
-    -webkit-backdrop-filter: blur(16px) saturate(1.4);
-    border-bottom: 1px solid color-mix(in srgb, currentColor 6%, transparent);
-  }
-  @supports (background: color-mix(in srgb, Canvas 50%, transparent)) {
-    .reader-head {
-      background: color-mix(in srgb, Canvas 78%, transparent);
-    }
+    border-radius: 0;
+    background: var(--paper-raised);
+    border: 0;
+    border-bottom: 1px solid var(--line-soft);
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   .reader-head h1 {
     margin: 0;
@@ -278,7 +295,7 @@
     min-height: 2.25rem;
     padding: 0;
     margin: 0;
-    border-radius: .4rem;
+    border-radius: var(--control-radius-sm);
     color: inherit;
     opacity: .72;
     background: transparent;
@@ -334,7 +351,7 @@
     justify-content: center;
     width: 2.25rem;
     height: 2.25rem;
-    border-radius: .4rem;
+    border-radius: var(--control-radius-sm);
     font-size: 1.25rem;
     transition: background-color .12s ease, opacity .12s ease;
   }
@@ -418,14 +435,9 @@
     padding: .28rem;
     font-family: -apple-system, system-ui, sans-serif;
     font-size: .84rem;
-    border-radius: 1.25rem;
-    border: 1px solid color-mix(in srgb, #fff 42%, color-mix(in srgb, currentColor 14%, transparent));
-    background:
-      linear-gradient(
-        165deg,
-        color-mix(in srgb, Canvas 72%, transparent) 0%,
-        color-mix(in srgb, Canvas 48%, transparent) 100%
-      );
+    border-radius: var(--control-radius-lg);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
     box-shadow:
       0 1px 0 color-mix(in srgb, #fff 55%, transparent) inset,
       0 -1px 0 color-mix(in srgb, currentColor 6%, transparent) inset,
@@ -485,7 +497,7 @@
     margin: 0;
     padding: .4rem .45rem;
     border: 1px solid var(--dock-seg-border);
-    border-radius: 1rem;
+    border-radius: var(--control-radius);
     background: var(--dock-seg);
     color: color-mix(in srgb, currentColor 88%, transparent);
     font: inherit;
