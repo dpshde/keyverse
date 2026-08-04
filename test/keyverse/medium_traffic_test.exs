@@ -29,7 +29,22 @@ defmodule Keyverse.MediumTrafficTest do
       Application.put_env(:keyverse, :max_attach_bytes, 50 * 1024 * 1024)
     end)
 
-    {:ok, door} = Keyverse.Pack.create(Keyverse.Door.generate())
+    # Prefer a fixed phrase; retry generate if the word list is briefly unavailable.
+    door =
+      Enum.find_value(1..12, fn i ->
+        candidate =
+          if i == 1 do
+            "able-acid-also-beam"
+          else
+            Keyverse.Door.generate()
+          end
+
+        case Keyverse.Pack.create(candidate) do
+          {:ok, d} -> d
+          {:error, _} -> nil
+        end
+      end) || raise "could not create test pack"
+
     Keyverse.RateLimit.reset!()
     {:ok, door: door, pack: Keyverse.Pack.path_for(door)}
   end
