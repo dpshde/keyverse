@@ -220,15 +220,26 @@
     font-size: .86rem;
     min-width: 0;
   }
-  /* Optical balance: left back ≈ right action cluster width (3×40pt icons) */
+  /*
+   * Optical balance: equal side slots so the title stays centered.
+   * Slots are layout-only — never paint a hover wash across the full slot
+   * (that produced the RN liquid-glass capsule over the back spacer).
+   */
   .reader-head > .reader-back {
     flex: 0 0 7.5rem;
     width: 7.5rem;
+    max-width: 7.5rem;
     justify-content: flex-start;
+    align-items: center;
+    /* Slot is not a control chrome surface */
+    border-radius: 0;
+    background: transparent !important;
+    opacity: 1;
   }
   .reader-head-actions {
     flex: 0 0 7.5rem;
     width: 7.5rem;
+    max-width: 7.5rem;
   }
   button.passage-share-btn {
     appearance: none;
@@ -241,38 +252,100 @@
     cursor: pointer;
     text-decoration: none;
   }
-  button.passage-share-btn:hover { color: inherit; opacity: .85; }
   button.passage-share-btn[data-flash="1"] { opacity: .55; }
-  /* Icon-only header controls (share / chapter / expand) */
+  /*
+   * Web header controls — quiet ink icons, not RN glass circles.
+   * Hover (fine pointer only): light square wash under the glyph.
+   * Touch: no sticky hover; brief :active dim only.
+   */
   .reader-head .head-icon-btn {
-    width: 2.5rem;
-    height: 2.5rem;
-    min-width: 2.5rem;
-    min-height: 2.5rem;
+    box-sizing: border-box;
+    width: 2.25rem;
+    height: 2.25rem;
+    min-width: 2.25rem;
+    min-height: 2.25rem;
     padding: 0;
     margin: 0;
-    border-radius: 999px;
+    border-radius: .4rem;
     color: inherit;
-    opacity: .88;
+    opacity: .72;
+    background: transparent;
+    transition: opacity .12s ease, background-color .12s ease, color .12s ease;
   }
-  .reader-head .head-icon-btn:hover {
-    opacity: 1;
-    background: color-mix(in srgb, currentColor 6%, transparent);
-  }
-  .reader-head .head-icon-btn:active {
-    opacity: .55;
+  .reader-head a.head-icon-btn:hover {
+    /* kill global a:hover opacity dim */
+    opacity: .72;
   }
   .reader-head .head-icon-btn .ph {
     font-size: 1.2rem;
     line-height: 1;
   }
+  /* Back: slot stays full width; glyph is the real control surface */
+  .reader-head > .reader-back.head-icon-btn {
+    width: 7.5rem;
+    min-width: 7.5rem;
+    height: 2.25rem;
+    min-height: 2.25rem;
+    opacity: 1;
+    border-radius: 0;
+    background: transparent !important;
+  }
+  .reader-head > .reader-back .ph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: .4rem;
+    font-size: 1.25rem;
+    transition: background-color .12s ease, opacity .12s ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .reader-head .head-icon-btn:hover {
+      opacity: 1;
+      background: color-mix(in srgb, currentColor 7%, transparent);
+      color: inherit;
+    }
+    .reader-head a.head-icon-btn:hover {
+      opacity: 1;
+    }
+    /* Never wash the whole back spacer — only the arrow glyph box */
+    .reader-head > .reader-back.head-icon-btn:hover {
+      background: transparent !important;
+      opacity: 1;
+    }
+    .reader-head > .reader-back:hover .ph {
+      background: color-mix(in srgb, currentColor 7%, transparent);
+    }
+    .reader-head .head-icon-btn:active {
+      opacity: .7;
+      background: color-mix(in srgb, currentColor 10%, transparent);
+    }
+    .reader-head > .reader-back:active .ph {
+      background: color-mix(in srgb, currentColor 10%, transparent);
+    }
+    .reader-head .reader-expand-all:hover .reader-all-pill {
+      background: color-mix(in srgb, currentColor 12%, transparent);
+    }
+  }
+  @media (hover: none) {
+    .reader-head .head-icon-btn:active {
+      opacity: .55;
+    }
+    .reader-head > .reader-back:active .ph {
+      background: color-mix(in srgb, currentColor 8%, transparent);
+    }
+  }
   .reader-expand-all {
     appearance: none;
-    background: transparent;
+    background: transparent !important;
     border: 0;
     cursor: pointer;
     font: inherit;
     color: inherit;
+  }
+  .reader-expand-all:hover {
+    background: transparent !important;
   }
   .reader-all-pill {
     box-sizing: border-box;
@@ -282,14 +355,15 @@
     min-width: 1.875rem;
     height: 1.75rem;
     padding: 0 .5rem;
-    border-radius: 999px;
+    border-radius: .4rem;
     font-family: -apple-system, system-ui, sans-serif;
     font-size: .8125rem;
     font-weight: 700;
     letter-spacing: -.02em;
     line-height: 1;
-    color: color-mix(in srgb, currentColor 78%, transparent);
-    background: color-mix(in srgb, currentColor 8%, transparent);
+    color: color-mix(in srgb, currentColor 72%, transparent);
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    transition: background-color .12s ease, color .12s ease;
   }
   .reader-expand-all[aria-pressed="true"] .reader-all-pill,
   .reader-all-pill.is-active {
@@ -2380,14 +2454,21 @@
       padding: 0 .55rem;
       font-size: 1.15rem;
     }
-    /* Sticky reader back: keep square icon hit target, no negative margin bleed */
+    /* Sticky reader back: keep layout slot; icon box is the control */
     .reader-head > .reader-back {
       margin: 0;
       padding: 0;
-      width: auto;
-      min-width: var(--tap);
+      flex-basis: 7.5rem;
+      width: 7.5rem;
+      min-width: 7.5rem;
       min-height: var(--tap);
-      border-radius: 999px;
+      border-radius: 0;
+      background: transparent !important;
+    }
+    .reader-head > .reader-back .ph {
+      width: var(--tap);
+      height: var(--tap);
+      border-radius: .4rem;
     }
 
     /* Header text actions: read, share, status neighbors */
@@ -2404,12 +2485,12 @@
       min-width: 2.5rem;
       padding: .45rem .65rem;
       margin: -.25rem 0;
-      border-radius: .5rem;
+      border-radius: .45rem;
       font-size: .9rem;
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    /* Reader header: icon-only cluster (share / chapter / All) — fixed 40pt boxes */
+    /* Reader header icons — square-ish web targets, not glass pills */
     .reader-head-actions a,
     .reader-head-actions button,
     .reader-head button.passage-share-btn {
@@ -2422,7 +2503,7 @@
       min-height: 2.5rem;
       padding: 0;
       margin: 0;
-      border-radius: 999px;
+      border-radius: .4rem;
       font-size: inherit;
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
