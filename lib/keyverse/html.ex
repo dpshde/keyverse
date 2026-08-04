@@ -460,7 +460,7 @@ defmodule Keyverse.Html do
     tree = Tree.build_home_note_tree(notes)
 
     if tree == [] do
-      ~s(<p class="muted">No notes yet. Search a passage above to start.</p>)
+      ~s(<p class="home-empty">No notes yet. Search a passage above to start.</p>)
     else
       body = Enum.map_join(tree, "\n", &render_home_tree_node(&1, 0, base))
       ~s(<div class="note-tree" id="note-tree">#{body}</div>)
