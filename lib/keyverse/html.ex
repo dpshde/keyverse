@@ -351,7 +351,10 @@ defmodule Keyverse.Html do
     body = """
     <header class="ui home-head">
       <h1>keyverse</h1>
-      #{door_share_chip(door)}
+      <div class="home-head-actions">
+        #{theme_seg()}
+        #{door_share_chip(door)}
+      </div>
     </header>
     #{crypto_bar(false)}
     #{ref_search_html(base)}
@@ -365,6 +368,16 @@ defmodule Keyverse.Html do
     """
 
     page("keyverse", body, base: base)
+  end
+
+  defp theme_seg do
+    """
+    <div class="theme-seg" id="theme-seg" role="group" aria-label="Appearance">
+      <button type="button" data-theme-pref="system" aria-pressed="true">System</button>
+      <button type="button" data-theme-pref="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-pref="dark" aria-pressed="false">Dark</button>
+    </div>
+    """
   end
 
   defp pack_ownership_html(base, man) do
@@ -1008,9 +1021,7 @@ defmodule Keyverse.Html do
               title="Chapter note" aria-label="Chapter note">#{ico("note-pencil")}</a>
             <button type="button" class="reader-expand-all head-icon-btn" id="expand-notes"
               aria-pressed="false" aria-label="Expand all verse notes"
-              title="Expand all verse notes">
-              <span class="reader-all-pill" data-expand-lbl aria-hidden="true">All</span>
-            </button>
+              title="Expand all verse notes">#{ico("notes")}</button>
           </div>
         </header>
         <nav class="reader-dock" id="reader-dock" aria-label="Chapter navigation">
@@ -1119,8 +1130,8 @@ defmodule Keyverse.Html do
       start_url: start_url,
       scope: "/",
       display: "standalone",
-      background_color: "#f7f4ef",
-      theme_color: "#1c1915",
+      background_color: "#f6f5f2",
+      theme_color: "#f6f5f2",
       icons: [
         %{src: "/icons/icon-192.png", sizes: "192x192", type: "image/png"},
         %{src: "/icons/icon-512.png", sizes: "512x512", type: "image/png"},

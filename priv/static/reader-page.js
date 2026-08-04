@@ -755,17 +755,9 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         btn.hidden = false;
         const open = allNotesExpanded();
-        // RN CountPill: label stays "All"; active state flips fill
-        const pill = btn.querySelector(".reader-all-pill") || btn.querySelector("[data-expand-lbl]");
-        if (pill) {
-          pill.classList.toggle("is-active", open);
-          if (!pill.classList.contains("reader-all-pill") && pill.hasAttribute("data-expand-lbl")) {
-            const expandLbl = btn.getAttribute("data-label-expand") || "All";
-            const collapseLbl = btn.getAttribute("data-label-collapse") || "All";
-            pill.textContent = open ? collapseLbl : expandLbl;
-          }
-        }
+        // Icon-only control — pressed state is the only chrome flip
         btn.setAttribute("aria-pressed", open ? "true" : "false");
+        btn.classList.toggle("is-active", open);
         btn.setAttribute(
           "aria-label",
           open ? "Fold note previews" : "Expand note previews"

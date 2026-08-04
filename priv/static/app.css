@@ -336,9 +336,6 @@
     .reader-head > .reader-back:active .ph {
       background: color-mix(in srgb, currentColor 10%, transparent);
     }
-    .reader-head .reader-expand-all:hover .reader-all-pill {
-      background: color-mix(in srgb, currentColor 12%, transparent);
-    }
   }
   @media (hover: none) {
     .reader-head .head-icon-btn:active {
@@ -348,39 +345,24 @@
       background: color-mix(in srgb, currentColor 8%, transparent);
     }
   }
+  /* Expand-all notes — same icon chrome as share / chapter (no text pill) */
   .reader-expand-all {
     appearance: none;
-    background: transparent !important;
     border: 0;
     cursor: pointer;
     font: inherit;
     color: inherit;
   }
-  .reader-expand-all:hover {
-    background: transparent !important;
+  .reader-expand-all[aria-pressed="true"] {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 10%, transparent);
   }
-  .reader-all-pill {
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.875rem;
-    height: 1.75rem;
-    padding: 0 .5rem;
-    border-radius: .4rem;
-    font-family: -apple-system, system-ui, sans-serif;
-    font-size: .8125rem;
-    font-weight: 700;
-    letter-spacing: -.02em;
-    line-height: 1;
-    color: color-mix(in srgb, currentColor 72%, transparent);
-    background: color-mix(in srgb, currentColor 6%, transparent);
-    transition: background-color .12s ease, color .12s ease;
-  }
-  .reader-expand-all[aria-pressed="true"] .reader-all-pill,
-  .reader-all-pill.is-active {
-    color: var(--primary-on);
-    background: var(--primary-fill);
+  @media (hover: hover) and (pointer: fine) {
+    .reader-expand-all[aria-pressed="true"]:hover {
+      background: color-mix(in srgb, currentColor 14%, transparent);
+      color: inherit;
+      opacity: 1;
+    }
   }
   /* Icon/back controls — quiet on desktop, enlarged on touch (see mobile adapt) */
   .reader-back,
@@ -1394,7 +1376,7 @@
     margin-left: auto;
   }
   /*
-   * Count chip — same geometry language as reader-all-pill / home chrome:
+   * Count chip — system UI tabular chip (collapsed fill = open-me cue):
    * system UI, tabular nums, soft fill when collapsed (disclosure cue).
    * Only the chip gets fill — never the whole row.
    */

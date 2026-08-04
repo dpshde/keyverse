@@ -18,29 +18,25 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSession } from "@/src/context/SessionContext";
-import type { Attachment, Block, Note } from "@/src/api/types";
+import type { Block, Note } from "@/src/api/types";
 import { hydrateBlocks } from "@/src/api/client";
 import { decryptPayload } from "@/src/lib/crypto";
 import { getChapter, chapterKey } from "@/src/lib/textBundle";
 import { displayScope, resolveLocal } from "@/src/lib/resolveLocal";
 import { passageShareUrls } from "@/src/lib/shareUrl";
 import { LiquidGlassBar, liquidGlassBarListPad } from "@/src/components/LiquidGlassBar";
-import { InlineNoteEditor } from "@/src/components/InlineNoteEditor";
-import { CountPill } from "@/src/components/CountPill";
 import { HeaderIconButton } from "@/src/components/HeaderIconButton";
+import {
+  VerseRowItem,
+  type RangeNoteHit,
+  type VerseRowData,
+} from "@/src/components/VerseRowItem";
 import * as Local from "@/src/lib/localPack";
 import { hapticLight, hapticMedium, hapticSelect } from "@/src/lib/haptics";
-import { color, radius, space, type, ui } from "@/src/theme";
+import { useTheme } from "@/src/context/ThemeContext";
+import { space, type ThemeColors } from "@/src/theme";
 
-type VerseRow = {
-  v: number;
-  text: string;
-  verseSlug: string;
-  /** BSB section / pericope title shown above this verse */
-  heading?: string;
-};
-
-type RangeNoteHit = { slug: string; note: Note; label: string; lo: number; hi: number };
+type VerseRow = VerseRowData;
 
 /** Note counts for the left rail only when it has real content (or sealed body). */
 function noteHasContent(note: Note | undefined | null, blocks?: Block[]): boolean {
@@ -81,6 +77,8 @@ export default function ReaderScreen() {
   const { slug: raw } = useLocalSearchParams<{ slug: string }>();
   const slug = decodeURIComponent(String(raw || ""));
   const { passphrase, translation, cloudEnabled, cloudHost, cloudDoor } = useSession();
+  const { color, ui } = useTheme();
+  const styles = useMemo(() => makeReaderStyles(color), [color]);
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -96,6 +94,11 @@ export default function ReaderScreen() {
   const [expandAll, setExpandAll] = useState(false);
   const [sel, setSel] = useState<{ a: number; b: number } | null>(null);
   const [resolvedBlocks, setResolvedBlocks] = useState<Record<string, Block[]>>({});
+  /**
+   * Live text presence per slug (from tray typing). Only flips empty↔content
+   * so we do NOT rewrite resolvedBlocks (and re-render the chapter) every keystroke.
+   */
+  const [liveText, setLiveText] = useState<Record<string, boolean>>({});
   /**
    * Active multi-verse selection note tray.
    * While set: keep vv. lo–endV highlighted and open only the range note under
@@ -365,8 +368,18 @@ export default function ReaderScreen() {
     [bookChapter, openVerseInline, setListScrollEnabled, ensureVerseVisible]
   );
 
+  const clearLiveText = useCallback((slugSaved: string) => {
+    setLiveText((m) => {
+      if (m[slugSaved] === undefined) return m;
+      const n = { ...m };
+      delete n[slugSaved];
+      return n;
+    });
+  }, []);
+
   const onNoteSaved = useCallback(
     (slugSaved: string, res: Note | { deleted: true; slug: string }) => {
+      clearLiveText(slugSaved);
       if ("deleted" in res && res.deleted) {
         setNotesBySlug((m) => {
           const n = { ...m };
@@ -405,21 +418,16 @@ export default function ReaderScreen() {
         setResolvedBlocks((m) => ({ ...m, [slugSaved]: hydrateBlocks(note) }));
       }
     },
-    [chapterSlug]
+    [chapterSlug, clearLiveText]
   );
 
-  /** Live typing in a tray — keep resolvedBlocks (and thus the rail) in sync. */
+  /**
+   * Live typing — only update rail presence when empty↔content flips.
+   * Full block text stays inside InlineNoteEditor until save (no chapter re-render).
+   */
   const onBlocksLive = useCallback((slugLive: string, blocks: Block[]) => {
-    setResolvedBlocks((m) => {
-      const empty = !blocks.some((b) => (b.text || "").trim());
-      if (empty) {
-        // Keep key only if attachments / encrypted note still “count”; parent rail
-        // uses noteHasContent which treats empty blocks + no atts as no note.
-        const next = { ...m, [slugLive]: blocks };
-        return next;
-      }
-      return { ...m, [slugLive]: blocks };
-    });
+    const hasText = blocks.some((b) => (b.text || "").trim().length > 0);
+    setLiveText((m) => (m[slugLive] === hasText ? m : { ...m, [slugLive]: hasText }));
   }, []);
 
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
@@ -440,12 +448,20 @@ export default function ReaderScreen() {
         )
       );
 
+      // Chapter-scoped notes only — avoid mapping/decrypting the whole pack
+      const chSlug = chapterKey(book, chapter);
+      const prefix = `${book}.${chapter}`.toLowerCase();
       const list = await Local.listNotes();
       const map: Record<string, Note> = {};
-      for (const n of list) if (n.scope?.slug) map[n.scope.slug] = n;
+      for (const n of list) {
+        const sl = (n.scope?.slug || "").toLowerCase();
+        if (!sl) continue;
+        if (sl === chSlug.toLowerCase() || sl.startsWith(prefix + ".")) {
+          map[n.scope!.slug] = n;
+        }
+      }
       setNotesBySlug(map);
-
-      const chSlug = chapterKey(book, chapter);
+      setLiveText({});
       setChapterSlug(chSlug);
       setChapterNote(map[chSlug] || null);
 
@@ -552,11 +568,28 @@ export default function ReaderScreen() {
     }
   }, [cloudEnabled, cloudDoor, cloudHost, slug, chapterSlug, title]);
 
+  const hasChapterNote = useMemo(() => {
+    if (liveText[chapterSlug] === true) return true;
+    if (liveText[chapterSlug] === false) {
+      return !!(chapterNote?.attachments?.length || chapterNote?.encrypted);
+    }
+    return noteHasContent(chapterNote, resolvedBlocks[chapterSlug]);
+  }, [chapterNote, chapterSlug, resolvedBlocks, liveText]);
+
+  const openChapterNote = useCallback(() => {
+    if (!chapterSlug) return;
+    hapticLight();
+    setOpen({});
+    setPendingRange(null);
+    router.push(`/note/${encodeURIComponent(chapterSlug)}`);
+  }, [chapterSlug, router]);
+
+  const toggleExpandAll = useCallback(() => {
+    hapticSelect();
+    setExpandAll((x) => !x);
+  }, []);
+
   useLayoutEffect(() => {
-    const hasChapter = !!(
-      chapterNote ||
-      (chapterSlug && resolvedBlocks[chapterSlug]?.some((b) => (b.text || "").trim()))
-    );
     const displayTitle = title.length > 26 ? title.slice(0, 26) + "…" : title;
     navigation.setOptions({
       // Custom title — full weight, optically level with 40pt glass controls
@@ -577,35 +610,21 @@ export default function ReaderScreen() {
             fallback={"\u2197"}
           />
           <HeaderIconButton
-            symbol={hasChapter ? "note.text" : "square.and.pencil"}
-            accessibilityLabel={hasChapter ? "Open chapter note" : "Add chapter note"}
-            muted={!hasChapter}
-            active={hasChapter}
-            fallback={hasChapter ? "N" : "+"}
-            onPress={() => {
-              if (!chapterSlug) return;
-              hapticLight();
-              setOpen({});
-              setPendingRange(null);
-              router.push(`/note/${encodeURIComponent(chapterSlug)}`);
-            }}
+            symbol={hasChapterNote ? "note.text" : "square.and.pencil"}
+            accessibilityLabel={hasChapterNote ? "Open chapter note" : "Add chapter note"}
+            muted={!hasChapterNote}
+            active={hasChapterNote}
+            fallback={hasChapterNote ? "N" : "+"}
+            onPress={openChapterNote}
           />
-          <Pressable
-            onPress={() => {
-              hapticSelect();
-              setExpandAll((x) => !x);
-            }}
-            style={({ pressed }) => [
-              styles.expandAllBtn,
-              pressed && styles.expandAllPressed,
-            ]}
-            hitSlop={6}
-            accessibilityRole="button"
-            accessibilityState={{ selected: expandAll }}
+          <HeaderIconButton
+            symbol={expandAll ? "list.bullet.rectangle.fill" : "list.bullet.rectangle"}
             accessibilityLabel={expandAll ? "Fold note previews" : "Expand note previews"}
-          >
-            <CountPill label="All" variant={expandAll ? "active" : "filled"} />
-          </Pressable>
+            active={expandAll}
+            muted={!expandAll}
+            fallback={"≡"}
+            onPress={toggleExpandAll}
+          />
         </View>
       ),
     });
@@ -614,10 +633,9 @@ export default function ReaderScreen() {
     sharePassage,
     title,
     expandAll,
-    chapterNote,
-    chapterSlug,
-    resolvedBlocks,
-    router,
+    hasChapterNote,
+    openChapterNote,
+    toggleExpandAll,
   ]);
 
   /** Capture pan while range-dragging so FlatList cannot steal the gesture for scroll. */
@@ -645,6 +663,18 @@ export default function ReaderScreen() {
    * Range notes + cover set from live notesBySlug so deleting a range clears
    * mid-verse rails without waiting for a full chapter reload.
    */
+  /** Content for rails: live typing overrides resolved snapshot when present. */
+  const slugHasContent = useCallback(
+    (sl: string, note: Note | undefined | null) => {
+      if (liveText[sl] === true) return true;
+      if (liveText[sl] === false) {
+        return !!(note?.attachments?.length || note?.encrypted);
+      }
+      return noteHasContent(note, resolvedBlocks[sl]);
+    },
+    [liveText, resolvedBlocks]
+  );
+
   const rangeIndex = useMemo(() => {
     const byEnd = new Map<number, RangeNoteHit[]>();
     const cover = new Set<number>();
@@ -654,8 +684,7 @@ export default function ReaderScreen() {
       if (n.scope?.kind !== "range") continue;
       const sl = (n.scope.slug || "").toLowerCase();
       if (!sl.startsWith(prefix + ".")) continue;
-      // Skip blank notes that haven't been deleted yet
-      if (!noteHasContent(n, resolvedBlocks[n.scope.slug])) continue;
+      if (!slugHasContent(n.scope.slug, n)) continue;
       const osis = n.scope.osis || n.scope.slug;
       const m = /\.(\d+)\.(\d+)-(\d+)$/i.exec(osis);
       if (!m) continue;
@@ -677,19 +706,143 @@ export default function ReaderScreen() {
       for (let v = pendingRange.lo; v <= pendingRange.endV; v++) cover.add(v);
     }
     return { byEnd, cover };
-  }, [notesBySlug, resolvedBlocks, bookChapter, pendingRange]);
-
-  /** Expand-all only opens verses that already have notes (not every blank verse). */
-  const isOpen = (key: string, hasNotes: boolean) =>
-    !!open[key] || (expandAll && hasNotes);
+  }, [notesBySlug, bookChapter, pendingRange, slugHasContent]);
   const dockH = liquidGlassBarListPad(insets.bottom, true);
   /** Extra room so the open tray can scroll above the keyboard */
   const listBottomPad =
     space[4] + (kbHeight > 0 ? kbHeight + space[3] : dockH);
+  const listContentStyle = useMemo(
+    () => ({ padding: space[4], paddingBottom: listBottomPad }),
+    [listBottomPad]
+  );
   const dockSlide = dockAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 120],
   });
+
+  const setVerseRef = useCallback((v: number, node: View | null) => {
+    verseRefs.current.set(v, node);
+  }, []);
+
+  const onPressVerse = useCallback(
+    (v: number) => {
+      if (suppressNextPress.current) {
+        suppressNextPress.current = false;
+        return;
+      }
+      if (draggingRange.current) return;
+      const curSel = selRef.current;
+      if (curSel) {
+        finalizeRange(curSel.a, v);
+        return;
+      }
+      const key = "v" + v;
+      if (open[key] && !expandAll) {
+        setOpen({});
+        setPendingRange(null);
+        focusVerseRef.current = null;
+        return;
+      }
+      // Explicit open (also upgrades expand-all preview → full editor)
+      openVerseInline(v);
+    },
+    [open, expandAll, finalizeRange, openVerseInline]
+  );
+
+  const onLongPressVerse = useCallback(
+    (v: number) => beginRangeDrag(v),
+    [beginRangeDrag]
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: VerseRow }) => {
+      const note = notesBySlug[item.verseSlug];
+      const blocks = resolvedBlocks[item.verseSlug];
+      const rangeNotes = rangeIndex.byEnd.get(item.v) || EMPTY_RANGE_NOTES;
+      const hasVerse = slugHasContent(item.verseSlug, note);
+      const hasNotesToShow = hasVerse || rangeNotes.length > 0;
+      const has = hasNotesToShow || rangeIndex.cover.has(item.v);
+      const key = "v" + item.v;
+      const explicitlyOpen = !!open[key];
+      // Expand-all: read-only previews; full editor only when tapped (open[key])
+      const expandPreview = expandAll && hasNotesToShow && !explicitlyOpen;
+      const opened = explicitlyOpen || expandPreview;
+      const selLo = sel
+        ? Math.min(sel.a, sel.b)
+        : pendingRange
+          ? pendingRange.lo
+          : null;
+      const selHi = sel
+        ? Math.max(sel.a, sel.b)
+        : pendingRange
+          ? pendingRange.endV
+          : null;
+      const selected =
+        selLo != null && selHi != null && item.v >= selLo && item.v <= selHi;
+      const showPendingRange = !!(pendingRange && pendingRange.endV === item.v);
+      const rangeOnlyTray = !!(
+        showPendingRange &&
+        pendingRange &&
+        pendingRange.lo < pendingRange.endV
+      );
+      const showRail = has && !opened;
+      const railStrong = hasVerse || rangeNotes.length > 0;
+
+      return (
+        <VerseRowItem
+          item={item}
+          note={note}
+          blocks={blocks}
+          rangeNotes={rangeNotes}
+          showRail={showRail}
+          railStrong={railStrong}
+          opened={opened}
+          expandPreview={expandPreview}
+          selected={selected}
+          selFirst={selected && item.v === selLo}
+          selLast={selected && item.v === selHi}
+          showPendingRange={showPendingRange}
+          rangeOnlyTray={rangeOnlyTray}
+          pendingRange={pendingRange}
+          notesBySlug={notesBySlug}
+          resolvedBlocks={resolvedBlocks}
+          onPressVerse={onPressVerse}
+          onLongPressVerse={onLongPressVerse}
+          onNoteSaved={onNoteSaved}
+          onBlocksLive={onBlocksLive}
+          setVerseRef={setVerseRef}
+        />
+      );
+    },
+    [
+      notesBySlug,
+      resolvedBlocks,
+      rangeIndex,
+      open,
+      expandAll,
+      sel,
+      pendingRange,
+      slugHasContent,
+      onPressVerse,
+      onLongPressVerse,
+      onNoteSaved,
+      onBlocksLive,
+      setVerseRef,
+    ]
+  );
+
+  const listExtraData = useMemo(
+    () => ({
+      open,
+      expandAll,
+      sel,
+      pendingRange,
+      liveText,
+      notesEpoch: Object.keys(notesBySlug).length,
+    }),
+    [open, expandAll, sel, pendingRange, liveText, notesBySlug]
+  );
+
   if (busy) {
     return (
       <View style={styles.center}>
@@ -724,17 +877,26 @@ export default function ReaderScreen() {
         <FlatList
           ref={flatListRef}
           style={styles.list}
-          contentContainerStyle={{ padding: space[4], paddingBottom: listBottomPad }}
+          contentContainerStyle={listContentStyle}
           data={verses}
-          keyExtractor={(item) => String(item.v)}
+          keyExtractor={keyExtractorVerse}
+          extraData={listExtraData}
+          renderItem={renderItem}
           onScroll={onScroll}
           scrollEventThrottle={16}
           scrollEnabled={!rangeDragging}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
-          // Keep focused TextInput from being covered while typing at chapter end
+          windowSize={7}
+          maxToRenderPerBatch={8}
+          initialNumToRender={12}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={Platform.OS === "android"}
+          // Only while keyboard up — height thrash with expand-all previews is costly
           maintainVisibleContentPosition={
-            Platform.OS === "ios" ? { minIndexForVisible: 0 } : undefined
+            Platform.OS === "ios" && kbHeight > 0
+              ? { minIndexForVisible: 0 }
+              : undefined
           }
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             flatListRef.current?.scrollToOffset({
@@ -745,174 +907,6 @@ export default function ReaderScreen() {
             if (v != null) {
               setTimeout(() => ensureVerseVisible(v, true), 80);
             }
-          }}
-          renderItem={({ item }) => {
-            // Live pack only — never fall back to a stale load-time note snapshot.
-            const note = notesBySlug[item.verseSlug];
-            const blocks = resolvedBlocks[item.verseSlug];
-            const rangeNotes = rangeIndex.byEnd.get(item.v) || [];
-            const hasVerse = noteHasContent(note, blocks);
-            // Range notes under end verse; mid-span cover only gets a quiet rail.
-            const hasNotesToShow = hasVerse || rangeNotes.length > 0;
-            const has = hasNotesToShow || rangeIndex.cover.has(item.v);
-            const key = "v" + item.v;
-            const opened = isOpen(key, hasNotesToShow);
-            // Drag selection (sel) or committed multi-verse passage (pendingRange).
-            const selLo = sel
-              ? Math.min(sel.a, sel.b)
-              : pendingRange
-                ? pendingRange.lo
-                : null;
-            const selHi = sel
-              ? Math.max(sel.a, sel.b)
-              : pendingRange
-                ? pendingRange.endV
-                : null;
-            const selected =
-              selLo != null && selHi != null && item.v >= selLo && item.v <= selHi;
-            const selFirst = selected && item.v === selLo;
-            const selLast = selected && item.v === selHi;
-            const showPendingRange = pendingRange && pendingRange.endV === item.v;
-            /**
-             * Range selection owns this tray: show only the range note, not the
-             * individual end-verse editor (user asked for passage, not vN alone).
-             */
-            const rangeOnlyTray = !!(
-              showPendingRange && pendingRange!.lo < pendingRange!.endV
-            );
-            const verseLocked = !!(note?.encrypted && !blocks?.length);
-
-            // Web parity: flat left rail = has notes; stronger when this verse owns a note
-            const showRail = has && !opened;
-            const railStrong = hasVerse || rangeNotes.length > 0;
-
-            return (
-              <View
-                ref={(n) => {
-                  verseRefs.current.set(item.v, n);
-                }}
-                style={[
-                  styles.verse,
-                  // Continuous passage: no vertical gap between selected rows
-                  selected && styles.verseInPassage,
-                  selected && selFirst && styles.verseInPassageFirst,
-                  selected && selLast && styles.verseInPassageLast,
-                  showRail && styles.verseHasNotes,
-                  showRail && railStrong && styles.verseHasVerseNote,
-                ]}
-                collapsable={false}
-                accessibilityState={{ selected: !!selected }}
-                accessibilityHint={has ? "Has note" : undefined}
-              >
-                {/*
-                  Passage mark = scripture only (web .verse.sel ::after).
-                  Outer radius on run ends; flat mid-span. Note tray is separate.
-                */}
-                <View
-                  style={[
-                    selected && styles.verseSel,
-                    selected && selFirst && styles.verseSelFirst,
-                    selected && selLast && styles.verseSelLast,
-                  ]}
-                >
-                  {item.heading ? (
-                    <Text
-                      style={[styles.sectionHead, item.v > 1 && styles.sectionHeadSpaced]}
-                      accessibilityRole="header"
-                    >
-                      {item.heading}
-                    </Text>
-                  ) : null}
-                  <Pressable
-                    style={styles.versePress}
-                    delayLongPress={320}
-                    onPress={() => {
-                      if (suppressNextPress.current) {
-                        suppressNextPress.current = false;
-                        return;
-                      }
-                      if (draggingRange.current) return;
-                      if (sel) {
-                        // Two-tap range: long-press start, then tap end
-                        finalizeRange(sel.a, item.v);
-                        return;
-                      }
-                      if (opened && open[key] && !expandAll) {
-                        setOpen({});
-                        setPendingRange(null);
-                        focusVerseRef.current = null;
-                        return;
-                      }
-                      openVerseInline(item.v);
-                    }}
-                    onLongPress={() => beginRangeDrag(item.v)}
-                  >
-                    {/* Row layout: paddingRight on nested Text is unreliable on RN */}
-                    <Text style={styles.vnum}>{item.v}</Text>
-                    <Text style={styles.vtext}>{item.text}</Text>
-                  </Pressable>
-                </View>
-
-                {opened ? (
-                  <View style={[styles.noteTray, selected && styles.noteTrayAfterSel]}>
-                    {/* Skip end-verse note when user selected a multi-verse passage */}
-                    {!rangeOnlyTray ? (
-                      <InlineNoteEditor
-                        slug={item.verseSlug}
-                        revision={note?.updated_at || ""}
-                        initialBlocks={
-                          verseLocked
-                            ? undefined
-                            : blocks && blocks.length
-                              ? blocks
-                              : Local.emptyBlocks()
-                        }
-                        initialAttachments={(note?.attachments || []) as Attachment[]}
-                        encrypted={!!note?.encrypted}
-                        locked={verseLocked}
-                        onSaved={(res) => onNoteSaved(item.verseSlug, res)}
-                        onBlocksLive={(b) => onBlocksLive(item.verseSlug, b)}
-                      />
-                    ) : null}
-                    {rangeNotes.map((rn) => {
-                      const rBlocks = resolvedBlocks[rn.slug] || hydrateBlocks(rn.note);
-                      const rLocked = !!(rn.note.encrypted && !rBlocks?.length);
-                      const live = notesBySlug[rn.slug] || rn.note;
-                      return (
-                        <InlineNoteEditor
-                          key={rn.slug}
-                          slug={rn.slug}
-                          label={rn.label}
-                          revision={live?.updated_at || ""}
-                          initialBlocks={rLocked ? undefined : rBlocks}
-                          initialAttachments={(live?.attachments || []) as Attachment[]}
-                          encrypted={!!live?.encrypted}
-                          locked={rLocked}
-                          onSaved={(res) => onNoteSaved(rn.slug, res)}
-                          onBlocksLive={(b) => onBlocksLive(rn.slug, b)}
-                        />
-                      );
-                    })}
-                    {showPendingRange &&
-                    !rangeNotes.some((r) => r.slug === pendingRange!.slug) ? (
-                      <InlineNoteEditor
-                        slug={pendingRange!.slug}
-                        label={pendingRange!.label}
-                        revision={
-                          notesBySlug[pendingRange!.slug]?.updated_at ||
-                          pendingRange!.slug
-                        }
-                        initialBlocks={
-                          resolvedBlocks[pendingRange!.slug] || Local.emptyBlocks()
-                        }
-                        onSaved={(res) => onNoteSaved(pendingRange!.slug, res)}
-                        onBlocksLive={(b) => onBlocksLive(pendingRange!.slug, b)}
-                      />
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
-            );
           }}
         />
       </View>
@@ -968,171 +962,80 @@ export default function ReaderScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  list: { flex: 1, backgroundColor: color.paper },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: space[6],
-    backgroundColor: color.paper,
-    gap: space[3],
-  },
-  // Nav chrome — title + glass controls share one optical midline
-  headerSide: {
-    paddingHorizontal: 0,
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    letterSpacing: -0.35,
-    lineHeight: 22,
-    color: color.ink,
-    maxWidth: 200,
-    textAlign: "center",
-    // Nudge title to the same visual center as HeaderIconButton glyphs
-    marginTop: -1,
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    height: 40,
-    // Tight cluster so the liquid-glass pill reads as one control
-    gap: 0,
-  },
-  /** “All” note-preview pill — same language as home count chips, not chevrons */
-  expandAllBtn: {
-    minWidth: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-  },
-  expandAllPressed: {
-    opacity: 0.45,
-  },
-  verse: {
-    // Keep vertical rhythm tight — only left rail needs structural inset
-    paddingVertical: space[2],
-    paddingLeft: 10,
-    paddingRight: 2,
-    borderLeftWidth: 2,
-    borderLeftColor: "transparent",
-  },
-  /** Collapse outer pad so adjacent selected verses form one wash */
-  verseInPassage: {
-    paddingVertical: 0,
-  },
-  verseInPassageFirst: {
-    paddingTop: space[2],
-  },
-  verseInPassageLast: {
-    paddingBottom: space[2],
-  },
-  /**
-   * Passage mark (web .verse.sel): warm ink wash on paper, not UI-blue.
-   * Mid-span: square. Run ends: soft outer radius only.
-   */
-  verseSel: {
-    backgroundColor: color.sel,
-    borderRadius: 0,
-    paddingVertical: 10,
-    paddingHorizontal: space[3],
-  },
-  verseSelFirst: {
-    borderTopLeftRadius: radius.sel,
-    borderTopRightRadius: radius.sel,
-  },
-  verseSelLast: {
-    borderBottomLeftRadius: radius.sel,
-    borderBottomRightRadius: radius.sel,
-  },
-  /**
-   * Web parity (app.css .verse.has-notes::before): flat 2px left rail.
-   * Quieter for passage cover; stronger when this verse owns a note.
-   */
-  verseHasNotes: {
-    borderLeftColor: "rgba(22,22,22,0.22)",
-  },
-  verseHasVerseNote: {
-    borderLeftColor: "rgba(22,22,22,0.55)",
-  },
-  /** BSB pericope / section title above a verse */
-  sectionHead: {
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
-    color: color.muted,
-    marginBottom: space[2],
-    paddingLeft: 0,
-  },
-  sectionHeadSpaced: {
-    marginTop: space[3],
-  },
-  /** Horizontal gap lives here (not nested Text padding). */
-  versePress: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  vnum: {
-    ...type.verseNum,
-    marginRight: 10,
-    minWidth: 18,
-    textAlign: "right",
-    // Optical align with serif body cap height
-    paddingTop: 4,
-  },
-  vtext: {
-    ...type.verse,
-    flex: 1,
-  },
-  noteTray: {
-    // Tight under verse — was too much air above the tray
-    marginTop: space[2],
-    marginHorizontal: -space[1],
-  },
-  /** Breathing room after a passage mark — tray is a sibling surface, not in the wash */
-  noteTrayAfterSel: {
-    marginTop: space[3],
-  },
-  // Only pin to bottom — never full-screen (absoluteFill was intercepting header taps).
-  dockSlide: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 20,
-  },
-  dockSeg: {
-    flex: 1,
-    minHeight: 34,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.45)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.7)",
-    paddingHorizontal: space[1],
-  },
-  dockSegPrimary: {
-    backgroundColor: "rgba(22,22,22,0.88)",
-    borderColor: "rgba(255,255,255,0.22)",
-    borderTopColor: "rgba(255,255,255,0.35)",
-  },
-  dockSegPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.98 }],
-  },
-  dockSegTxt: {
-    fontWeight: "600",
-    fontSize: 13,
-    letterSpacing: -0.2,
-    color: color.ink,
-  },
-  dockSegPrimaryTxt: {
-    color: "#fff",
-    fontWeight: "700",
-  },
-});
+const EMPTY_RANGE_NOTES: RangeNoteHit[] = [];
+const keyExtractorVerse = (item: VerseRow) => String(item.v);
+
+function makeReaderStyles(color: ThemeColors) {
+  const g = color.glass;
+  return StyleSheet.create({
+    list: { flex: 1, backgroundColor: color.paper },
+    center: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      padding: space[6],
+      backgroundColor: color.paper,
+      gap: space[3],
+    },
+    // Nav chrome — title + glass controls share one optical midline
+    headerSide: {
+      paddingHorizontal: 0,
+    },
+    headerTitle: {
+      fontSize: 17,
+      fontWeight: "700",
+      letterSpacing: -0.35,
+      lineHeight: 22,
+      color: color.ink,
+      maxWidth: 200,
+      textAlign: "center",
+      // Nudge title to the same visual center as HeaderIconButton glyphs
+      marginTop: -1,
+    },
+    headerActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-end",
+      height: 40,
+      // Tight cluster so the liquid-glass pill reads as one control
+      gap: 0,
+    },
+    // Only pin to bottom — never full-screen (absoluteFill was intercepting header taps).
+    dockSlide: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 20,
+    },
+    dockSeg: {
+      flex: 1,
+      minHeight: 34,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: g.dockSeg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: g.dockSegBorder,
+      paddingHorizontal: space[1],
+    },
+    dockSegPrimary: {
+      backgroundColor: color.primaryFill,
+      borderColor: g.capsuleBorder,
+    },
+    dockSegPressed: {
+      opacity: 0.88,
+      transform: [{ scale: 0.98 }],
+    },
+    dockSegTxt: {
+      fontWeight: "600",
+      fontSize: 13,
+      letterSpacing: -0.2,
+      color: color.ink,
+    },
+    dockSegPrimaryTxt: {
+      color: color.primaryOn,
+      fontWeight: "700",
+    },
+  });
+}
