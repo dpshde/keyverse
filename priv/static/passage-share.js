@@ -47,6 +47,21 @@
 
   function flash(el, msg) {
     if (!el) return;
+    // Icon-only controls: never wipe glyph children — flash via attr/opacity.
+    var iconOnly =
+      el.hasAttribute("data-icon-only") ||
+      (el.classList && el.classList.contains("head-icon-btn") && !el.querySelector(".ui-ico-txt"));
+    if (iconOnly) {
+      var prevTitle = el.getAttribute("title") || "";
+      el.dataset.flash = "1";
+      if (msg) el.setAttribute("title", msg);
+      setTimeout(function () {
+        el.dataset.flash = "0";
+        if (prevTitle) el.setAttribute("title", prevTitle);
+        else el.removeAttribute("title");
+      }, 1400);
+      return;
+    }
     var prev = el.getAttribute("data-label-default") || el.textContent;
     if (!el.getAttribute("data-label-default")) {
       el.setAttribute("data-label-default", prev);

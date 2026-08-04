@@ -979,45 +979,44 @@ defmodule Keyverse.Html do
 
         prev_btn =
           if meta.prev_slug do
-            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter"><span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-caret-left"></i></span><span class="reader-dock-lbl">Prev</span></button>)
+            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-prev" data-slug="#{esc(meta.prev_slug)}" aria-label="Previous chapter"><span class="reader-dock-lbl">Prev</span></button>)
           else
-            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ph-caret-left"></i></span><span class="reader-dock-lbl">Prev</span></span>)
+            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-lbl">Prev</span></span>)
           end
 
         next_btn =
           if meta.next_slug do
-            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter"><span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-caret-right"></i></span><span class="reader-dock-lbl">Next</span></button>)
+            ~s(<button type="button" class="reader-dock-item reader-nav" id="reader-next" data-slug="#{esc(meta.next_slug)}" aria-label="Next chapter"><span class="reader-dock-lbl">Next</span></button>)
           else
-            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ph-caret-right"></i></span><span class="reader-dock-lbl">Next</span></span>)
+            ~s(<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-lbl">Next</span></span>)
           end
 
         share_label = Scope.display(scope)
+        chapter_note_slug = meta.chapter_note_slug || scope.slug
 
         body = """
         <header class="ui reader-head">
           <a href="#{esc(base)}/" class="muted reader-back head-icon-btn" aria-label="Home">#{ico("arrow-left")}</a>
           <h1 id="reader-title">#{esc(display)}</h1>
           <div class="reader-head-actions">
-            <button type="button" class="muted passage-share-btn head-icon-btn" data-passage-share
+            <button type="button" class="muted passage-share-btn head-icon-btn" data-passage-share data-icon-only
               data-slug="#{esc(scope.slug)}" data-label="#{esc(share_label)}"
               title="Share this reading view (door link — full pack access)"
-              aria-label="Share passage link">#{ico_label("export", "Share")}</button>
+              aria-label="Share passage link">#{ico("export")}</button>
+            <a class="muted head-icon-btn" id="chapter-note-link"
+              href="#{esc(base)}/note/#{esc(chapter_note_slug)}"
+              title="Chapter note" aria-label="Chapter note">#{ico("note-pencil")}</a>
+            <button type="button" class="reader-expand-all head-icon-btn" id="expand-notes"
+              aria-pressed="false" aria-label="Expand all verse notes"
+              title="Expand all verse notes">
+              <span class="reader-all-pill" data-expand-lbl aria-hidden="true">All</span>
+            </button>
           </div>
         </header>
-        <nav class="reader-dock" id="reader-dock" aria-label="Chapter tools">
+        <nav class="reader-dock" id="reader-dock" aria-label="Chapter navigation">
           #{prev_btn}
-          <button type="button" class="reader-dock-item" id="expand-notes"
-            aria-pressed="false" aria-label="Expand all verse notes"
-            data-label-expand="Notes" data-label-collapse="Fold">
-            <span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-list-dashes"></i></span>
-            <span class="reader-dock-lbl" data-expand-lbl>Notes</span>
-          </button>
-          <a class="reader-dock-item" id="chapter-note-link"
-            href="#{esc(base)}/note/#{esc(meta.chapter_note_slug || scope.slug)}"
-            aria-label="Chapter note">
-            <span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-book-open-text"></i></span>
-            <span class="reader-dock-lbl">Chapter</span>
-          </a>
+          <a class="reader-dock-item reader-dock-home" id="reader-home" href="#{esc(base)}/"
+            aria-label="Home"><span class="reader-dock-lbl">Home</span></a>
           #{next_btn}
         </nav>
         <div id="reader-root" data-slug="#{esc(meta.slug)}">

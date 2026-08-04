@@ -755,16 +755,22 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         btn.hidden = false;
         const open = allNotesExpanded();
-        const expandLbl = btn.getAttribute("data-label-expand") || "Notes";
-        const collapseLbl = btn.getAttribute("data-label-collapse") || "Fold";
-        const lbl = btn.querySelector("[data-expand-lbl]") || btn.querySelector(".reader-dock-lbl");
-        if (lbl) lbl.textContent = open ? collapseLbl : expandLbl;
-        else btn.textContent = open ? "collapse notes" : "expand notes";
+        // RN CountPill: label stays "All"; active state flips fill
+        const pill = btn.querySelector(".reader-all-pill") || btn.querySelector("[data-expand-lbl]");
+        if (pill) {
+          pill.classList.toggle("is-active", open);
+          if (!pill.classList.contains("reader-all-pill") && pill.hasAttribute("data-expand-lbl")) {
+            const expandLbl = btn.getAttribute("data-label-expand") || "All";
+            const collapseLbl = btn.getAttribute("data-label-collapse") || "All";
+            pill.textContent = open ? collapseLbl : expandLbl;
+          }
+        }
         btn.setAttribute("aria-pressed", open ? "true" : "false");
         btn.setAttribute(
           "aria-label",
-          open ? "Collapse all verse notes" : "Expand all verse notes"
+          open ? "Fold note previews" : "Expand note previews"
         );
+        btn.title = open ? "Fold note previews" : "Expand note previews";
       }
 
       function expandAllNotes() {
@@ -837,7 +843,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       function updateNavButtons(meta) {
         const dock = document.getElementById("reader-dock") || document.querySelector(".reader-dock");
         if (!dock) return;
-        function navItem(id, slug, icoClass, label, aria) {
+        function navItem(id, slug, label, aria) {
           if (slug) {
             return (
               '<button type="button" class="reader-dock-item reader-nav" id="' +
@@ -846,49 +852,41 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
               String(slug).replace(/"/g, "") +
               '" aria-label="' +
               aria +
-              '"><span class="reader-dock-ico" aria-hidden="true"><i class="ph ' +
-              icoClass +
-              '"></i></span><span class="reader-dock-lbl">' +
+              '"><span class="reader-dock-lbl">' +
               label +
               "</span></button>"
             );
           }
           return (
-            '<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-ico"><i class="ph ' +
-            icoClass +
-            '"></i></span><span class="reader-dock-lbl">' +
+            '<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-lbl">' +
             label +
             "</span></span>"
           );
         }
-        const expand = document.getElementById("expand-notes");
-        let expandHtml =
-          '<button type="button" class="reader-dock-item" id="expand-notes" aria-pressed="false" ' +
-          'aria-label="Expand all verse notes" data-label-expand="Notes" data-label-collapse="Fold">' +
-          '<span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-list-dashes"></i></span>' +
-          '<span class="reader-dock-lbl" data-expand-lbl>Notes</span></button>';
-        if (expand) {
-          expandHtml = expand.outerHTML;
-        }
-        const noteSlug = meta.chapter_note_slug || meta.slug;
+        // RN FAB: Prev | Home | Next — tools live in the sticky header
+        const home = document.getElementById("reader-home");
+        const homeHtml = home
+          ? home.outerHTML
+          : '<a class="reader-dock-item reader-dock-home" id="reader-home" href="' +
+            apiBase() +
+            '/" aria-label="Home"><span class="reader-dock-lbl">Home</span></a>';
         dock.innerHTML =
-          navItem("reader-prev", meta.prev_slug, "ph-caret-left", "Prev", "Previous chapter") +
-          expandHtml +
-          '<a class="reader-dock-item" id="chapter-note-link" href="' +
-          apiBase() +
-          "/note/" +
-          noteSlug +
-          '" aria-label="Chapter note">' +
-          '<span class="reader-dock-ico" aria-hidden="true"><i class="ph ph-book-open-text"></i></span>' +
-          '<span class="reader-dock-lbl">Chapter</span></a>' +
-          navItem("reader-next", meta.next_slug, "ph-caret-right", "Next", "Next chapter");
-        document.getElementById("expand-notes")?.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (allNotesExpanded()) collapseAllNotes();
-          else expandAllNotes();
-        });
+          navItem("reader-prev", meta.prev_slug, "Prev", "Previous chapter") +
+          homeHtml +
+          navItem("reader-next", meta.next_slug, "Next", "Next chapter");
         wireNavButtons();
+
+        // Header tools that track the current chapter
+        const noteSlug = meta.chapter_note_slug || meta.slug;
+        const chapterLink = document.getElementById("chapter-note-link");
+        if (chapterLink) {
+          chapterLink.href = apiBase() + "/note/" + encodeURIComponent(noteSlug);
+        }
+        const shareBtn = document.querySelector(".reader-head [data-passage-share]");
+        if (shareBtn) {
+          shareBtn.setAttribute("data-slug", meta.slug || "");
+          if (meta.display) shareBtn.setAttribute("data-label", meta.display);
+        }
         syncExpandNotesBtn();
       }
 
@@ -998,8 +996,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const dock = document.getElementById("reader-dock");
         if (!dock) return;
 
-        // Mobile glass only — desktop keeps the static row.
-        const mq = window.matchMedia("(max-width: 640px)");
+        // FAB is fixed on all viewports (RN LiquidGlassBar parity).
         let hidden = false;
         let dirAcc = 0;
         let ticking = false;
@@ -1012,8 +1009,8 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const GAP = 10;
 
         function mobile() {
-          // Must match when CSS makes the dock position:fixed (max-width: 640px).
-          return mq.matches;
+          // Always-on FAB; keep name for pin/keyboard helpers.
+          return true;
         }
 
         function contentEl() {
@@ -1042,12 +1039,13 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         /** True when the user is at (or rubber-banding at) the top of the chapter. */
         function atTop() {
           if (readScrollY() <= TOP_Y) return true;
-          // Header sits above #reader-verses — don't require verses box to clear 80px
-          const head = document.querySelector(".reader-head");
-          if (head) {
-            const hb = head.getBoundingClientRect().bottom;
-            // Title still fully on-screen → treat as top
-            if (hb > 8) return true;
+          // Sticky .reader-head is always on-screen — use content position instead
+          const root = document.getElementById("reader-root") || document.getElementById("reader-verses");
+          if (root) {
+            const head = document.querySelector(".reader-head");
+            const headH = head ? head.getBoundingClientRect().height : 0;
+            // Content still under / just below sticky header → treat as top
+            if (root.getBoundingClientRect().top > headH + 12) return true;
           }
           return false;
         }
