@@ -909,37 +909,65 @@
       var(--card-shadow),
       0 0 0 3px color-mix(in srgb, var(--ink) 8%, transparent);
   }
-  /* Suggestions open — square the bottom so field + list read as one panel */
+  /*
+   * Suggestions open — one continuous outer border around field + list
+   * (same stroke color / weight on all sides; no double seam).
+   */
+  .ref-search.is-open,
+  .ref-search:has(#ref-input[aria-expanded="true"]) {
+    --rs-edge: color-mix(in srgb, var(--ink) 22%, transparent);
+  }
   .ref-search input[type=text][aria-expanded="true"],
   .ref-search #ref-input[aria-expanded="true"],
   .ref-search.is-open input[type=text],
   .ref-search.is-open #ref-input {
-    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
+    border-color: var(--rs-edge, var(--rs-border));
     border-bottom-color: transparent;
+    border-bottom-width: 1px;
+    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
     box-shadow: none;
   }
   .ref-search.is-open input[type=text]:focus,
   .ref-search.is-open #ref-input:focus,
   .ref-search input[type=text][aria-expanded="true"]:focus,
   .ref-search #ref-input[aria-expanded="true"]:focus {
-    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
+    border-color: var(--rs-edge, var(--rs-border));
     border-bottom-color: transparent;
+    border-radius: var(--rs-radius) var(--rs-radius) 0 0;
     box-shadow: none;
   }
   .ref-suggest {
-    position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
-    margin: -1px 0 0; padding: 0; list-style: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 40;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    box-sizing: border-box;
     border: 1px solid var(--rs-border);
-    border-top: 1px solid var(--line-soft);
+    border-top: 0;
     border-radius: 0 0 var(--rs-radius) var(--rs-radius);
     background: var(--paper-raised);
-    box-shadow: 0 .4rem 1.25rem color-mix(in srgb, #000 10%, transparent);
-    max-height: min(16rem, 50vh); overflow-y: auto;
+    box-shadow: var(--card-shadow);
+    max-height: min(16rem, 50vh);
+    overflow-y: auto;
     overflow-x: hidden;
+  }
+  /* Match field stroke when composite is open */
+  .ref-search.is-open .ref-suggest,
+  .ref-search:has(#ref-input[aria-expanded="true"]) .ref-suggest {
+    border-color: var(--rs-edge, var(--rs-border));
+    border-top: 0;
+    /* soft inner divider under the field, not a second outer border */
+    box-shadow:
+      inset 0 1px 0 var(--line-soft),
+      var(--card-shadow);
   }
   .ref-suggest[hidden] { display: none; }
   .ref-suggest li { margin: 0; }
-  .ref-suggest li:last-child button { border-radius: 0 0 var(--rs-radius) var(--rs-radius); }
+  .ref-suggest li:last-child button { border-radius: 0 0 calc(var(--rs-radius) - 1px) calc(var(--rs-radius) - 1px); }
   .ref-suggest button {
     display: flex; align-items: baseline; justify-content: space-between; gap: .75rem;
     width: 100%; margin: 0; padding: .55rem var(--field-pad-x);
