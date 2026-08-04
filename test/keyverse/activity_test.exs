@@ -18,6 +18,40 @@ defmodule Keyverse.ActivityTest do
     %{pack: pack}
   end
 
+  test "bootstrap ops use note created_at for activity day, not wall-clock", %{pack: pack} do
+    scope = Scope.parse("Psalm 32:9")
+    created = "2026-08-02T03:16:23.798Z"
+
+    note = %{
+      "id" => "n_old",
+      "scope" => Note.scope_map(scope),
+      "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "from last week"}],
+      "attachments" => [],
+      "created_at" => created,
+      "updated_at" => created
+    }
+
+    Note.write!(pack, note)
+
+    # Seed log the way a bulk mirror would after ops ship
+    {:ok, _} =
+      Note.put_note(pack, scope, %{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "from last week"}]
+      })
+
+    # Activity for create day should list this note; today should not (no real edit).
+    day_created = Activity.day(pack, "2026-08-02")
+    assert day_created.count >= 1
+    assert Enum.any?(day_created.events, &(&1.slug == scope.slug))
+
+    today = Date.utc_today() |> Date.to_iso8601()
+
+    if today != "2026-08-02" do
+      day_today = Activity.day(pack, today)
+      refute Enum.any?(day_today.events, &(&1.slug == scope.slug and &1.kind == "edit"))
+    end
+  end
+
   test "heatmap counts op edits by day and YTD notes taken", %{pack: pack} do
     scope = Scope.parse("John 3:16")
 

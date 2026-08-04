@@ -73,17 +73,26 @@ defmodule Keyverse.OpLog do
   Append one op record; returns `%{hash: h, record: map}`.
 
   `ops` is a list of primitive ops (see `Keyverse.Fold`). Parents/lamport are
-  derived from `records` (the current log). Set `implicit: true` for records
-  synthesized from out-of-band snapshot edits.
+  derived from `records` (the current log). Options:
+
+  - `implicit: true` — synthesized from out-of-band snapshot edits
+  - `at: iso8601` — wall-clock stamp (default: now). Use note `created_at` when
+    seeding the log from an existing snapshot so activity isn't all "today".
   """
   def append!(pack_dir, slug, records, ops, opts \\ []) do
+    at =
+      case opts[:at] do
+        stamp when is_binary(stamp) and stamp != "" -> stamp
+        _ -> Keyverse.Note.iso_now()
+      end
+
     record =
       %{
         "v" => @record_v,
         "slug" => slug,
         "parents" => heads(records),
         "lamport" => next_lamport(records),
-        "at" => Keyverse.Note.iso_now(),
+        "at" => at,
         "ops" => ops
       }
       |> then(fn r -> if opts[:implicit], do: Map.put(r, "implicit", true), else: r end)
@@ -111,13 +120,23 @@ defmodule Keyverse.OpLog do
   `before_state: nil` to diff directly from the fold state (used when the
   previous snapshot was encrypted and carries no plaintext to compare).
 
+  Options:
+
+  - `at: iso8601` — when seeding an empty log from an existing note (empty fold
+    → content), stamp the seed/bootstrap record with the note's `created_at`
+    so a bulk mirror does not mark every note as edited "now".
+
+  Empty diffs are a no-op (no record written) — safe for idempotent sync PUTs
+  once the log already matches the snapshot.
+
   Never raises: op logging must not break note capture. On error it logs a
   warning and returns `:error`; the next transition heals via the implicit
   mechanism.
   """
-  def record_transition!(pack_dir, slug, before_state, after_state) do
+  def record_transition!(pack_dir, slug, before_state, after_state, opts \\ []) do
     records = list(pack_dir, slug)
     fold_state = Fold.materialize(Fold.fold(records))
+    stamp = bootstrap_stamp(opts[:at])
 
     {records, base_state} =
       cond do
@@ -133,17 +152,26 @@ defmodule Keyverse.OpLog do
           if ops == [] do
             {records, before_state}
           else
-            rec = append!(pack_dir, slug, records, ops, implicit: true)
+            # Empty fold → existing snapshot: seed the log (often bulk sync after
+            # ops were introduced). Prefer created_at so activity keeps history.
+            heal_opts =
+              [implicit: true]
+              |> maybe_put_at(empty_state?(fold_state) && stamp)
+
+            rec = append!(pack_dir, slug, records, ops, heal_opts)
             {records ++ [rec], before_state}
           end
       end
 
     case Fold.diff(base_state, after_state) do
       [] ->
+        # No content change — critical for mirror PUT of unchanged notes.
         :ok
 
       ops ->
-        _ = append!(pack_dir, slug, records, ops)
+        # First real write into an empty base: also prefer created_at when given.
+        main_opts = maybe_put_at([], empty_state?(base_state) && stamp)
+        _ = append!(pack_dir, slug, records, ops, main_opts)
         :ok
     end
   rescue
@@ -151,4 +179,22 @@ defmodule Keyverse.OpLog do
       Logger.warning("op log write failed for #{slug}: #{Exception.message(e)}")
       :error
   end
+
+  defp bootstrap_stamp(stamp) when is_binary(stamp) and stamp != "", do: stamp
+  defp bootstrap_stamp(_), do: nil
+
+  defp maybe_put_at(opts, stamp) when is_binary(stamp) and stamp != "",
+    do: Keyword.put(opts, :at, stamp)
+
+  defp maybe_put_at(opts, _), do: opts
+
+  defp empty_state?(state), do: Fold.equal?(state, Fold.empty_state()) or empty_blocks?(state)
+
+  defp empty_blocks?(%{"blocks" => blocks}) when is_list(blocks) do
+    Enum.all?(blocks, fn b ->
+      not is_map(b) or String.trim(to_string(b["text"] || "")) == ""
+    end)
+  end
+
+  defp empty_blocks?(_), do: true
 end

@@ -104,6 +104,45 @@ defmodule Keyverse.NoteOpLogTest do
     assert Fold.equal?(fold_state(pack, scope.slug), Fold.state_from_note(note))
   end
 
+  test "seeding empty log from existing note stamps created_at; re-put is no-op", %{pack: pack} do
+    scope = Scope.parse("John 3:21")
+    created = "2026-08-02T03:16:23.798Z"
+
+    # Write snapshot without going through put_note logging first (simulate pre-ops pack).
+    note = %{
+      "id" => "n_pre",
+      "scope" => Note.scope_map(scope),
+      "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "old content"}],
+      "attachments" => [],
+      "created_at" => created,
+      "updated_at" => created
+    }
+
+    Note.write!(pack, note)
+    assert OpLog.list(pack, scope.slug) == []
+
+    # First put after ops enabled: seeds log with created_at, not wall-clock now.
+    {:ok, _} =
+      Note.put_note(pack, scope, %{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "old content"}]
+      })
+
+    records = OpLog.list(pack, scope.slug)
+    assert length(records) == 1
+    assert hd(records).record["at"] == created
+    assert hd(records).record["implicit"] == true
+
+    n_after_seed = length(records)
+
+    # Identical re-put (mirror) must not append more ops.
+    {:ok, _} =
+      Note.put_note(pack, scope, %{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "old content"}]
+      })
+
+    assert length(OpLog.list(pack, scope.slug)) == n_after_seed
+  end
+
   test "export/import round-trips ops/", %{pack: pack} do
     scope = Scope.parse("John 3:20")
 

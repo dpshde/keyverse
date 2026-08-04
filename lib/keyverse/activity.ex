@@ -113,26 +113,43 @@ defmodule Keyverse.Activity do
   defp note_taken_event?(%{kind: "created"}), do: true
 
   defp note_taken_event?(%{kind: "snapshot"} = e) do
-    before = Map.get(e, :before_text)
-    before == "" or before == nil
+    # First snapshot write: empty → any content (text and/or attachments/links).
+    empty_note_state?(Map.get(e, :before_state)) and
+      not empty_note_state?(Map.get(e, :after_state))
   end
 
   defp note_taken_event?(%{kind: "edit"} = e) do
-    # First write in the log: empty outline before this op, and content after.
-    empty_outline_state?(Map.get(e, :before_state)) and
-      not empty_outline_state?(Map.get(e, :after_state))
+    # First write in the log: empty before, content after (text and/or attachments).
+    empty_note_state?(Map.get(e, :before_state)) and
+      not empty_note_state?(Map.get(e, :after_state))
   end
 
   defp note_taken_event?(_), do: false
 
-  defp empty_outline_state?(nil), do: true
-  defp empty_outline_state?(%{"blocks" => blocks}) when blocks == [] or blocks == nil, do: true
+  # Empty = no non-blank block text AND no attachments/links.
+  defp empty_note_state?(nil), do: true
 
-  defp empty_outline_state?(%{"blocks" => blocks}) when is_list(blocks) do
+  defp empty_note_state?(state) when is_map(state) do
+    empty_blocks?(Map.get(state, "blocks")) and empty_attachments?(Map.get(state, "attachments"))
+  end
+
+  defp empty_note_state?(_), do: true
+
+  defp empty_blocks?(nil), do: true
+  defp empty_blocks?(blocks) when blocks == [], do: true
+
+  defp empty_blocks?(blocks) when is_list(blocks) do
     Enum.all?(blocks, fn b -> not is_map(b) or String.trim(to_string(b["text"] || "")) == "" end)
   end
 
-  defp empty_outline_state?(_), do: false
+  defp empty_blocks?(_), do: true
+
+  defp empty_attachments?(nil), do: true
+  defp empty_attachments?(atts) when is_list(atts), do: atts == []
+  defp empty_attachments?(_), do: true
+
+  # Kept for bootstrap_at call sites / older naming.
+  defp empty_outline_state?(state), do: empty_note_state?(state)
 
   @doc """
   Events on a single UTC calendar day (`YYYY-MM-DD`), newest first.
@@ -194,48 +211,94 @@ defmodule Keyverse.Activity do
         change_count: n
       }
 
-      # Summary matches the *net* outline the card shows (not raw op micro-counts).
+      # Summary matches the *net* preview (text + attachments), not raw op micro-counts.
       Map.put(
         base,
         :summary,
-        net_outline_summary(Map.get(base, :before_text), Map.get(base, :after_text))
+        net_content_summary(Map.get(base, :before_state), Map.get(base, :after_state))
       )
     end)
   end
 
-  # Human summary aligned with the unified outline preview.
-  defp net_outline_summary(before, after_text) do
-    a = outline_lines(before)
-    b = outline_lines(after_text)
+  # Human summary aligned with the day-card preview (outline + attachments/links).
+  defp net_content_summary(before_state, after_state) do
+    a = outline_lines(outline_text(before_state || %{"blocks" => [], "attachments" => []}))
+    b = outline_lines(outline_text(after_state || %{"blocks" => [], "attachments" => []}))
+    {att_add, att_del} = attachment_diff_counts(before_state, after_state)
 
-    cond do
-      a == [] and b == [] ->
-        "No text"
+    text_parts =
+      cond do
+        a == [] and b == [] ->
+          []
 
-      a == [] and length(b) == 1 ->
-        "Added"
+        a == [] and length(b) == 1 ->
+          ["Added"]
 
-      a == [] ->
-        "#{length(b)} lines added"
+        a == [] ->
+          ["#{length(b)} lines added"]
 
-      b == [] and length(a) == 1 ->
-        "Removed"
+        b == [] and length(a) == 1 ->
+          ["Removed"]
 
-      b == [] ->
-        "#{length(a)} lines removed"
+        b == [] ->
+          ["#{length(a)} lines removed"]
 
-      true ->
-        {adds, dels} = line_diff_counts(a, b)
+        true ->
+          {adds, dels} = line_diff_counts(a, b)
 
-        parts =
           []
           |> then(fn p -> if dels > 0, do: ["#{dels} removed" | p], else: p end)
           |> then(fn p -> if adds > 0, do: ["#{adds} added" | p], else: p end)
           |> Enum.reverse()
+      end
 
-        if parts == [], do: "Edited", else: Enum.join(parts, " · ")
+    # Drop bare "Added" when we also have att labels (use att wording instead for attach-only).
+    text_parts =
+      if text_parts == ["Added"] and att_add > 0 and length(a) == 0 and length(b) == 0 do
+        []
+      else
+        text_parts
+      end
+
+    att_parts =
+      []
+      |> then(fn p -> if att_del > 0, do: [att_word(att_del, "removed") | p], else: p end)
+      |> then(fn p -> if att_add > 0, do: [att_word(att_add, "attached") | p], else: p end)
+      |> Enum.reverse()
+
+    parts = text_parts ++ att_parts
+
+    cond do
+      parts != [] -> Enum.join(parts, " · ")
+      empty_note_state?(before_state) and empty_note_state?(after_state) -> "Empty"
+      true -> "Edited"
     end
   end
+
+  defp att_word(1, "attached"), do: "1 attachment"
+  defp att_word(n, "attached"), do: "#{n} attachments"
+  defp att_word(1, "removed"), do: "1 detached"
+  defp att_word(n, "removed"), do: "#{n} detached"
+
+  defp attachment_diff_counts(before_state, after_state) do
+    ba = attachment_ids(before_state)
+    aa = attachment_ids(after_state)
+    {MapSet.size(MapSet.difference(aa, ba)), MapSet.size(MapSet.difference(ba, aa))}
+  end
+
+  defp attachment_ids(nil), do: MapSet.new()
+
+  defp attachment_ids(%{"attachments" => atts}) when is_list(atts) do
+    atts
+    |> Enum.map(fn
+      %{"id" => id} when is_binary(id) -> id
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> MapSet.new()
+  end
+
+  defp attachment_ids(_), do: MapSet.new()
 
   defp outline_lines(nil), do: []
 
@@ -308,21 +371,26 @@ defmodule Keyverse.Activity do
   defp slug_op_events(pack_dir, slug, from, to) do
     records = OpLog.list(pack_dir, slug)
     lin = Fold.linearize(records)
+    # Prefer note.created_at for empty→content bootstrap ops already on disk
+    # (bulk mirror after ops shipped stamped every slug with "now").
+    created_at = note_created_at(pack_dir, slug)
 
     {events, _state} =
       Enum.reduce(lin, {[], Fold.empty_state()}, fn %{hash: hash, record: rec}, {acc, state} ->
-        at = rec["at"]
+        before_mat = Fold.materialize(state)
+        ops = List.wrap(rec["ops"])
+
+        state_after =
+          Enum.reduce(ops, state, fn op, st -> Fold.apply_op(st, op) end)
+
+        after_mat = Fold.materialize(state_after)
+
+        at =
+          bootstrap_at(rec["at"], created_at, before_mat, after_mat)
+
         date = iso_date(at)
 
         if date && in_range?(date, from, to) do
-          before_mat = Fold.materialize(state)
-          ops = List.wrap(rec["ops"])
-
-          state_after =
-            Enum.reduce(ops, state, fn op, st -> Fold.apply_op(st, op) end)
-
-          after_mat = Fold.materialize(state_after)
-
           event = %{
             kind: "edit",
             slug: slug,
@@ -338,16 +406,32 @@ defmodule Keyverse.Activity do
 
           {[event | acc], state_after}
         else
-          # Still advance fold so later in-range events have correct base
-          state_after =
-            Enum.reduce(List.wrap(rec["ops"]), state, fn op, st -> Fold.apply_op(st, op) end)
-
           {acc, state_after}
         end
       end)
 
     Enum.reverse(events)
   end
+
+  defp note_created_at(pack_dir, slug) do
+    case Note.read(pack_dir, slug) do
+      %{"created_at" => at} when is_binary(at) and at != "" -> at
+      _ -> nil
+    end
+  end
+
+  # Empty outline → content bootstrap (first write / log seed): prefer created_at
+  # so bulk mirror after ops shipped does not pile every note onto "today".
+  defp bootstrap_at(rec_at, created_at, before_state, after_state)
+       when is_binary(created_at) and created_at != "" do
+    if empty_outline_state?(before_state) and not empty_outline_state?(after_state) do
+      created_at
+    else
+      rec_at
+    end
+  end
+
+  defp bootstrap_at(rec_at, _created_at, _before, _after), do: rec_at
 
   defp events_from_notes(pack_dir, from, to, slugs_with_ops) do
     Note.list(pack_dir)
@@ -403,6 +487,14 @@ defmodule Keyverse.Activity do
   defp public_event(e) do
     before = Map.get(e, :before_text)
     after_t = Map.get(e, :after_text)
+    before_state = Map.get(e, :before_state)
+    after_state = Map.get(e, :after_state)
+
+    text_diff =
+      is_binary(before) and is_binary(after_t) and before != after_t
+
+    {att_add, att_del} = attachment_diff_counts(before_state, after_state)
+    att_diff = att_add + att_del > 0
 
     %{
       kind: Map.get(e, :kind),
@@ -416,15 +508,54 @@ defmodule Keyverse.Activity do
       change_count: Map.get(e, :change_count) || 1,
       before_text: before,
       after_text: after_t,
+      before_attachments: attachment_list(before_state),
+      after_attachments: attachment_list(after_state),
       encrypted: Map.get(e, :encrypted) == true,
-      has_diff: is_binary(before) and is_binary(after_t) and before != after_t
+      has_diff: text_diff or att_diff
     }
   end
+
+  defp attachment_list(nil), do: []
+
+  defp attachment_list(%{"attachments" => atts}) when is_list(atts) do
+    Enum.map(atts, &attachment_public/1)
+  end
+
+  defp attachment_list(_), do: []
+
+  defp attachment_public(a) when is_map(a) do
+    %{
+      id: a["id"],
+      kind: a["kind"] || "file",
+      label: attachment_label(a)
+    }
+  end
+
+  defp attachment_public(_), do: %{id: nil, kind: "file", label: "attachment"}
+
+  defp attachment_label(%{"kind" => "url"} = a) do
+    cond do
+      is_binary(a["title"]) and String.trim(a["title"]) != "" -> String.trim(a["title"])
+      is_binary(a["url"]) -> a["url"]
+      true -> "link"
+    end
+  end
+
+  defp attachment_label(a) when is_map(a) do
+    cond do
+      is_binary(a["filename"]) and a["filename"] != "" -> a["filename"]
+      is_binary(a["title"]) and a["title"] != "" -> a["title"]
+      is_binary(a["mime"]) -> a["mime"]
+      true -> "file"
+    end
+  end
+
+  defp attachment_label(_), do: "attachment"
 
   # --- presentation -----------------------------------------------------------
 
   @doc false
-  def outline_text(%{"blocks" => blocks}) when is_list(blocks) do
+  def outline_text(%{"blocks" => blocks} = state) when is_list(blocks) do
     # Drop trailing empty blocks (outliner often keeps a blank caret line).
     trimmed =
       blocks
@@ -432,13 +563,26 @@ defmodule Keyverse.Activity do
       |> Enum.drop_while(fn b -> String.trim(b["text"] || "") == "" end)
       |> Enum.reverse()
 
-    trimmed
-    |> Enum.map(fn b ->
-      indent = max(0, b["indent"] || 0)
-      text = b["text"] || ""
-      String.duplicate("  ", indent) <> text
-    end)
-    |> Enum.join("\n")
+    body =
+      trimmed
+      |> Enum.map(fn b ->
+        indent = max(0, b["indent"] || 0)
+        text = b["text"] || ""
+        String.duplicate("  ", indent) <> text
+      end)
+
+    # Attachments/links as preview lines so day diffs surface them.
+    att_lines =
+      (Map.get(state, "attachments") || [])
+      |> Enum.filter(&is_map/1)
+      |> Enum.map(fn a ->
+        case a["kind"] do
+          "url" -> "🔗 " <> attachment_label(a)
+          _ -> "📎 " <> attachment_label(a)
+        end
+      end)
+
+    (body ++ att_lines) |> Enum.join("\n")
   end
 
   def outline_text(_), do: ""
@@ -455,6 +599,10 @@ defmodule Keyverse.Activity do
         Map.update(acc, name, 1, &(&1 + 1))
       end)
 
+    # Prefer human attachment wording over raw op tallies for link/file notes.
+    att_n = Map.get(counts, "put_attachment", 0)
+    det_n = Map.get(counts, "remove_attachment", 0)
+
     parts =
       [
         {"insert", "added"},
@@ -462,9 +610,7 @@ defmodule Keyverse.Activity do
         {"set_text", "edited"},
         {"set_indent", "re-indented"},
         {"set_collapsed", "collapsed"},
-        {"move", "moved"},
-        {"put_attachment", "attached"},
-        {"remove_attachment", "detached"}
+        {"move", "moved"}
       ]
       |> Enum.flat_map(fn {op, word} ->
         case Map.get(counts, op) do

@@ -315,13 +315,22 @@ defmodule Keyverse.Note do
   # Append op records for a plaintext state transition (PROTOCOL §10).
   # Unsealing (existing encrypted → plaintext) diffs from the fold state,
   # since the sealed snapshot carries no plaintext to compare.
+  #
+  # When seeding an empty op log from an existing note (mirror / first deploy
+  # of ops), pass created_at so activity is not bulk-stamped "now".
   defp log_transition(pack_dir, slug, existing, after_state) do
     before_state =
       if existing && encrypted?(existing),
         do: nil,
         else: Keyverse.Fold.state_from_note(existing)
 
-    Keyverse.OpLog.record_transition!(pack_dir, slug, before_state, after_state)
+    opts =
+      case existing do
+        %{"created_at" => at} when is_binary(at) and at != "" -> [at: at]
+        _ -> []
+      end
+
+    Keyverse.OpLog.record_transition!(pack_dir, slug, before_state, after_state, opts)
   end
 
   def scope_map(scope) do
