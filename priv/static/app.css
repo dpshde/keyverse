@@ -845,13 +845,13 @@
   .note-inbox {
     display: flex;
     flex-direction: column;
-    gap: .15rem;
+    gap: 0;
   }
   .inbox-day {
     display: flex;
     flex-direction: column;
-    gap: .45rem;
-    margin-top: .85rem;
+    gap: .28rem;
+    margin-top: .7rem;
   }
   .inbox-day:first-child {
     margin-top: 0;
@@ -860,8 +860,8 @@
     display: none !important;
   }
   .inbox-day-h {
-    margin: 0 0 .15rem;
-    padding-bottom: .35rem;
+    margin: 0 0 .12rem;
+    padding-bottom: .3rem;
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
     font-family: -apple-system, system-ui, sans-serif;
     font-size: .72rem;
@@ -873,15 +873,9 @@
   .inbox-card[hidden] {
     display: none !important;
   }
+  /* Inbox cards: same leaf density; gap from .inbox-day, not leaf margin */
   .inbox-card .note-row.is-note {
-    /* Same surface weight as nested leaf cards */
-    padding: .65rem .75rem;
-    border-radius: .5rem;
-    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-    background: color-mix(in srgb, Canvas 96%, currentColor 2%);
-  }
-  html[data-theme="dark"] .inbox-card .note-row.is-note {
-    background: color-mix(in srgb, Canvas 92%, #fff 4%);
+    margin: 0;
   }
   .inbox-card .nt-badge {
     font-size: .68rem;
@@ -1697,15 +1691,19 @@
     background: color-mix(in srgb, currentColor 4%, transparent);
     pointer-events: none;
   }
-  /* Leaf notes = raised content cards (mobile home card) */
+  /* Leaf notes — same density as Inbox cards (gap ~.28rem via bottom margin) */
   .note-row.is-note {
     display: block;
-    margin: .35rem 0 .5rem;
-    padding: .7rem .8rem .75rem;
-    border-radius: .75rem;
-    background: var(--paper-raised);
-    border: 1px solid color-mix(in srgb, currentColor 8%, transparent);
-    box-shadow: var(--card-shadow);
+    margin: 0 0 .28rem;
+    padding: .55rem .7rem;
+    border-radius: .45rem;
+    background: color-mix(in srgb, Canvas 96%, currentColor 2%);
+    border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+    box-shadow: none;
+    min-height: 0;
+  }
+  html[data-theme="dark"] .note-row.is-note {
+    background: color-mix(in srgb, Canvas 92%, #fff 4%);
   }
   /* Light press/hover only — never a resting grey bar on chapters */
   @media (hover: hover) and (pointer: fine) {
@@ -1717,8 +1715,6 @@
     }
     .note-row.is-note:hover {
       border-color: color-mix(in srgb, currentColor 14%, transparent);
-      box-shadow: 0 1px 2px color-mix(in srgb, #000 5%, transparent),
-        0 8px 20px color-mix(in srgb, #000 5%, transparent);
     }
   }
   @media (hover: none) {
@@ -1735,8 +1731,8 @@
   .note-row.is-note .nt-main {
     display: block;
     /* Card padding is on the row; main fills so the whole card opens reader */
-    margin: -.7rem -.8rem -.75rem;
-    padding: .7rem .8rem .75rem;
+    margin: -.55rem -.7rem;
+    padding: .55rem .7rem;
     border-radius: inherit;
     min-height: 100%;
     box-sizing: content-box;
@@ -1863,20 +1859,20 @@
   /* Leaf card: title — still UI chrome weight, body excerpt stays serif */
   .note-row.is-note .ref {
     font-weight: 650;
-    font-size: .95rem;
+    font-size: .93rem;
     letter-spacing: -.015em;
     color: var(--ink);
   }
   .note-row .nt-ex {
-    margin-top: .28rem;
+    margin-top: .2rem;
     font-size: .92rem;
     line-height: 1.4;
     color: color-mix(in srgb, currentColor 68%, transparent);
   }
   .note-row.is-note .nt-ex {
     font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-    font-size: .95rem;
-    line-height: 1.42;
+    font-size: .92rem;
+    line-height: 1.4;
     color: color-mix(in srgb, currentColor 72%, transparent);
   }
   .nt-act {
@@ -3026,12 +3022,12 @@
     }
     .note-row.is-note {
       min-height: 0;
-      padding: .85rem .95rem .9rem;
-      margin: .4rem 0 .55rem;
+      padding: .55rem .7rem;
+      margin: 0 0 .28rem;
     }
     .note-row.is-note .nt-main {
-      margin: -.85rem -.95rem -.9rem;
-      padding: .85rem .95rem .9rem;
+      margin: -.55rem -.7rem;
+      padding: .55rem .7rem;
     }
     .note-row.is-folder:not(.is-chapter)::before {
       inset: 0;
@@ -3043,11 +3039,14 @@
     }
     .nt-kids > .nt-node > .note-row.is-note {
       min-height: 0;
-      padding: .85rem .95rem .9rem;
+      padding: .55rem .7rem;
     }
     .nt-kids > .nt-node > .note-row.is-note .nt-main {
-      margin: -.85rem -.95rem -.9rem;
-      padding: .85rem .95rem .9rem;
+      margin: -.55rem -.7rem;
+      padding: .55rem .7rem;
+    }
+    .inbox-card .note-row.is-note {
+      margin: 0;
     }
     .note-row.has-kids .nt-ex {
       margin-left: 0;
