@@ -20,6 +20,7 @@ import {
   dayFromNotes,
   formatDayLabel,
   formatTime,
+  bookAtCanonT,
   heatEqual,
   heatmapFromNotes,
   lineDiff,
@@ -29,6 +30,7 @@ import {
   type ActivityDay,
   type ActivityEvent,
   type ActivityHeatmap,
+  type CanonBook,
   type DiffRow,
   type HeatCell,
 } from "@/src/lib/activity";
@@ -125,6 +127,9 @@ export default function ActivityScreen() {
   const [eventExpanded, setEventExpanded] = useState<Record<string, boolean>>({});
   /** Week range title → jump to any week in the heat range. */
   const [weekPickerOpen, setWeekPickerOpen] = useState(false);
+  /** Selected book on the canon coverage rail. */
+  const [canonOsis, setCanonOsis] = useState<string | null>(null);
+  const [canonRailW, setCanonRailW] = useState(0);
 
   const graphScrollRef = useRef<ScrollView>(null);
   const scrollGraphToEnd = useCallback((animated = false) => {
@@ -187,6 +192,7 @@ export default function ActivityScreen() {
               from: remote.from,
               to: remote.to,
               source: remote.source || "ops",
+              canon: remote.canon,
             };
             await applyHeat(next);
             return;
@@ -446,6 +452,52 @@ export default function ActivityScreen() {
     [color.paper]
   );
 
+  /** Continuous olive heat for canon rail (0 empty → full green). */
+  const canonHeatColor = useCallback(
+    (heat: number) => {
+      const t = Math.max(0, Math.min(1, heat || 0));
+      if (t <= 0) return color.paper === "#121211" ? "#1c1b19" : "#e8e7e3";
+      const dark = color.paper === "#121211";
+      const greens = dark
+        ? ["#2a3d31", "#3a5c48", "#4d7a5e", "#6dba86", "#8fd0a4"]
+        : ["#c5d4c9", "#8fad97", "#5a8568", "#3d6b4e", "#2a5139"];
+      const idx = Math.min(4, Math.max(0, Math.round(t * 4)));
+      return greens[idx]!;
+    },
+    [color.paper]
+  );
+
+  const canonBooks = heat?.canon?.books ?? [];
+  const canonSeamT = heat?.canon?.testament_seam_t ?? 929 / 1189;
+
+  const selectedCanon: CanonBook | null = useMemo(() => {
+    if (!canonBooks.length) return null;
+    if (canonOsis) {
+      return canonBooks.find((b) => b.osis === canonOsis) ?? canonBooks[0]!;
+    }
+    // Prefer hottest book, else first with notes, else Genesis
+    let best: CanonBook | null = null;
+    let firstWith: CanonBook | null = null;
+    for (const b of canonBooks) {
+      if (b.notes > 0 && !firstWith) firstWith = b;
+      if (b.notes > 0 && (!best || b.heat > best.heat)) best = b;
+    }
+    return best ?? firstWith ?? canonBooks[0]!;
+  }, [canonBooks, canonOsis]);
+
+  const selectCanonFromX = useCallback(
+    (locationX: number) => {
+      if (!canonRailW || !canonBooks.length) return;
+      const t = Math.min(1, Math.max(0, locationX / canonRailW));
+      const book = bookAtCanonT(t, canonBooks);
+      if (book && book.osis !== canonOsis) {
+        hapticSelect();
+        setCanonOsis(book.osis);
+      }
+    },
+    [canonBooks, canonOsis, canonRailW]
+  );
+
   const inRange = useCallback(
     (date: string) => {
       if (!heat) return false;
@@ -533,6 +585,69 @@ export default function ActivityScreen() {
             ))}
             <Text style={type.caption}>More</Text>
           </View>
+
+          {/* Canon coverage — book-width rail, heat = note density */}
+          {canonBooks.length > 0 ? (
+            <View style={styles.canonSection} accessibilityLabel="Canon coverage map">
+              <Text style={styles.canonLabel}>Canon map</Text>
+              <Text style={[type.caption, styles.canonHint]}>
+                {(heat?.canon?.total_notes ?? 0) === 0
+                  ? "No notes yet — coverage will warm books as you capture."
+                  : `${heat?.canon?.books_with_notes ?? 0} books · ${heat?.canon?.total_notes ?? 0} notes · 1 note/chapter ≈ 90% heat`}
+              </Text>
+              <Pressable
+                onPress={(e) => selectCanonFromX(e.nativeEvent.locationX)}
+                onLayout={(e) => setCanonRailW(e.nativeEvent.layout.width)}
+                accessibilityRole="adjustable"
+                accessibilityLabel="Note coverage by book"
+                accessibilityHint="Tap a position on the map to inspect that book."
+                accessibilityValue={{ text: selectedCanon?.name ?? "No book selected" }}
+                style={[styles.canonRail, { backgroundColor: levelColor(0, false) }]}
+                testID="canon-coverage-map"
+              >
+                <View style={styles.canonRailInner} pointerEvents="none">
+                  {canonBooks.map((b) => (
+                    <View
+                      key={b.osis}
+                      style={{
+                        flex: Math.max(0.001, b.t1 - b.t0),
+                        backgroundColor: b.heat > 0 ? canonHeatColor(b.heat) : "transparent",
+                      }}
+                    >
+                      {selectedCanon?.osis === b.osis ? (
+                        <View style={[styles.canonSelection, { backgroundColor: color.ink, borderColor: color.paper }]} />
+                      ) : null}
+                    </View>
+                  ))}
+                  <View
+                    style={[
+                      styles.canonSeam,
+                      { left: `${canonSeamT * 100}%`, backgroundColor: color.muted },
+                    ]}
+                  />
+                </View>
+              </Pressable>
+              <View style={styles.canonEnds}>
+                <Text style={styles.canonEndLab}>Genesis</Text>
+                <Text style={styles.canonEndLab}>Revelation</Text>
+              </View>
+              <View style={[styles.canonDetail, { borderColor: color.lineSoft }]}>
+                <Text
+                  style={[styles.canonDetailName, selectedCanon && selectedCanon.notes === 0 && { color: color.muted }]}
+                  testID="canon-map-selected-book"
+                >
+                  {selectedCanon?.name ?? "Choose a book"}
+                </Text>
+                <Text style={[type.caption, { color: color.muted }]}>
+                  {selectedCanon
+                    ? selectedCanon.notes === 0
+                      ? `No notes yet · ${selectedCanon.chapters} ch`
+                      : `${selectedCanon.notes} note${selectedCanon.notes === 1 ? "" : "s"} · ${selectedCanon.chapters} ch · ${Math.round(selectedCanon.heat * 100)}% heat`
+                    : "Tap the map to inspect a book."}
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           {/* Week navigator + day folders */}
           <View style={styles.weekSection}>
@@ -977,6 +1092,75 @@ function makeStyles(color: ThemeColors) {
       marginTop: space[1],
       marginBottom: 0,
       opacity: 0.85,
+    },
+    canonSection: {
+      marginTop: space[5],
+    },
+    canonLabel: {
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 0.8,
+      textTransform: "uppercase",
+      color: color.faint,
+      marginBottom: 4,
+    },
+    canonHint: {
+      marginBottom: space[2],
+      opacity: 0.9,
+    },
+    canonRail: {
+      height: 26,
+      borderRadius: 6,
+      overflow: "hidden",
+    },
+    canonRailInner: {
+      flex: 1,
+      flexDirection: "row",
+      position: "relative",
+    },
+    canonSelection: {
+      position: "absolute",
+      left: "50%",
+      top: "15%",
+      bottom: "15%",
+      width: 3,
+      marginLeft: -1.5,
+      borderRadius: 1,
+      borderWidth: 1,
+    },
+    canonSeam: {
+      position: "absolute",
+      top: 0,
+      bottom: 0,
+      width: StyleSheet.hairlineWidth,
+      marginLeft: -0.5,
+    },
+    canonEnds: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginTop: 6,
+    },
+    canonEndLab: {
+      fontSize: 10,
+      fontWeight: "650" as const,
+      letterSpacing: 0.5,
+      textTransform: "uppercase",
+      color: color.faint,
+    },
+    canonDetail: {
+      marginTop: space[2],
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: color.fill,
+      gap: 2,
+    },
+    canonDetailName: {
+      fontSize: 16,
+      fontWeight: "650" as const,
+      letterSpacing: -0.2,
+      color: color.ink,
     },
     weekSection: {
       // Secondary zone under graph hero (web .activity-week)

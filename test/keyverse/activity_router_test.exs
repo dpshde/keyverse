@@ -33,6 +33,10 @@ defmodule Keyverse.ActivityRouterTest do
     assert body["total"] >= 1
     assert body["from"]
     assert body["to"]
+    # Canon coverage rail (note density; 1 note/chapter → 90% heat)
+    assert is_map(body["canon"])
+    assert is_list(body["canon"]["books"])
+    assert length(body["canon"]["books"]) == 66
   end
 
   test "GET /api/activity?date= returns day events", %{door: door} do
@@ -53,6 +57,7 @@ defmodule Keyverse.ActivityRouterTest do
     assert conn.status == 200
     assert conn.resp_body =~ "activity-page"
     assert conn.resp_body =~ "/activity.js"
+    assert conn.resp_body =~ "canon-map"
   end
 
   test "protocol advertises activity", %{door: door} do

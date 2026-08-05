@@ -3508,6 +3508,134 @@
   margin: 0 auto;
   padding: 0 var(--page-pad-x) 2.25rem;
 }
+
+/* Canon coverage map (Versemark-style book rail; heat = note density) */
+.canon-map {
+  margin: 1.35rem 0 1.5rem;
+}
+.canon-map-label {
+  margin: 0 0 .25rem;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--ink) 48%, transparent);
+  font-family: -apple-system, system-ui, sans-serif;
+}
+.canon-map-hint {
+  margin: 0 0 .55rem;
+  font-size: .82rem;
+  line-height: 1.35;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+.canon-map-rail {
+  position: relative;
+  display: block;
+  height: 1.65rem;
+  width: 100%;
+  border-radius: .35rem;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  touch-action: none;
+  cursor: pointer;
+  user-select: none;
+}
+.canon-map-rail.is-scrubbing {
+  cursor: grabbing;
+}
+.canon-map-book {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  appearance: none;
+  background: transparent;
+  cursor: inherit;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.canon-map-book.is-empty {
+  background: transparent;
+}
+.canon-map-book.is-selected::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 70%;
+  min-height: .7rem;
+  transform: translate(-50%, -50%);
+  border-radius: 1px;
+  background: var(--ink);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--paper) 88%, transparent);
+  pointer-events: none;
+}
+.canon-map-book:focus {
+  outline: none;
+}
+.canon-map-book:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  outline-offset: 1px;
+  z-index: 2;
+}
+.canon-map-seam {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -.5px;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+.canon-map-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: .35rem;
+  font-size: .68rem;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--ink) 42%, transparent);
+  font-family: -apple-system, system-ui, sans-serif;
+}
+.canon-map-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .25rem .75rem;
+  margin-top: .55rem;
+  padding: .55rem .65rem;
+  border-radius: .45rem;
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  background: color-mix(in srgb, Canvas 96%, currentColor 2%);
+  font-family: -apple-system, system-ui, sans-serif;
+}
+.canon-map-detail-name {
+  font-size: .95rem;
+  font-weight: 650;
+  letter-spacing: -.015em;
+  color: var(--ink);
+}
+.canon-map-detail-name.muted {
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  font-weight: 550;
+}
+.canon-map-detail-meta {
+  font-size: .8rem;
+  color: color-mix(in srgb, var(--ink) 52%, transparent);
+}
+html[data-theme="dark"] .canon-map-rail {
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+html[data-theme="dark"] .canon-map-detail {
+  background: color-mix(in srgb, Canvas 92%, #fff 4%);
+}
 .activity-head {
   display: flex;
   flex-direction: row;

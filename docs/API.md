@@ -205,10 +205,42 @@ Heatmap defaults to **calendar YTD** (UTC Jan 1 → today). Optional `?days=N` f
 
 | Status | Body |
 |--------|------|
-| `200` | `{ days: [{ date, count, level }], total, notes_taken_ytd, ytd_from, ytd_to, from, to, source }` |
+| `200` | `{ days: [{ date, count, level }], total, notes_taken_ytd, ytd_from, ytd_to, from, to, source, canon }` |
 
 `level` is 0–4 (GitHub-style intensity). `source` is `ops`, `notes`, or `mixed`.  
 `notes_taken_ytd` is unique notes first written year-to-date — used for the activity lead.
+
+**`canon`** — coverage rail (book-width segments, chapter-weighted):
+
+```json
+{
+  "books": [
+    {
+      "osis": "JHN",
+      "name": "John",
+      "chapters": 21,
+      "notes": 4,
+      "ratio": 0.1905,
+      "heat": 0.1714,
+      "t0": 0.82,
+      "t1": 0.84
+    }
+  ],
+  "testament_seam_t": 0.781328,
+  "total_chapters": 1189,
+  "total_notes": 12,
+  "books_with_notes": 5,
+  "heat_scale": { "notes_per_chapter_at_90": 1.0 }
+}
+```
+
+Heat is continuous `0..1`:
+
+```text
+heat = min(1.0, 0.9 * notes / chapters)
+```
+
+so **1 note per chapter → 90% hot**. Empty drafts do not count; sealed / contentful notes do.
 
 ### `GET /api/activity?date=YYYY-MM-DD`
 

@@ -925,6 +925,232 @@
     }
   });
 
+  // --- Canon coverage map (note density by book) -----------------------------
+  // Heat: min(1, 0.9 * notes/chapters) — 1 note per chapter = 90% hot.
+
+  var canonRail = document.getElementById("canon-map-rail");
+  var canonDetail = document.getElementById("canon-map-detail");
+  var canonHint = document.getElementById("canon-map-hint");
+  var canonSelected = null;
+  var canonBooks = [];
+  var canonSeamT = 929 / 1189;
+
+  function canonHeatColor(heat) {
+    var t = Math.max(0, Math.min(1, heat || 0));
+    if (t <= 0) return "";
+    // Olive ramp matching activity greens (0 empty → full green)
+    var dark =
+      document.documentElement.getAttribute("data-theme") === "dark" ||
+      (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches &&
+        !document.documentElement.getAttribute("data-theme"));
+    if (dark) {
+      // mix empty rail → bright green
+      var L = 0.22 + t * 0.38;
+      var C = 0.04 + t * 0.1;
+      return "oklch(" + L.toFixed(3) + " " + C.toFixed(3) + " 145)";
+    }
+    var L2 = 0.92 - t * 0.42;
+    var C2 = 0.03 + t * 0.09;
+    return "oklch(" + L2.toFixed(3) + " " + C2.toFixed(3) + " 145)";
+  }
+
+  function bookAtT(t) {
+    if (!canonBooks.length) return null;
+    var x = Math.max(0, Math.min(1, t));
+    for (var i = 0; i < canonBooks.length; i++) {
+      var b = canonBooks[i];
+      if (x >= b.t0 && x < b.t1) return b;
+    }
+    return canonBooks[canonBooks.length - 1];
+  }
+
+  function formatCanonMeta(book) {
+    if (!book) return "";
+    var n = book.notes | 0;
+    var ch = book.chapters | 0;
+    if (n === 0) return "No notes yet · " + ch + " ch";
+    var noteWord = n === 1 ? "note" : "notes";
+    var ratio = ch > 0 ? n / ch : 0;
+    var pct = Math.round(Math.min(1, 0.9 * ratio) * 100);
+    return n + " " + noteWord + " · " + ch + " ch · " + pct + "% heat";
+  }
+
+  function selectCanonBook(osis, withFocus) {
+    if (!osis) return;
+    canonSelected = osis;
+    var book = null;
+    for (var i = 0; i < canonBooks.length; i++) {
+      if (canonBooks[i].osis === osis) {
+        book = canonBooks[i];
+        break;
+      }
+    }
+    if (canonRail) {
+      canonRail.querySelectorAll(".canon-map-book").forEach(function (btn) {
+        var on = btn.getAttribute("data-osis") === osis;
+        btn.classList.toggle("is-selected", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    if (canonDetail) {
+      var nameEl = canonDetail.querySelector(".canon-map-detail-name");
+      var metaEl = canonDetail.querySelector(".canon-map-detail-meta");
+      if (nameEl) {
+        nameEl.textContent = book ? book.name : osis;
+        nameEl.classList.toggle("muted", !book || !(book.notes | 0));
+      }
+      if (metaEl) metaEl.textContent = formatCanonMeta(book);
+    }
+    if (withFocus && canonRail) {
+      var sel = canonRail.querySelector('.canon-map-book[data-osis="' + osis + '"]');
+      if (sel) sel.focus({ preventScroll: true });
+    }
+  }
+
+  function defaultCanonFocus() {
+    // Prefer densest heat, else first book with notes, else Genesis
+    var best = null;
+    var firstWith = null;
+    for (var i = 0; i < canonBooks.length; i++) {
+      var b = canonBooks[i];
+      if ((b.notes | 0) > 0 && !firstWith) firstWith = b;
+      if ((b.notes | 0) > 0 && (!best || (b.heat || 0) > (best.heat || 0))) best = b;
+    }
+    return (best || firstWith || canonBooks[0] || {}).osis || null;
+  }
+
+  function renderCanonMap(canon) {
+    if (!canonRail) return;
+    if (!canon || !canon.books || !canon.books.length) {
+      canonRail.innerHTML = "";
+      if (canonHint) {
+        canonHint.textContent = "No notes yet — coverage will warm books as you capture.";
+      }
+      if (canonDetail) {
+        var n0 = canonDetail.querySelector(".canon-map-detail-name");
+        var m0 = canonDetail.querySelector(".canon-map-detail-meta");
+        if (n0) n0.textContent = "Canon";
+        if (m0) m0.textContent = "Open a passage and write to paint the map.";
+      }
+      return;
+    }
+
+    canonBooks = canon.books;
+    canonSeamT =
+      typeof canon.testament_seam_t === "number" ? canon.testament_seam_t : 929 / 1189;
+
+    var withNotes = canon.books_with_notes | 0;
+    var totalNotes = canon.total_notes | 0;
+    if (canonHint) {
+      if (totalNotes === 0) {
+        canonHint.textContent = "No notes yet — coverage will warm books as you capture.";
+      } else {
+        var bw = withNotes === 1 ? "book" : "books";
+        var nw = totalNotes === 1 ? "note" : "notes";
+        canonHint.textContent =
+          withNotes +
+          " " +
+          bw +
+          " · " +
+          totalNotes +
+          " " +
+          nw +
+          " · 1 note/chapter ≈ 90% heat";
+      }
+    }
+
+    var html = "";
+    for (var i = 0; i < canonBooks.length; i++) {
+      var b = canonBooks[i];
+      var span = Math.max(0, (b.t1 || 0) - (b.t0 || 0));
+      var heat = b.heat || 0;
+      var bg = heat > 0 ? canonHeatColor(heat) : "";
+      var label =
+        b.name +
+        (b.notes
+          ? " · " + b.notes + " note" + (b.notes === 1 ? "" : "s")
+          : " · no notes");
+      html +=
+        '<button type="button" class="canon-map-book' +
+        (heat <= 0 ? " is-empty" : "") +
+        '" data-osis="' +
+        esc(b.osis) +
+        '" data-heat="' +
+        heat +
+        '" style="left:' +
+        (b.t0 * 100).toFixed(4) +
+        "%;width:" +
+        (span * 100).toFixed(4) +
+        "%;" +
+        (bg ? "background:" + bg + ";" : "") +
+        '" title="' +
+        esc(label) +
+        '" aria-label="' +
+        esc(label) +
+        '" aria-pressed="false"></button>';
+    }
+    html +=
+      '<span class="canon-map-seam" style="left:' +
+      (canonSeamT * 100).toFixed(4) +
+      '%" aria-hidden="true"></span>';
+    canonRail.innerHTML = html;
+
+    // Scrub + click
+    var scrubbing = false;
+    var suppressClick = false;
+
+    function selectAtClientX(clientX, hapticish) {
+      var rect = canonRail.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      var book = bookAtT((clientX - rect.left) / rect.width);
+      if (!book || book.osis === canonSelected) return;
+      selectCanonBook(book.osis, false);
+    }
+
+    canonRail.onpointerdown = function (e) {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      scrubbing = true;
+      suppressClick = true;
+      canonRail.classList.add("is-scrubbing");
+      try {
+        canonRail.setPointerCapture(e.pointerId);
+      } catch (err) {}
+      selectAtClientX(e.clientX, true);
+    };
+    canonRail.onpointermove = function (e) {
+      if (!scrubbing) return;
+      selectAtClientX(e.clientX, true);
+    };
+    function endScrub(e) {
+      if (!scrubbing) return;
+      scrubbing = false;
+      canonRail.classList.remove("is-scrubbing");
+      try {
+        if (canonRail.hasPointerCapture(e.pointerId)) {
+          canonRail.releasePointerCapture(e.pointerId);
+        }
+      } catch (err2) {}
+      window.setTimeout(function () {
+        suppressClick = false;
+      }, 0);
+    }
+    canonRail.onpointerup = endScrub;
+    canonRail.onpointercancel = endScrub;
+
+    canonRail.querySelectorAll(".canon-map-book").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        if (suppressClick) {
+          e.preventDefault();
+          suppressClick = false;
+          return;
+        }
+        selectCanonBook(btn.getAttribute("data-osis"), false);
+      });
+    });
+
+    selectCanonBook(defaultCanonFocus() || "GEN", false);
+  }
+
   // YTD heatmap → land on this week
   fetch(BASE + "/api/activity", { credentials: "same-origin" })
     .then(function (r) {
@@ -967,6 +1193,7 @@
 
       updateWeekNav();
       renderGraph();
+      renderCanonMap(data.canon);
       renderDayFolders();
     })
     .catch(function () {

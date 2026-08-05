@@ -309,6 +309,23 @@ export class KeyverseClient {
     from: string;
     to: string;
     source: string;
+    canon?: {
+      books: {
+        osis: string;
+        name: string;
+        chapters: number;
+        notes: number;
+        ratio: number;
+        heat: number;
+        t0: number;
+        t1: number;
+      }[];
+      testament_seam_t: number;
+      total_chapters: number;
+      total_notes: number;
+      books_with_notes: number;
+      heat_scale?: { notes_per_chapter_at_90: number };
+    };
   }> {
     const q = days != null ? `?days=${days}` : "";
     const { body } = await this.req("GET", `/api/activity${q}`);
@@ -322,6 +339,23 @@ export class KeyverseClient {
       from: string;
       to: string;
       source: string;
+      canon?: {
+        books: {
+          osis: string;
+          name: string;
+          chapters: number;
+          notes: number;
+          ratio: number;
+          heat: number;
+          t0: number;
+          t1: number;
+        }[];
+        testament_seam_t: number;
+        total_chapters: number;
+        total_notes: number;
+        books_with_notes: number;
+        heat_scale?: { notes_per_chapter_at_90: number };
+      };
     };
   }
 

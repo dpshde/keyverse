@@ -11,6 +11,29 @@ export type HeatCell = {
   level: 0 | 1 | 2 | 3 | 4;
 };
 
+/** One book segment on the canon coverage rail. */
+export type CanonBook = {
+  osis: string;
+  name: string;
+  chapters: number;
+  notes: number;
+  /** notes / chapters */
+  ratio: number;
+  /** 0..1 continuous; 1 note/chapter → 0.9 */
+  heat: number;
+  t0: number;
+  t1: number;
+};
+
+export type CanonCoverage = {
+  books: CanonBook[];
+  testament_seam_t: number;
+  total_chapters: number;
+  total_notes: number;
+  books_with_notes: number;
+  heat_scale?: { notes_per_chapter_at_90: number };
+};
+
 export type ActivityHeatmap = {
   days: HeatCell[];
   total: number;
@@ -21,7 +44,156 @@ export type ActivityHeatmap = {
   from: string;
   to: string;
   source: string;
+  /** Note density by book (optional on older hosts). */
+  canon?: CanonCoverage;
 };
+
+/** Protestant canon chapter counts (chapter-weighted rail). */
+const CANON_BOOKS: { osis: string; name: string; chapters: number }[] = [
+  { osis: "GEN", name: "Genesis", chapters: 50 },
+  { osis: "EXO", name: "Exodus", chapters: 40 },
+  { osis: "LEV", name: "Leviticus", chapters: 27 },
+  { osis: "NUM", name: "Numbers", chapters: 36 },
+  { osis: "DEU", name: "Deuteronomy", chapters: 34 },
+  { osis: "JOS", name: "Joshua", chapters: 24 },
+  { osis: "JDG", name: "Judges", chapters: 21 },
+  { osis: "RUT", name: "Ruth", chapters: 4 },
+  { osis: "1SA", name: "1 Samuel", chapters: 31 },
+  { osis: "2SA", name: "2 Samuel", chapters: 24 },
+  { osis: "1KI", name: "1 Kings", chapters: 22 },
+  { osis: "2KI", name: "2 Kings", chapters: 25 },
+  { osis: "1CH", name: "1 Chronicles", chapters: 29 },
+  { osis: "2CH", name: "2 Chronicles", chapters: 36 },
+  { osis: "EZR", name: "Ezra", chapters: 10 },
+  { osis: "NEH", name: "Nehemiah", chapters: 13 },
+  { osis: "EST", name: "Esther", chapters: 10 },
+  { osis: "JOB", name: "Job", chapters: 42 },
+  { osis: "PSA", name: "Psalms", chapters: 150 },
+  { osis: "PRO", name: "Proverbs", chapters: 31 },
+  { osis: "ECC", name: "Ecclesiastes", chapters: 12 },
+  { osis: "SNG", name: "Song of Solomon", chapters: 8 },
+  { osis: "ISA", name: "Isaiah", chapters: 66 },
+  { osis: "JER", name: "Jeremiah", chapters: 52 },
+  { osis: "LAM", name: "Lamentations", chapters: 5 },
+  { osis: "EZK", name: "Ezekiel", chapters: 48 },
+  { osis: "DAN", name: "Daniel", chapters: 12 },
+  { osis: "HOS", name: "Hosea", chapters: 14 },
+  { osis: "JOL", name: "Joel", chapters: 3 },
+  { osis: "AMO", name: "Amos", chapters: 9 },
+  { osis: "OBA", name: "Obadiah", chapters: 1 },
+  { osis: "JON", name: "Jonah", chapters: 4 },
+  { osis: "MIC", name: "Micah", chapters: 7 },
+  { osis: "NAM", name: "Nahum", chapters: 3 },
+  { osis: "HAB", name: "Habakkuk", chapters: 3 },
+  { osis: "ZEP", name: "Zephaniah", chapters: 3 },
+  { osis: "HAG", name: "Haggai", chapters: 2 },
+  { osis: "ZEC", name: "Zechariah", chapters: 14 },
+  { osis: "MAL", name: "Malachi", chapters: 4 },
+  { osis: "MAT", name: "Matthew", chapters: 28 },
+  { osis: "MRK", name: "Mark", chapters: 16 },
+  { osis: "LUK", name: "Luke", chapters: 24 },
+  { osis: "JHN", name: "John", chapters: 21 },
+  { osis: "ACT", name: "Acts", chapters: 28 },
+  { osis: "ROM", name: "Romans", chapters: 16 },
+  { osis: "1CO", name: "1 Corinthians", chapters: 16 },
+  { osis: "2CO", name: "2 Corinthians", chapters: 13 },
+  { osis: "GAL", name: "Galatians", chapters: 6 },
+  { osis: "EPH", name: "Ephesians", chapters: 6 },
+  { osis: "PHP", name: "Philippians", chapters: 4 },
+  { osis: "COL", name: "Colossians", chapters: 4 },
+  { osis: "1TH", name: "1 Thessalonians", chapters: 5 },
+  { osis: "2TH", name: "2 Thessalonians", chapters: 3 },
+  { osis: "1TI", name: "1 Timothy", chapters: 6 },
+  { osis: "2TI", name: "2 Timothy", chapters: 4 },
+  { osis: "TIT", name: "Titus", chapters: 3 },
+  { osis: "PHM", name: "Philemon", chapters: 1 },
+  { osis: "HEB", name: "Hebrews", chapters: 13 },
+  { osis: "JAS", name: "James", chapters: 5 },
+  { osis: "1PE", name: "1 Peter", chapters: 5 },
+  { osis: "2PE", name: "2 Peter", chapters: 3 },
+  { osis: "1JN", name: "1 John", chapters: 5 },
+  { osis: "2JN", name: "2 John", chapters: 1 },
+  { osis: "3JN", name: "3 John", chapters: 1 },
+  { osis: "JUD", name: "Jude", chapters: 1 },
+  { osis: "REV", name: "Revelation", chapters: 22 },
+];
+
+const TOTAL_CHAPTERS = 1189;
+const OT_CHAPTERS = 929;
+
+/** Continuous heat: 1 note per chapter → 0.9; denser saturates to 1. */
+export function canonHeat(notes: number, chapters: number): number {
+  if (!chapters || chapters <= 0 || !notes || notes <= 0) return 0;
+  return Math.min(1, 0.9 * (notes / chapters));
+}
+
+function noteCountsForCanon(note: Note): boolean {
+  if (note.encrypted || note.cipher) return true;
+  const blocks = note.blocks || [];
+  if (blocks.some((b) => String(b.text || "").trim() !== "")) return true;
+  const atts = note.attachments;
+  return Array.isArray(atts) && atts.length > 0;
+}
+
+function bookOsisFromSlug(slug: string): string | null {
+  const book = (slug || "").split(".")[0]?.toUpperCase();
+  if (!book) return null;
+  return CANON_BOOKS.some((b) => b.osis === book) ? book : null;
+}
+
+/** Local offline path: note density by book. */
+export function canonFromNotes(notes: Note[]): CanonCoverage {
+  const counts = new Map<string, number>();
+  for (const note of notes) {
+    if (!noteCountsForCanon(note)) continue;
+    const osis = bookOsisFromSlug(note.scope?.slug || "");
+    if (!osis) continue;
+    counts.set(osis, (counts.get(osis) || 0) + 1);
+  }
+
+  let start = 0;
+  let totalNotes = 0;
+  let booksWith = 0;
+  const books: CanonBook[] = CANON_BOOKS.map((meta) => {
+    const n = counts.get(meta.osis) || 0;
+    const t0 = start / TOTAL_CHAPTERS;
+    const t1 = (start + meta.chapters) / TOTAL_CHAPTERS;
+    start += meta.chapters;
+    if (n > 0) {
+      totalNotes += n;
+      booksWith += 1;
+    }
+    const ratio = meta.chapters > 0 ? n / meta.chapters : 0;
+    return {
+      osis: meta.osis,
+      name: meta.name,
+      chapters: meta.chapters,
+      notes: n,
+      ratio: Math.round(ratio * 10000) / 10000,
+      heat: Math.round(canonHeat(n, meta.chapters) * 10000) / 10000,
+      t0: Math.round(t0 * 1e6) / 1e6,
+      t1: Math.round(t1 * 1e6) / 1e6,
+    };
+  });
+
+  return {
+    books,
+    testament_seam_t: Math.round((OT_CHAPTERS / TOTAL_CHAPTERS) * 1e6) / 1e6,
+    total_chapters: TOTAL_CHAPTERS,
+    total_notes: totalNotes,
+    books_with_notes: booksWith,
+    heat_scale: { notes_per_chapter_at_90: 1 },
+  };
+}
+
+export function bookAtCanonT(t: number, books: CanonBook[]): CanonBook | null {
+  if (!books.length) return null;
+  const x = Math.min(1, Math.max(0, t));
+  for (const b of books) {
+    if (x >= b.t0 && x < b.t1) return b;
+  }
+  return books[books.length - 1] ?? null;
+}
 
 export type ActivityAttachment = {
   id?: string | null;
@@ -224,6 +396,7 @@ export function heatmapFromNotes(notes: Note[]): ActivityHeatmap {
     from,
     to: today,
     source: "notes",
+    canon: canonFromNotes(notes),
   };
 }
 

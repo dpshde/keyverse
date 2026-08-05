@@ -102,7 +102,9 @@ defmodule Keyverse.Activity do
       ytd_to: Date.to_iso8601(today),
       from: Date.to_iso8601(from),
       to: Date.to_iso8601(today),
-      source: source
+      source: source,
+      # Canon coverage rail (note density by book; 1 note/chapter → 90% heat)
+      canon: Keyverse.Canon.coverage(pack_dir)
     }
   end
 

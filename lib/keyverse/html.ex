@@ -452,6 +452,19 @@ defmodule Keyverse.Html do
         <span class="ag-cell" data-level="4"></span>
         <span>More</span>
       </div>
+      <section class="canon-map" id="canon-map" aria-label="Canon coverage">
+        <h2 class="canon-map-label ui">Canon map</h2>
+        <p class="canon-map-hint muted" id="canon-map-hint">Notes per chapter — full book ≈ one note each is hot.</p>
+        <div class="canon-map-rail" id="canon-map-rail" role="group" aria-label="Note coverage by book"></div>
+        <div class="canon-map-ends ui" aria-hidden="true">
+          <span>Genesis</span>
+          <span>Revelation</span>
+        </div>
+        <div class="canon-map-detail" id="canon-map-detail" aria-live="polite">
+          <span class="canon-map-detail-name muted">Loading…</span>
+          <span class="canon-map-detail-meta muted"></span>
+        </div>
+      </section>
       <section class="activity-week" id="activity-week" aria-label="Week activity">
         <div class="activity-week-nav" id="activity-week-nav">
           <button type="button" class="activity-week-btn" id="activity-week-prev" aria-label="Previous week">#{chev("left")}</button>
