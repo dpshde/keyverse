@@ -114,6 +114,7 @@ Full host + mobile deploy: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 | Reader projection / OSIS | `lib/keyverse/scope.ex`, `tree.ex`, `html.ex` |
 | Mobile local pack | `mobile/src/lib/localPack.ts` |
 | Mobile cloud mirror | `mobile/src/lib/cloudSync.ts` |
+| Local delete vs quietSync (no zombies) | ADR 0021; pending deletes in `localPack`; live push + double flush in `cloudSync` |
 | Deep links (app + https door) | `mobile/src/lib/deepLink.ts`, `DeepLinkHandler.tsx` |
 | Reader UI / selection | `mobile/app/read/[slug].tsx` |
 | Outliner Enter / rails | `mobile/src/components/Outliner.tsx` |
@@ -139,7 +140,8 @@ Full host + mobile deploy: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 1. Prefer local pack paths; cloud is optional.
 2. Reuse `theme.ts` button/token system (no ad-hoc blue chrome).
 3. Reader has-note rail must track live pack state (`notesBySlug` / `resolvedBlocks`), not load-time snapshots.
-4. After native-relevant changes, ship TestFlight via `docs/DEPLOY.md` § Mobile.
+4. **Deletes must stick** (ADR 0021): mark pending cloud delete, empty-PUT the door, never re-push from a stale sync snapshot or dirty editor unmount. QuietSync flushes pending before **and** after the push loop.
+5. After native-relevant changes, ship TestFlight via `docs/DEPLOY.md` § Mobile.
 
 ### Host deploy (Railway)
 

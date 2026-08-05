@@ -43,6 +43,7 @@ import {
   type BibleBook,
 } from "../lib/bibleBooks";
 import { hapticLight, hapticSelect } from "../lib/haptics";
+import { motionDuration, motionSpring, MOTION_MS, MOTION_SPRING } from "../lib/motion";
 import { radius, space, type ThemeColors } from "../theme";
 
 const BOOK_ROW_H = 48;
@@ -57,8 +58,7 @@ const CHAPTER_HEAD_H = 48;
 const DISMISS_DY = 72;
 /** Velocity (px/s) that dismisses even below distance threshold */
 const DISMISS_VY = 900;
-const OPEN_SPRING = { damping: 28, stiffness: 340, mass: 0.9 } as const;
-const CLOSE_MS = 240;
+const OPEN_SPRING = MOTION_SPRING.snappy;
 
 type Props = {
   visible: boolean;
@@ -129,19 +129,17 @@ export function PassagePickerSheet({
     if (closingRef.current) return;
     closingRef.current = true;
     isClosingSV.value = 1;
+    const closeMs = motionDuration(MOTION_MS.base);
     backdropOp.value = withTiming(0, {
-      duration: CLOSE_MS,
+      duration: closeMs,
       easing: Easing.out(Easing.cubic),
     });
     sheetDragY.value = withTiming(
       winH,
-      { duration: CLOSE_MS, easing: Easing.out(Easing.cubic) },
-      (finished) => {
+      { duration: closeMs, easing: Easing.out(Easing.cubic) },
+      () => {
         // Always notify parent so the Modal can unmount
         runOnJS(finishClose)();
-        if (!finished) {
-          /* interrupted — still close */
-        }
       }
     );
   }, [backdropOp, finishClose, isClosingSV, sheetDragY, winH]);
@@ -158,9 +156,14 @@ export function PassagePickerSheet({
     // Start off-screen so first paint never flashes the full sheet mid-frame
     sheetDragY.value = winH;
     backdropOp.value = 0;
-    sheetDragY.value = withSpring(0, OPEN_SPRING);
+    const spring = motionSpring("snappy");
+    if (spring) {
+      sheetDragY.value = withSpring(0, spring);
+    } else {
+      sheetDragY.value = withTiming(0, { duration: 0 });
+    }
     backdropOp.value = withTiming(1, {
-      duration: 220,
+      duration: motionDuration(MOTION_MS.base),
       easing: Easing.out(Easing.cubic),
     });
   }, [visible, winH, sheetDragY, backdropOp, isClosingSV]);

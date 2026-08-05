@@ -1,11 +1,15 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Keyboard,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type StyleProp,
   type TextStyle,
+  type ViewStyle,
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
   type TextInputSelectionChangeEventData,
@@ -46,6 +50,12 @@ type Props = {
    * Pack notes for [[ note search. When omitted, Outliner warms local pack.
    */
   notes?: Note[] | null;
+  /**
+   * Fill parent height: blocks scroll if needed, toolbar stays at the bottom.
+   * Use on the full note editor so the outline claims leftover Y.
+   */
+  fill?: boolean;
+  style?: StyleProp<ViewStyle>;
 };
 
 type Selection = { start: number; end: number };
@@ -67,6 +77,8 @@ export const Outliner = React.memo(function Outliner({
   compact = false,
   footerEnd,
   notes: notesProp,
+  fill = false,
+  style,
 }: Props) {
   const { colors: c } = useTheme();
   const [focusId, setFocusId] = useState<string | null>(blocks[0]?.id ?? null);
@@ -472,60 +484,144 @@ export const Outliner = React.memo(function Outliner({
     wikiItems.length > 0 ? wikiOpenRef.current?.blockId ?? null : null;
   const showWiki = editable && wikiItems.length > 0 && wikiBlockId != null;
 
-  return (
-    <View style={[styles.wrap, compact && styles.wrapCompact]}>
-      {blocks.map((b) => (
-        <View key={b.id}>
-          <BlockRow
-            id={b.id}
-            text={b.text || ""}
-            indent={b.indent | 0}
-            indentStep={indentStep}
-            compact={compact}
-            editable={editable}
-            placeholder={soloEmpty ? "Write…" : ""}
-            onChangeText={onRowChangeText}
-            onFocus={onRowFocus}
-            onSelectionChange={onSelectionChange}
-            onKeyPress={onKeyPress}
-            onSubmitEditing={onRowSubmit}
-            setRowRef={setRowRef}
-          />
-          {/*
-            Suggestions sit *below* the active line so typing stays visible
-            above the keyboard. List scrolls if it extends under the keys.
-          */}
-          {showWiki && wikiBlockId === b.id ? (
-            <View style={{ marginLeft: (b.indent | 0) * indentStep + 14 }}>
-              <WikiLinkSuggest items={wikiItems} onPick={pickWiki} />
-            </View>
-          ) : null}
+  /**
+   * Fill mode: only allow vertical scroll when outline content overflows the viewport.
+   * Short notes stay locked (no rubber-band bounce in empty space).
+   */
+  const fillViewportH = useRef(0);
+  const fillContentH = useRef(0);
+  const [fillScrollEnabled, setFillScrollEnabled] = useState(false);
+
+  const syncFillScroll = useCallback(() => {
+    const next = fillContentH.current > fillViewportH.current + 1;
+    setFillScrollEnabled((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const onFillScrollLayout = useCallback(
+    (e: { nativeEvent: { layout: { height: number } } }) => {
+      fillViewportH.current = e.nativeEvent.layout.height;
+      syncFillScroll();
+    },
+    [syncFillScroll]
+  );
+
+  const onFillContentSizeChange = useCallback(
+    (_w: number, h: number) => {
+      fillContentH.current = h;
+      syncFillScroll();
+    },
+    [syncFillScroll]
+  );
+
+  // Re-measure when block count / fill mode changes
+  useEffect(() => {
+    if (!fill) {
+      setFillScrollEnabled(false);
+      return;
+    }
+    // Content height updates via onContentSizeChange; clear sticky enabled
+    // until the next measure so short notes don’t bounce mid-edit.
+    syncFillScroll();
+  }, [fill, blocks.length, syncFillScroll]);
+
+  const keyboardOpen = useCallback(() => {
+    // RN 0.71+; fall back to “any input focused”
+    if (typeof (Keyboard as { isVisible?: () => boolean }).isVisible === "function") {
+      return (Keyboard as { isVisible: () => boolean }).isVisible();
+    }
+    for (const input of inputRefs.current.values()) {
+      if (
+        input &&
+        typeof (input as { isFocused?: () => boolean }).isFocused === "function" &&
+        (input as { isFocused: () => boolean }).isFocused()
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
+  /**
+   * Open field under lines:
+   * - keyboard up → dismiss (same as any non-interactive tap)
+   * - keyboard down → focus last line so typing can start
+   */
+  const onEmptySpacePress = useCallback(() => {
+    if (!editable) return;
+    if (keyboardOpen()) {
+      Keyboard.dismiss();
+      return;
+    }
+    if (blocks.length === 0) return;
+    focusExisting(blocks[blocks.length - 1].id);
+  }, [editable, blocks, keyboardOpen, focusExisting]);
+
+  const dismissKeyboard = useCallback(() => {
+    Keyboard.dismiss();
+  }, []);
+
+  const blockList = blocks.map((b) => (
+    <View key={b.id}>
+      <BlockRow
+        id={b.id}
+        text={b.text || ""}
+        indent={b.indent | 0}
+        indentStep={indentStep}
+        compact={compact}
+        editable={editable}
+        placeholder={soloEmpty ? "Write…" : ""}
+        onChangeText={onRowChangeText}
+        onFocus={onRowFocus}
+        onSelectionChange={onSelectionChange}
+        onKeyPress={onKeyPress}
+        onSubmitEditing={onRowSubmit}
+        setRowRef={setRowRef}
+      />
+      {/*
+        Suggestions sit *below* the active line so typing stays visible
+        above the keyboard. List scrolls if it extends under the keys.
+      */}
+      {showWiki && wikiBlockId === b.id ? (
+        <View style={{ marginLeft: (b.indent | 0) * indentStep + 14 }}>
+          <WikiLinkSuggest items={wikiItems} onPick={pickWiki} />
         </View>
-      ))}
-      {editable ? (
-        compact ? (
-          // One footer row: nest/unnest left · optional “Open full note” right
-          <View style={[styles.toolsCompactRow, { borderTopColor: c.hairline }]}>
-            <View style={styles.toolsCluster}>
-              <ToolIcon
-                symbol="decrease.indent"
-                fallback="⇤"
-                label="Unnest"
-                compact
-                onPress={() => indent(fi, -1)}
-              />
-              <ToolIcon
-                symbol="increase.indent"
-                fallback="⇥"
-                label="Nest"
-                compact
-                onPress={() => indent(fi, 1)}
-              />
-            </View>
-            {footerEnd ? <View style={styles.footerEnd}>{footerEnd}</View> : null}
+      ) : null}
+    </View>
+  ));
+
+  const tools =
+    editable ? (
+      compact ? (
+        // nest/unnest · hide keyboard · optional “Open full note”
+        <View style={[styles.toolsCompactRow, { borderTopColor: c.hairline }]}>
+          <View style={styles.toolsCluster}>
+            <ToolIcon
+              symbol="decrease.indent"
+              fallback="⇤"
+              label="Unnest"
+              compact
+              onPress={() => indent(fi, -1)}
+            />
+            <ToolIcon
+              symbol="increase.indent"
+              fallback="⇥"
+              label="Nest"
+              compact
+              onPress={() => indent(fi, 1)}
+            />
+            <ToolIcon
+              symbol="keyboard.chevron.down"
+              fallback="↓"
+              label="Hide keyboard"
+              compact
+              onPress={dismissKeyboard}
+            />
           </View>
-        ) : (
-          <View style={[styles.tools, { borderTopColor: c.hairline }]}>
+          {footerEnd ? <View style={styles.footerEnd}>{footerEnd}</View> : null}
+        </View>
+      ) : (
+        <View style={[styles.tools, { borderTopColor: c.hairline }]}>
+          <View style={styles.toolsCluster}>
             <ToolIcon
               symbol="decrease.indent"
               fallback="⇤"
@@ -551,10 +647,56 @@ export const Outliner = React.memo(function Outliner({
               onPress={() => removeAt(fi)}
             />
           </View>
-        )
-      ) : footerEnd ? (
-        <View style={[styles.toolsCompactRow, { borderTopColor: c.hairline }]}>{footerEnd}</View>
-      ) : null}
+          <ToolIcon
+            symbol="keyboard.chevron.down"
+            fallback="↓"
+            label="Hide keyboard"
+            onPress={dismissKeyboard}
+          />
+        </View>
+      )
+    ) : footerEnd ? (
+      <View style={[styles.toolsCompactRow, { borderTopColor: c.hairline }]}>{footerEnd}</View>
+    ) : null;
+
+  return (
+    <View
+      style={[
+        styles.wrap,
+        compact && styles.wrapCompact,
+        fill && styles.wrapFill,
+        style,
+      ]}
+    >
+      {fill ? (
+        <ScrollView
+          style={styles.fillScroll}
+          contentContainerStyle={styles.fillScrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          scrollEnabled={fillScrollEnabled}
+          bounces={fillScrollEnabled}
+          alwaysBounceVertical={false}
+          overScrollMode={fillScrollEnabled ? "auto" : "never"}
+          showsVerticalScrollIndicator={fillScrollEnabled}
+          onLayout={onFillScrollLayout}
+          onContentSizeChange={onFillContentSizeChange}
+        >
+          {blockList}
+          {/* Open field — dismiss keyboard if open, else focus last line */}
+          {editable ? (
+            <Pressable
+              style={styles.fillEmptyHit}
+              onPress={onEmptySpacePress}
+              accessibilityRole="button"
+              accessibilityLabel="Hide keyboard, or focus last line"
+            />
+          ) : null}
+        </ScrollView>
+      ) : (
+        blockList
+      )}
+      {tools}
     </View>
   );
 });
@@ -705,6 +847,26 @@ function ToolIcon({
 const styles = StyleSheet.create({
   wrap: { gap: 2 },
   wrapCompact: { gap: 4, width: "100%" },
+  /** Full-note editor: claim leftover height; tools stick to bottom of card. */
+  wrapFill: {
+    flex: 1,
+    minHeight: 0,
+    gap: 0,
+  },
+  fillScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  fillScrollContent: {
+    flexGrow: 1,
+    paddingBottom: 4,
+    gap: 2,
+  },
+  /** Tappable open space under outline rows (fill mode). */
+  fillEmptyHit: {
+    flexGrow: 1,
+    minHeight: 56,
+  },
   row: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -753,6 +915,7 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 4,
   },
   /** Compact tray: nest/unnest + trailing action on ONE row */
   toolsCompactRow: {

@@ -52,7 +52,9 @@ function buildNavTheme(scheme: ThemeScheme, c: ThemeColors): NavTheme {
       ...base.colors,
       primary: c.ink,
       background: c.paper,
-      card: c.paperRaised,
+      // Same paper as the page — continuous field, not pure-white raised card.
+      // (Fully transparent + content-under-header collided with titles/verse text.)
+      card: c.paper,
       text: c.ink,
       border: c.lineSoft,
       notification: c.danger,

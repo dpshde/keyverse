@@ -246,8 +246,14 @@ Clearing all text **and** removing attachments deletes the note file (cowyo empt
 page). A note that only has attachments keeps a blank bullet so the address
 remains.
 
+**Mobile + cloud:** local delete must clear the door too, or quietSync will pull
+the note back. The client keeps a pending-delete tombstone until an empty PUT
+succeeds; full sync re-checks live notes before push. See
+[ADR 0021](./adr/0021-local-delete-wins-cloud-mirror.md) and
+[mobile/README.md](../mobile/README.md#cloud-mirror--note-deletes).
+
 ## Related
 
 - Protocol (incl. encryption envelope): [PROTOCOL.md §3.1](../PROTOCOL.md)
 - Self-host / production: [SELF_HOST.md](./SELF_HOST.md), [PRODUCTION.md](./PRODUCTION.md)
-- Decisions: [ADR 0011 door](./adr/0011-multiword-door-access.md), [ADR 0012 encryption](./adr/0012-client-side-note-encryption.md), [adr/](./adr/)
+- Decisions: [ADR 0011 door](./adr/0011-multiword-door-access.md), [ADR 0012 encryption](./adr/0012-client-side-note-encryption.md), [ADR 0021 local delete vs mirror](./adr/0021-local-delete-wins-cloud-mirror.md), [adr/](./adr/)

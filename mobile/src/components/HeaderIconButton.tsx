@@ -35,7 +35,7 @@ export function HeaderIconButton({
   icon,
   onPress,
   accessibilityLabel,
-  size = 20,
+  size = 18,
   weight = "semibold",
   tint,
   muted,
@@ -90,12 +90,13 @@ export function HeaderIconButton({
   );
 }
 
-const GLYPH = 22;
+const GLYPH = 20;
 
 const styles = StyleSheet.create({
   btn: {
-    width: 40,
-    height: 40,
+    // Compact header chrome — still ≥36pt hit target
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
   },

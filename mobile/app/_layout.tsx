@@ -7,8 +7,10 @@ import { enableFreeze, enableScreens } from "react-native-screens";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { SessionProvider } from "@/src/context/SessionContext";
 import { ThemeProvider, useTheme } from "@/src/context/ThemeContext";
+import { HeaderScrim } from "@/src/components/HeaderScrim";
 import { StackBackButton } from "@/src/components/StackBackButton";
 import { DeepLinkHandler } from "@/src/components/DeepLinkHandler";
+import { MOTION_MS } from "@/src/lib/motion";
 
 // Native stack: detach inactive scenes from the JS tree while off-screen.
 enableScreens(true);
@@ -30,12 +32,18 @@ const stackScreenOptions = {
   headerBackButtonDisplayMode: "minimal" as const,
   // Compact chevron — system HeaderBackButton oversizes the glass circle on iOS 26
   headerLeft: () => <StackBackButton />,
+  // Paper bar + soft fade into content (see HeaderScrim) — not a white slab,
+  // not a full transparent overlay that collides with verse text.
+  headerTransparent: false,
+  headerShadowVisible: false,
+  headerBackground: () => <HeaderScrim />,
+  // Hierarchical nav: native simple_push (spatial depth). Lateral sheets: slide_from_right.
+  // Duration from motion tokens; OS reduce-motion short-circuits via system UI.
   animation: Platform.select({
     ios: "simple_push" as const,
-    // fade_from_bottom is snappier than default Android material slide
     default: "fade_from_bottom" as const,
   }),
-  animationDuration: 280,
+  animationDuration: MOTION_MS.nav,
   gestureEnabled: true,
   fullScreenGestureEnabled: true,
   freezeOnBlur: true,
@@ -51,9 +59,20 @@ function RootNavigation() {
         screenOptions={{
           ...stackScreenOptions,
           contentStyle: { backgroundColor: navTheme.colors.background },
-          headerStyle: { backgroundColor: navTheme.colors.card },
+          // Background painted by HeaderScrim (paper + fade)
+          headerStyle: {
+            backgroundColor: "transparent",
+            // Android honors height; iOS native bar stays ~44pt content + status.
+            ...(Platform.OS === "android" ? { height: 48 } : null),
+          },
           headerTintColor: navTheme.colors.text,
-          headerTitleStyle: { color: navTheme.colors.text },
+          headerTitleStyle: {
+            color: navTheme.colors.text,
+            fontSize: 16,
+            fontWeight: "700",
+          },
+          headerShadowVisible: false,
+          headerBackground: () => <HeaderScrim />,
         }}
       >
         <Stack.Screen
@@ -80,17 +99,26 @@ function RootNavigation() {
         />
         <Stack.Screen
           name="read/[slug]"
-          options={({ route }) => {
-            // Prev uses reverse replace animation; next uses push direction
-            const anim = (route.params as { anim?: string } | undefined)?.anim;
-            return {
-              title: "Read",
-              animation: "simple_push",
-              animationTypeForReplace: anim === "prev" ? "pop" : "push",
-            };
+          options={{
+            title: "Read",
+            // Open from home still pushes; chapter prev/next uses setParams (no stack anim).
+            animation: "simple_push",
+            // Edge swipe only — full-screen back fights verse drag / scroll
+            // and makes it too easy to leave the reader by accident.
+            fullScreenGestureEnabled: false,
+            gestureEnabled: true,
           }}
         />
-        <Stack.Screen name="note/[slug]" options={{ title: "Note", animation: "simple_push" }} />
+        <Stack.Screen
+          name="note/[slug]"
+          options={{
+            title: "Note",
+            animation: "simple_push",
+            // Same as reader: typing/selection shouldn’t trigger a full-screen pop
+            fullScreenGestureEnabled: false,
+            gestureEnabled: true,
+          }}
+        />
         {/* Singletons: re-open reuses the screen instead of stacking copies */}
         <Stack.Screen
           name="settings"

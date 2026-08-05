@@ -2,7 +2,6 @@ import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   Dimensions,
   FlatList,
   Keyboard,
@@ -18,6 +17,12 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SymbolView } from "expo-symbols";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSession } from "@/src/context/SessionContext";
 import type { Block, Note } from "@/src/api/types";
 import { hydrateBlocks } from "@/src/api/client";
@@ -25,6 +30,7 @@ import { decryptPayload } from "@/src/lib/crypto";
 import { getChapter, chapterKey, peekChapter } from "@/src/lib/textBundle";
 import { displayScope, resolveLocal } from "@/src/lib/resolveLocal";
 import { passageShareUrls } from "@/src/lib/shareUrl";
+import { HeaderContentFade } from "@/src/components/HeaderScrim";
 import { LiquidGlassBar, liquidGlassBarListPad } from "@/src/components/LiquidGlassBar";
 import { HeaderIconButton } from "@/src/components/HeaderIconButton";
 import {
@@ -39,6 +45,7 @@ import {
 } from "@/src/components/VerseRowItem";
 import * as Local from "@/src/lib/localPack";
 import { hapticLight, hapticMedium, hapticSelect } from "@/src/lib/haptics";
+import { motionDuration, MOTION_MS } from "@/src/lib/motion";
 import { useTheme } from "@/src/context/ThemeContext";
 import { pushOnce } from "@/src/lib/nav";
 import { space, type ThemeColors } from "@/src/theme";
@@ -120,7 +127,8 @@ export default function ReaderScreen() {
   } | null>(null);
   const lastScrollY = useRef(0);
   const dockShown = useRef(true);
-  const dockAnim = useRef(new Animated.Value(0)).current;
+  /** 0 = visible, 1 = hidden — derive opacity/translate (GPU only). */
+  const dockHide = useSharedValue(0);
   /** Long-press + drag range select */
   const draggingRange = useRef(false);
   const rangeAnchor = useRef<number | null>(null);
@@ -151,14 +159,17 @@ export default function ReaderScreen() {
     (visible: boolean) => {
       if (dockShown.current === visible) return;
       dockShown.current = visible;
-      Animated.timing(dockAnim, {
-        toValue: visible ? 0 : 1,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
+      dockHide.value = withTiming(visible ? 0 : 1, {
+        duration: motionDuration(MOTION_MS.base),
+      });
     },
-    [dockAnim]
+    [dockHide]
   );
+
+  const dockAnimStyle = useAnimatedStyle(() => ({
+    opacity: 1 - dockHide.value,
+    transform: [{ translateY: dockHide.value * 120 }],
+  }));
 
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -304,11 +315,12 @@ export default function ReaderScreen() {
       hapticLight();
       const ch = Math.max(1, bookChapter.chapter + delta);
       const nextSlug = `${bookChapter.book}.${ch}`;
-      // anim=prev → reverse (pop) replace animation in root Stack options
-      router.replace({
-        pathname: "/read/[slug]",
-        params: { slug: nextSlug, anim: delta < 0 ? "prev" : "next" },
-      });
+      // Stay on this screen — no stack push/pop (that re-laid the header chrome).
+      setOpen({});
+      setPendingRange(null);
+      setExpandAll(false);
+      setSel(null);
+      router.setParams({ slug: nextSlug });
     },
     [bookChapter, router]
   );
@@ -813,10 +825,11 @@ export default function ReaderScreen() {
     if (!hasExpandableNotes && expandAll) setExpandAll(false);
   }, [hasExpandableNotes, expandAll]);
 
+  // Title alone — do not rebuild headerRight when only the chapter label changes
+  // (that remount was the prev/next “jiggle” on the glass buttons).
   useLayoutEffect(() => {
     const displayTitle = title.length > 26 ? title.slice(0, 26) + "…" : title;
     navigation.setOptions({
-      // Custom title — full weight, optically level with 40pt glass controls
       headerTitle: () => (
         <Text style={styles.headerTitle} numberOfLines={1} accessibilityRole="header">
           {displayTitle}
@@ -825,6 +838,11 @@ export default function ReaderScreen() {
       headerTitleAlign: "center",
       headerLeftContainerStyle: styles.headerSide,
       headerRightContainerStyle: styles.headerSide,
+    });
+  }, [navigation, title, styles.headerTitle, styles.headerSide]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
       headerRight: () => (
         <View style={styles.headerActions}>
           <HeaderIconButton
@@ -862,12 +880,12 @@ export default function ReaderScreen() {
   }, [
     navigation,
     sharePassage,
-    title,
     expandAll,
     hasChapterNote,
     hasExpandableNotes,
     openChapterNote,
     toggleExpandAll,
+    styles.headerActions,
   ]);
 
   /** Capture pan while range-dragging so FlatList cannot steal the gesture for scroll. */
@@ -955,10 +973,7 @@ export default function ReaderScreen() {
     () => Object.values(open).some(Boolean) || !!pendingRange,
     [open, pendingRange]
   );
-  const dockSlide = dockAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 120],
-  });
+
 
   const setVerseRef = useCallback((v: number, node: View | null) => {
     verseRefs.current.set(v, node);
@@ -1103,6 +1118,8 @@ export default function ReaderScreen() {
 
   return (
     <View style={ui.screen}>
+      {/* Soft edge under the title bar so verse text doesn’t hard-cut the chrome */}
+      <HeaderContentFade />
       <View
         style={styles.list}
         onStartShouldSetResponderCapture={onStartShouldSetResponderCapture}
@@ -1151,24 +1168,22 @@ export default function ReaderScreen() {
       {bookChapter && kbHeight === 0 ? (
         <Animated.View
           pointerEvents="box-none"
-          style={[
-            styles.dockSlide,
-            {
-              opacity: dockAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 0],
-              }),
-              transform: [{ translateY: dockSlide }],
-            },
-          ]}
+          style={[styles.dockSlide, dockAnimStyle]}
         >
           <LiquidGlassBar compact>
             <Pressable
               style={({ pressed }) => [styles.dockSeg, pressed && styles.dockSegPressed]}
               onPress={() => goChapter(-1)}
+              accessibilityRole="button"
               accessibilityLabel="Previous chapter"
             >
-              <Text style={styles.dockSegTxt}>Prev</Text>
+              <SymbolView
+                name="chevron.left"
+                size={17}
+                weight="semibold"
+                tintColor={color.ink}
+                fallback={<Text style={styles.dockIconFb}>‹</Text>}
+              />
             </Pressable>
             <Pressable
               style={({ pressed }) => [
@@ -1181,16 +1196,30 @@ export default function ReaderScreen() {
                 if (router.canGoBack()) router.back();
                 else router.replace("/home");
               }}
+              accessibilityRole="button"
               accessibilityLabel="Home"
             >
-              <Text style={[styles.dockSegTxt, styles.dockSegPrimaryTxt]}>Home</Text>
+              <SymbolView
+                name="house.fill"
+                size={17}
+                weight="semibold"
+                tintColor={color.primaryOn}
+                fallback={<Text style={[styles.dockIconFb, styles.dockIconFbOn]}>⌂</Text>}
+              />
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.dockSeg, pressed && styles.dockSegPressed]}
               onPress={() => goChapter(1)}
+              accessibilityRole="button"
               accessibilityLabel="Next chapter"
             >
-              <Text style={styles.dockSegTxt}>Next</Text>
+              <SymbolView
+                name="chevron.right"
+                size={17}
+                weight="semibold"
+                tintColor={color.ink}
+                fallback={<Text style={styles.dockIconFb}>›</Text>}
+              />
             </Pressable>
           </LiquidGlassBar>
         </Animated.View>
@@ -1219,22 +1248,24 @@ function makeReaderStyles(color: ThemeColors) {
       paddingHorizontal: 0,
     },
     headerTitle: {
-      fontSize: 17,
+      fontSize: 16,
       fontWeight: "700",
-      letterSpacing: -0.35,
-      lineHeight: 22,
+      letterSpacing: -0.3,
+      lineHeight: 20,
       color: color.ink,
-      maxWidth: 200,
+      // Fixed width so longer/shorter chapter titles don’t shove the side chrome
+      width: 160,
+      maxWidth: 160,
       textAlign: "center",
-      // Nudge title to the same visual center as HeaderIconButton glyphs
-      marginTop: -1,
+      marginTop: 0,
     },
     headerActions: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "flex-end",
-      height: 40,
-      // Tight cluster so the liquid-glass pill reads as one control
+      // Fixed box so share/note/list never reflow across chapter changes
+      width: 108,
+      height: 36,
       gap: 0,
     },
     // Only pin to bottom — never full-screen (absoluteFill was intercepting header taps).
@@ -1264,15 +1295,14 @@ function makeReaderStyles(color: ThemeColors) {
       opacity: 0.88,
       transform: [{ scale: 0.98 }],
     },
-    dockSegTxt: {
+    dockIconFb: {
+      fontSize: 20,
       fontWeight: "600",
-      fontSize: 13,
-      letterSpacing: -0.2,
+      lineHeight: 22,
       color: color.ink,
     },
-    dockSegPrimaryTxt: {
+    dockIconFbOn: {
       color: color.primaryOn,
-      fontWeight: "700",
     },
   });
 }

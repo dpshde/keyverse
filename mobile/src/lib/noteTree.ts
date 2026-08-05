@@ -5,11 +5,6 @@ import { bookLabel, displayScope } from "./resolveLocal";
 /** Notes loaded per page in Inbox (flat, newest-created first). */
 export const INBOX_PAGE_SIZE = 25;
 
-/** AsyncStorage key for home layout (Library vs Inbox). Shared with Settings. */
-export const HOME_VIEW_KEY = "kv.home.view.v1";
-
-export type HomeViewMode = "library" | "inbox";
-
 /** Day bucket for Inbox separators (only days that have notes). */
 export type InboxDaySection = {
   /** Local YYYY-MM-DD, or `"unknown"` when created_at is missing */
@@ -55,7 +50,10 @@ function countNotes(nodes: TreeNode[]): number {
   return n;
 }
 
-/** Group notes into book → chapter folders with natural-language labels. */
+/**
+ * Group notes into book → chapter folders with natural-language labels.
+ * Kept for tooling / future surfaces; home uses Inbox only.
+ */
 export function buildNoteTree(notes: Note[]): TreeNode[] {
   type BookMap = Map<string, Map<string, Note[]>>;
   const books: BookMap = new Map();
@@ -251,7 +249,7 @@ function noteToLeaf(n: Note): TreeLeaf {
         .map((b) => (b.text || "").trim())
         .filter(Boolean)
         .slice(0, 3)
-        .join(" · ");
+        .join("\n");
   const label = n.scope
     ? displayScope(n.scope)
     : (() => {

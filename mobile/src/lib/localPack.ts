@@ -172,17 +172,28 @@ function cacheUpsert(note: Note) {
 }
 
 function cacheRemove(slug: string) {
+  const s = normalizeSlug(slug) || slug;
   if (!notesListCache || !notesBySlugCache) {
     invalidateNotesCache();
-    emitNoteChange({ slug, note: null, deleted: true });
-    scheduleListSnapshot();
+    emitNoteChange({ slug: s, note: null, deleted: true });
+    // Drop disk snapshot immediately — a concurrent quietSync must not re-push
+    // from a stale _list_cache that still lists this slug.
+    void FileSystem.deleteAsync(listCachePath(), { idempotent: true }).catch(() => {});
     return;
   }
-  notesBySlugCache.delete(slug);
-  notesListCache = notesListCache.filter((n) => n.scope?.slug !== slug);
+  notesBySlugCache.delete(s);
+  if (s !== slug) notesBySlugCache.delete(slug);
+  notesListCache = notesListCache.filter(
+    (n) => normalizeSlug(n.scope?.slug || "") !== normalizeSlug(s)
+  );
   notesCacheEpoch += 1;
-  emitNoteChange({ slug, note: null, deleted: true });
-  scheduleListSnapshot();
+  emitNoteChange({ slug: s, note: null, deleted: true });
+  // Write snapshot now (not only debounced) so cold paths cannot resurrect
+  if (snapshotTimer) {
+    clearTimeout(snapshotTimer);
+    snapshotTimer = null;
+  }
+  void flushListSnapshot();
 }
 
 function notesDir(): string {
@@ -469,7 +480,12 @@ export async function listNotes(): Promise<Note[]> {
       const snap = await tryLoadListSnapshot();
       if (notesListCache) return notesListCache;
       if (snap) {
-        setNotesCache(snap);
+        // Strip pending deletes so a stale snapshot cannot re-push zombies
+        const pending = await getPendingDeletes();
+        const filtered = pending.size
+          ? snap.filter((n) => !pending.has(normalizeSlug(n.scope?.slug || "")))
+          : snap;
+        setNotesCache(filtered);
         // Files remain SoT — reconcile without blocking first paint
         void revalidateNotesFromDisk();
         return notesListCache!;
@@ -516,6 +532,8 @@ export async function bulkUpsertNotes(notes: Note[]): Promise<number> {
     if (!slug) return;
     // Local delete must win over a cloud pull until the door is cleared
     if (pending.has(normalizeSlug(slug))) return;
+    // Re-check: delete may have landed after we snapshot `pending`
+    if (await isPendingDelete(slug)) return;
     await writeJson(notePath(slug), note);
     idx.add(slug);
     wrote += 1;

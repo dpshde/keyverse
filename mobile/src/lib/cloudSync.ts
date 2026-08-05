@@ -69,11 +69,46 @@ export function normalizeDoorPhrase(raw: string): string {
 }
 
 /**
+ * Serialize cloud syncs. Concurrent quietSync + manual sync + mid-edit mirror
+ * races used to re-push notes that had already been deleted locally.
+ */
+let syncChain: Promise<unknown> = Promise.resolve();
+
+function enqueueSync<T>(fn: () => Promise<T>): Promise<T> {
+  const run = syncChain.then(fn, fn);
+  // Keep the chain alive even if this run fails
+  syncChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+/**
+ * Live local note still eligible to push (not pending-delete / not removed mid-sync).
+ * Snapshot from listNotes() alone is unsafe — deletes land while the loop runs.
+ */
+async function liveNoteForPush(slug: string): Promise<Note | null> {
+  if (await Local.isPendingDelete(slug)) return null;
+  const live = Local.peekNote(slug) ?? (await Local.getNote(slug));
+  if (!live) return null;
+  if (await Local.isPendingDelete(slug)) return null;
+  return live;
+}
+
+/**
  * Enable cloud and sync.
  * - With `opts.door`: join an existing multiword door (pull remote + push local).
  * - Without: claim a fresh door (or resume the previously saved door if re-enabling).
  */
 export async function enableCloudAndSync(
+  host = DEFAULT_HOST,
+  opts: EnableCloudOpts = {}
+): Promise<SyncResult> {
+  return enqueueSync(() => enableCloudAndSyncUnlocked(host, opts));
+}
+
+async function enableCloudAndSyncUnlocked(
   host = DEFAULT_HOST,
   opts: EnableCloudOpts = {}
 ): Promise<SyncResult> {
@@ -133,14 +168,18 @@ export async function enableCloudAndSync(
   // Flush local deletes to the door FIRST so a subsequent pull cannot resurrect them
   await flushPendingCloudDeletes(client);
 
-  // Push local → cloud
+  // Push local → cloud (re-check each slug so mid-sync deletes are not re-uploaded)
   const localNotes = await Local.listNotes();
   let pushed = 0;
   let attN = 0;
-  for (const note of localNotes) {
-    const slug = note.scope?.slug;
+  for (const snap of localNotes) {
+    const slug = snap.scope?.slug;
     if (!slug) continue;
+    const note = await liveNoteForPush(slug);
+    if (!note) continue;
     if (note.encrypted && note.cipher) {
+      // Final guard immediately before network write
+      if (await Local.isPendingDelete(slug)) continue;
       await client.putNote(slug, { encrypted: true, cipher: note.cipher });
       pushed++;
       continue;
@@ -167,12 +206,17 @@ export async function enableCloudAndSync(
         }
       }
     }
+    if (await Local.isPendingDelete(slug)) continue;
+    if (!(Local.peekNote(slug) ?? (await Local.getNote(slug)))) continue;
     await client.putNote(slug, {
       blocks: note.blocks,
       attachments: atts,
     });
     pushed++;
   }
+
+  // Deletes that landed during the push loop (or after a stale push raced) win
+  await flushPendingCloudDeletes(client);
 
   // Pull cloud → local (union): fetch notes in parallel, bulk-write once.
   // bulkUpsertNotes skips pending-delete slugs as a second line of defense.

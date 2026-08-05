@@ -3,20 +3,25 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SymbolView } from "expo-symbols";
 import { useSession } from "@/src/context/SessionContext";
 import type { Attachment, Block, Note } from "@/src/api/types";
 import { hydrateBlocks } from "@/src/api/client";
 import { Outliner } from "@/src/components/Outliner";
+import { PassageStrip } from "@/src/components/PassageStrip";
 import { LocalAttachmentList } from "@/src/components/LocalAttachmentList";
+import { HeaderContentFade } from "@/src/components/HeaderScrim";
 import { HeaderIconButton } from "@/src/components/HeaderIconButton";
 import { IconShare } from "@/src/components/HeaderIcons";
 import { decryptPayload, encryptPayload } from "@/src/lib/crypto";
@@ -28,7 +33,7 @@ import { passageShareUrls } from "@/src/lib/shareUrl";
 import { hapticError, hapticLight, hapticSelect } from "@/src/lib/haptics";
 import { useTheme } from "@/src/context/ThemeContext";
 import { pushOnce } from "@/src/lib/nav";
-import { radius, space, tap, type ThemeColors } from "@/src/theme";
+import { radius, space, tapComfy, type ThemeColors } from "@/src/theme";
 
 /** Natural-language title: "Hebrews 7:1" not "heb.7.1" or raw query text. */
 function titleForSlug(slug: string, note: Note | null): string {
@@ -43,14 +48,14 @@ function titleForSlug(slug: string, note: Note | null): string {
 }
 
 /**
- * Critique → improve (operate):
- * - Text-only "Open in reader" / tool labels → icon chrome in the header & toolbar
- * - Dead space under note tools → tight icon row, less section padding
- * - Editor stays the hero; secondary actions recede into icons
+ * Full note editor — operate mode.
+ * Hierarchy: nav ref → scripture strip → outline (hero) → quiet tools/meta.
+ * No second title mast (header already names the passage).
  */
 export default function NoteScreen() {
-  const { color, ui, type } = useTheme();
+  const { color, ui } = useTheme();
   const styles = useMemo(() => makeNoteStyles(color), [color]);
+  const insets = useSafeAreaInsets();
   const { slug: raw } = useLocalSearchParams<{ slug: string }>();
   const slug = decodeURIComponent(String(raw || ""));
   const { passphrase, hasPassphrase, cloudEnabled, cloudHost, cloudDoor } = useSession();
@@ -81,6 +86,8 @@ export default function NoteScreen() {
   );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
+  /** Deleted elsewhere (home / tray / empty) — block autosave resurrection. */
+  const deletedRef = useRef(false);
   const blocksRef = useRef(blocks);
   const attsRef = useRef(attachments);
   /** Bumps on each save start — drop stale completions so late I/O never clobber UI. */
@@ -187,12 +194,21 @@ export default function NoteScreen() {
   useEffect(() => {
     return Local.subscribeNoteChanges((ch) => {
       if (ch.slug !== slug) return;
-      if (dirtyRef.current || timer.current) return;
       if (ch.deleted) {
+        // Honor deletes even mid-type — pending autosave must not resurrect
+        if (timer.current) {
+          clearTimeout(timer.current);
+          timer.current = null;
+        }
+        dirtyRef.current = false;
+        deletedRef.current = true;
+        saveGen.current += 1;
         appliedStampRef.current = `${slug}:`;
         void applyNote(null);
         return;
       }
+      if (dirtyRef.current || timer.current) return;
+      deletedRef.current = false;
       const stamp = `${ch.note.scope?.slug || slug}:${ch.note.updated_at || ""}`;
       if (stamp === appliedStampRef.current) return;
       appliedStampRef.current = stamp;
@@ -205,7 +221,7 @@ export default function NoteScreen() {
    * Editor blocks/attachments stay the source of truth after write.
    */
   const save = useCallback(async () => {
-    if (locked) return;
+    if (locked || deletedRef.current) return;
     const gen = ++saveGen.current;
     try {
       const b = blocksRef.current;
@@ -224,21 +240,22 @@ export default function NoteScreen() {
           hapticError();
           Alert.alert(
             "Passphrase required",
-            "Set a passphrase under Settings → Advanced first."
+            "Set a passphrase under Settings → Sealed notes first."
           );
           return;
         }
         const cipher = await encryptPayload({ blocks: b, attachments: a }, passphrase);
-        if (gen !== saveGen.current) return;
+        if (gen !== saveGen.current || deletedRef.current) return;
         res = await Local.putNote(slug, { encrypted: true, cipher });
       } else {
         res = await Local.putNote(slug, { blocks: b, attachments: a });
       }
-      if (gen !== saveGen.current) return;
+      if (gen !== saveGen.current || deletedRef.current) return;
 
       dirtyRef.current = false;
 
       if ("deleted" in res && res.deleted) {
+        deletedRef.current = true;
         if (cloudEnabled) mirrorNoteIfCloud(slug).catch(() => {});
         router.back();
         return;
@@ -272,6 +289,8 @@ export default function NoteScreen() {
   saveRef.current = save;
 
   const scheduleSave = useCallback(() => {
+    // User edit after a delete is an intentional recreate
+    deletedRef.current = false;
     dirtyRef.current = true;
     if (timer.current) clearTimeout(timer.current);
     // Debounced local write; UI already updated optimistically via setBlocks.
@@ -284,6 +303,13 @@ export default function NoteScreen() {
   // Flush pending autosave on unmount so navigations don't drop last keystrokes.
   useEffect(() => {
     return () => {
+      if (deletedRef.current) {
+        if (timer.current) {
+          clearTimeout(timer.current);
+          timer.current = null;
+        }
+        return;
+      }
       if (timer.current) {
         clearTimeout(timer.current);
         timer.current = null;
@@ -350,7 +376,24 @@ export default function NoteScreen() {
         </View>
       ),
     });
-  }, [navigation, pageTitle, openReader, sharePassage]);
+  }, [navigation, pageTitle, openReader, sharePassage, styles]);
+
+  const toggleSeal = useCallback(() => {
+    if (!hasPassphrase) {
+      hapticLight();
+      pushOnce(router, "/settings");
+      return;
+    }
+    hapticSelect();
+    const next = !wantEncrypt;
+    setWantEncrypt(next);
+    dirtyRef.current = true;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      void saveRef.current();
+    }, 200);
+  }, [hasPassphrase, wantEncrypt, router]);
 
   if (busy) {
     return (
@@ -360,205 +403,219 @@ export default function NoteScreen() {
     );
   }
 
+  /**
+   * Privacy control (sync only): lock = private/sealed, globe = public on the door.
+   * Icon is the affordance; a11y carries the full sentence.
+   */
+  const privacySealed = wantEncrypt;
+  const privacySymbol = privacySealed ? "lock.fill" : "globe";
+  const privacyA11y = !hasPassphrase
+    ? "Public on your door. Set a passphrase in Settings → Sealed notes to lock notes private."
+    : privacySealed
+      ? "Private. Host stores ciphertext only. Double tap for public on your door."
+      : "Public on your door. Anyone with your sync key can read this. Double tap to lock private.";
+
   return (
     <KeyboardAvoidingView
       style={ui.screen}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={88}
     >
-      <ScrollView
-        contentContainerStyle={styles.body}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-      >
-        <View style={styles.mast}>
-          <Text style={styles.refTitle} accessibilityRole="header">
-            {pageTitle}
-          </Text>
-        </View>
+      <HeaderContentFade />
+      {/* Non-interactive taps (verse, paper, labels) dismiss keyboard; controls keep focus. */}
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View
+          style={[
+            styles.body,
+            {
+              paddingBottom: Math.max(insets.bottom, space[3]) + space[4],
+            },
+          ]}
+        >
+          {/* Scripture first — ref lives in the nav title; strip is the reading layer */}
+          <PassageStrip slug={slug} label={pageTitle} />
 
-        {locked ? (
-          <View style={styles.warn}>
-            <Text style={styles.warnTxt}>
-              Sealed note. Set the correct passphrase under Settings → Advanced.
-            </Text>
-          </View>
-        ) : (
-          <>
-            <View style={styles.editorCard}>
-              <Outliner
-                blocks={blocks}
-                onChange={setBlocks}
-                editable
-                onDirty={scheduleSave}
-              />
+          {locked ? (
+            <View style={styles.warn}>
+              <Text style={styles.warnTxt}>
+                Private note. Set the correct passphrase under Settings → Sealed notes.
+              </Text>
             </View>
-
-            <View style={styles.section}>
-              <LocalAttachmentList
-                slug={slug}
-                attachments={attachments}
-                onChange={(atts) => {
-                  setAttachments(atts);
-                  scheduleSave();
-                }}
-              />
-            </View>
-
-            {cloudEnabled ? (
-              <View
-                style={styles.sealCard}
-                accessibilityRole="summary"
-                accessibilityLabel={
-                  wantEncrypt
-                    ? "Note sealed for cloud. Host stores ciphertext only."
-                    : "Note is plain on the host. Anyone with your door can read it."
-                }
-              >
-                <View style={styles.sealCopy}>
-                  <Text style={type.bodyStrong}>
-                    {wantEncrypt ? "Sealed for cloud" : "Plain on host"}
-                  </Text>
-                  <Text style={type.caption}>
-                    {wantEncrypt
-                      ? "Host stores ciphertext only. Passphrase stays on this device."
-                      : "Anyone with your door can read this note on the host."}
-                  </Text>
-                </View>
-                {!hasPassphrase ? (
-                  <Pressable
-                    style={ui.ghostBtnSm}
-                    onPress={() => {
-                      hapticLight();
-                      pushOnce(router, "/settings");
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Set passphrase in Settings"
-                  >
-                    <Text style={ui.ghostBtnSmTxt}>Set passphrase</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    style={ui.ghostBtnSm}
-                    onPress={() => {
-                      hapticSelect();
-                      const next = !wantEncrypt;
-                      setWantEncrypt(next);
-                      // Seal preference is part of the note write — persist now,
-                      // not only after the next keystroke.
-                      dirtyRef.current = true;
-                      if (timer.current) clearTimeout(timer.current);
-                      timer.current = setTimeout(() => {
-                        timer.current = null;
-                        void saveRef.current();
-                      }, 200);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      wantEncrypt ? "Unseal note for cloud" : "Seal note for cloud"
-                    }
-                    accessibilityHint={
-                      wantEncrypt
-                        ? "Saves this note as plain text on the host"
-                        : "Encrypts this note so the host only sees ciphertext"
-                    }
-                  >
-                    <Text style={ui.ghostBtnSmTxt}>
-                      {wantEncrypt ? "Unseal" : "Seal"}
-                    </Text>
-                  </Pressable>
-                )}
+          ) : (
+            <>
+              <Text style={styles.noteLabel} accessibilityRole="header">
+                Note
+              </Text>
+              {/* Capture surface under scripture — fills leftover Y, tools at card foot */}
+              <View style={styles.editorCard}>
+                <Outliner
+                  fill
+                  blocks={blocks}
+                  onChange={setBlocks}
+                  editable
+                  onDirty={scheduleSave}
+                />
               </View>
-            ) : null}
-          </>
-        )}
-      </ScrollView>
+
+              <View style={styles.footer}>
+                <View style={styles.footerMain}>
+                  <LocalAttachmentList
+                    slug={slug}
+                    attachments={attachments}
+                    onChange={(atts) => {
+                      setAttachments(atts);
+                      scheduleSave();
+                    }}
+                  />
+                </View>
+                {cloudEnabled ? (
+                  <Pressable
+                    onPress={toggleSeal}
+                    style={({ pressed }) => [
+                      styles.privacyBtn,
+                      privacySealed && styles.privacyBtnOn,
+                      pressed && styles.privacyBtnPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: privacySealed }}
+                    accessibilityLabel={privacyA11y}
+                    hitSlop={8}
+                  >
+                    <SymbolView
+                      name={privacySymbol as "lock.fill" | "globe"}
+                      size={22}
+                      weight={privacySealed ? "semibold" : "medium"}
+                      tintColor={privacySealed ? color.inkSoft : color.muted}
+                      fallback={
+                        <Text
+                          style={[
+                            styles.privacyFallback,
+                            { color: privacySealed ? color.inkSoft : color.muted },
+                          ]}
+                        >
+                          {privacySealed ? "\u{1F512}" : "\u{1F310}"}
+                        </Text>
+                      }
+                    />
+                  </Pressable>
+                ) : null}
+              </View>
+            </>
+          )}
+        </View>
+      </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
 }
 
 function makeNoteStyles(color: ThemeColors) {
   return StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: color.paper,
-  },
-  body: {
-    paddingHorizontal: space[4],
-    paddingTop: space[3],
-    paddingBottom: space[6],
-    backgroundColor: color.paper,
-    gap: space[3],
-  },
-  mast: {
-    gap: 2,
-  },
-  refTitle: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: "700",
-    color: color.ink,
-    letterSpacing: -0.3,
-  },
-  editorCard: {
-    backgroundColor: color.paperRaised,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.lineSoft,
-    paddingHorizontal: space[3],
-    paddingTop: space[3],
-    paddingBottom: space[2],
-  },
-  section: {
-    gap: space[1],
-  },
-  /** Cloud seal status + explicit Seal / Unseal action (not a Switch). */
-  sealCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    minHeight: tap,
-    backgroundColor: color.paperRaised,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.lineSoft,
-    paddingHorizontal: space[3],
-    paddingVertical: space[3],
-    gap: space[3],
-  },
-  sealCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  warn: {
-    backgroundColor: color.warnSoft,
-    padding: space[3],
-    borderRadius: radius.md,
-  },
-  warnTxt: {
-    color: color.warnInk,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    letterSpacing: -0.35,
-    lineHeight: 22,
-    color: color.ink,
-    maxWidth: 200,
-    textAlign: "center",
-    marginTop: -1,
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    height: 40,
-    gap: 0,
-  },
-});
+    center: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: color.paper,
+    },
+    body: {
+      flex: 1,
+      paddingHorizontal: space[4],
+      paddingTop: space[2],
+      backgroundColor: color.paper,
+      gap: space[2],
+    },
+    /** Quiet rail between scripture (primary) and capture (secondary). */
+    noteLabel: {
+      fontSize: 12,
+      fontWeight: "700",
+      letterSpacing: 0.4,
+      textTransform: "uppercase",
+      color: color.muted,
+      marginTop: space[1],
+      marginBottom: 2,
+    },
+    /**
+     * Capture surface under scripture — claims leftover Y.
+     * Soft fill (not pure white slab) so empty space still reads as paper hierarchy.
+     */
+    editorCard: {
+      flex: 1,
+      minHeight: 160,
+      backgroundColor: color.paperRaised,
+      borderRadius: radius.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.line,
+      paddingHorizontal: space[3],
+      paddingTop: space[3],
+      paddingBottom: space[2],
+      overflow: "hidden",
+      // Slight lift so the note field is clearly “on” the paper field
+      shadowColor: "#000",
+      shadowOpacity: 0.04,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 1,
+    },
+    /** Attach (left) + privacy icon (right) — roomy strip above home indicator. */
+    footer: {
+      flexShrink: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space[2],
+      paddingTop: space[2],
+      minHeight: tapComfy + space[2],
+    },
+    footerMain: {
+      flex: 1,
+      minWidth: 0,
+      justifyContent: "center",
+    },
+    /**
+     * Privacy toggle: lock.fill = private, globe = public on the door.
+     * No status copy — icon carries state; VoiceOver gets the full sentence.
+     */
+    privacyBtn: {
+      width: tapComfy,
+      height: tapComfy,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: radius.md,
+    },
+    privacyBtnOn: {
+      backgroundColor: color.fillStrong,
+    },
+    privacyBtnPressed: {
+      opacity: 0.55,
+    },
+    privacyFallback: {
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    warn: {
+      backgroundColor: color.warnSoft,
+      padding: space[3],
+      borderRadius: radius.md,
+    },
+    warnTxt: {
+      color: color.warnInk,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    headerTitle: {
+      fontSize: 16,
+      fontWeight: "700",
+      letterSpacing: -0.3,
+      lineHeight: 20,
+      color: color.ink,
+      maxWidth: 180,
+      textAlign: "center",
+      marginTop: 0,
+    },
+    headerActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-end",
+      height: 36,
+      gap: 0,
+    },
+  });
 }

@@ -132,6 +132,44 @@ From repo root: `pnpm --dir mobile start` / `pnpm mobile` (after `pnpm --dir mob
 
 `mobile/.npmrc` sets `node-linker=hoisted` so Expo/Metro resolve modules correctly under pnpm.
 
+## Cloud mirror + note deletes
+
+Cloud is optional. When on, quiet full sync (launch / foreground / Settings)
+**unions** local and door. Deletes must not come back as “zombie notes.”
+
+**Rule (ADR 0021):** local delete wins until the door is confirmed empty for
+that slug.
+
+| Step | Behavior |
+|------|----------|
+| Local delete | Unlink `notes/{slug}.json`, drop from index + memory, mark **pending cloud delete** |
+| Immediate mirror | Empty PUT `{blocks:[],attachments:[]}` → host `{deleted:true}`; clear pending on success |
+| Full sync | Flush pending deletes → push only **still-live** notes → flush pending again → pull (skip pending) |
+| Editors | Honor delete events even when dirty; no unmount/autosave rewrite of a deleted slug |
+
+```
+deleteNote(slug)
+  → pendingDeletes += slug
+  → file/index/cache gone
+  → mirrorNoteIfCloud → empty PUT (or keep pending on failure)
+
+quietSync / enableCloudAndSync (serialized)
+  → flushPendingCloudDeletes
+  → for each listed note: re-check live + !pending, then PUT
+  → flushPendingCloudDeletes   # undoes mid-sync delete races
+  → pull remote, bulkUpsert skips pending
+```
+
+**Do not:**
+
+- Push from a one-shot `listNotes()` snapshot without re-checking each slug
+- Clear pending before the door empty-PUT succeeded (except intentional recreate)
+- Let a dirty tray/full note ignore `deleted` and flush old blocks on unmount
+
+**Debug a zombie:** `GET /{door}/api/note/{slug}` — if 200 after local delete,
+something re-pushed (this device race or another client). Empty PUT should leave
+GET 404. See [ADR 0021](../docs/adr/0021-local-delete-wins-cloud-mirror.md).
+
 ## Layout
 
 ```
@@ -139,7 +177,7 @@ mobile/
   assets/text/bsb|kjv/   bundled chapters.json.gz
   assets/words-door.txt  multiword door lexicon
   src/lib/textBundle.ts  gunzip + chapter get
-  src/lib/localPack.ts   local SoT
-  src/lib/cloudSync.ts   door claim + double
+  src/lib/localPack.ts   local SoT (+ pending deletes)
+  src/lib/cloudSync.ts   door claim + double (delete-safe sync)
   src/lib/resolveLocal.ts
 ```

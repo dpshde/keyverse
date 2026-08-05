@@ -49,6 +49,7 @@ Single pack (offline / import) is just that inner directory.
 - Cipher plaintext is UTF-8 JSON `{"blocks":[…],"attachments":[…]}` (AES-256-GCM, PBKDF2-HMAC-SHA-256, 210000 iter).
 - Containment is computed from OSIS geometry — never merge/copy note bodies between addresses.
 - Passage share (door UX): default deep link is `/{door}/read/{slug}` (projected reader). Pack share is `/{door}/`. Knowing either URL is full pack access (no capability tokens in v0.2). See docs/adr/0019.
+- Mobile cloud mirror: local delete wins until door empty-PUT confirmed (pending tombstones; no stale quietSync re-push). See docs/adr/0021.
 
 ## HTTP door (optional)
 

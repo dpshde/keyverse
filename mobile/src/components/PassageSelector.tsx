@@ -1,7 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Animated,
-  Easing,
   Keyboard,
   Platform,
   Pressable,
@@ -13,9 +11,16 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "expo-symbols";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import type { SuggestItem } from "../api/types";
 import { useTheme } from "../context/ThemeContext";
 import { hapticLight, hapticSelect } from "../lib/haptics";
+import { keyboardMotionMs } from "../lib/motion";
 import { space, tap, tapComfy } from "../theme";
 import { LiquidGlassShell } from "./LiquidGlassShell";
 import { PassagePickerSheet } from "./PassagePickerSheet";
@@ -53,33 +58,28 @@ export function PassageSelector({
   const [pickerOpen, setPickerOpen] = useState(false);
 
   /**
-   * Lift with translateY (native driver) — animating `bottom`/`padding` is JS-thread
-   * only and feels laggy. lift 0 = resting; lift = keyboardHeight − restPad + gap.
+   * Lift with translateY on the UI thread (Reanimated).
+   * Never animate bottom/padding — layout thrash. lift 0 = rest; negative = above keyboard.
    */
-  const liftAnim = useRef(new Animated.Value(0)).current;
-  const animRef = useRef<Animated.CompositeAnimation | null>(null);
+  const liftY = useSharedValue(0);
+  const liftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: liftY.value }],
+  }));
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
     const run = (kb: number, e?: KeyboardEvent) => {
-      // Prefer system keyboard duration when present; keep hides snappy.
       const sysMs =
         Platform.OS === "ios" && e?.duration != null && e.duration > 0 ? e.duration : null;
-      const duration = sysMs != null ? Math.min(sysMs, 280) : kb > 0 ? 220 : 180;
+      const duration = keyboardMotionMs(sysMs, kb > 0);
       // Rise so capsule sits just above keys (small gap), not on the home indicator
       const lift = kb > 0 ? Math.max(0, kb - restPad + space[2]) : 0;
-
-      animRef.current?.stop();
-      animRef.current = Animated.timing(liftAnim, {
-        toValue: -lift,
+      liftY.value = withTiming(-lift, {
         duration,
-        // Snappier than a long keyboard ease — less “floaty”
         easing: kb > 0 ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-        useNativeDriver: true,
       });
-      animRef.current.start();
       onKeyboardHeightChange?.(kb);
     };
 
@@ -95,9 +95,8 @@ export function PassageSelector({
     return () => {
       subShow.remove();
       subHide.remove();
-      animRef.current?.stop();
     };
-  }, [liftAnim, restPad, onKeyboardHeightChange]);
+  }, [liftY, restPad, onKeyboardHeightChange]);
 
   const shown = suggestions.slice(0, 5);
   const open = shown.length > 0;
@@ -107,13 +106,7 @@ export function PassageSelector({
   return (
     <Animated.View
       pointerEvents="box-none"
-      style={[
-        styles.wrap,
-        {
-          paddingBottom: restPad,
-          transform: [{ translateY: liftAnim }],
-        },
-      ]}
+      style={[styles.wrap, { paddingBottom: restPad }, liftStyle]}
     >
       <LiquidGlassShell borderRadius={r} elevated>
         {open ? (

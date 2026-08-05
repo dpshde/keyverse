@@ -24,6 +24,7 @@ We use [Michael Nygard’s ADR format](https://github.com/architecture-decision-
 | [0018](./0018-react-native-mobile-client.md) | React Native mobile client (web mirror) | Accepted |
 | [0019](./0019-passage-deep-link-sharing.md) | Passage deep-link sharing (verse / range / chapter) | Accepted |
 | [0020](./0020-append-only-op-log.md) | Append-only op log with deterministic fold (protocol 0.3) | Accepted |
+| [0021](./0021-local-delete-wins-cloud-mirror.md) | Local delete wins over cloud mirror (no zombie notes) | Accepted |
 
 ## How to add an ADR
 
@@ -73,6 +74,7 @@ confidentiality layer under frictionlessness, not a permanence/sync feature.
 | Multiword door URL | 0011 |
 | Client-side pack passphrase | 0012 |
 | Passage deep links (share verse / range / chapter) | 0019 |
+| Local delete vs cloud mirror (no zombie notes) | 0021 |
 | Deferred multi-device / at-rest / blob crypto | 0008 |
 
 ## Doc map

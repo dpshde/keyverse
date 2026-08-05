@@ -73,6 +73,12 @@ export function InlineNoteEditor({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** True while local edits are unflushed — ignore external rehydrate. */
   const dirtyRef = useRef(false);
+  /**
+   * Note was deleted elsewhere (home swipe / empty save / cloud). Blocks further
+   * autosave and unmount flush so dirty tray content cannot resurrect the note.
+   */
+  const deletedRef = useRef(false);
+  const saveGen = useRef(0);
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
   const onBlocksLiveRef = useRef(onBlocksLive);
@@ -86,9 +92,21 @@ export function InlineNoteEditor({
     if (atts !== undefined) setAttachments(atts);
   }, []);
 
+  const clearTimer = useCallback(() => {
+    if (timer.current != null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  }, []);
+
+  // New slug mount — allow saves again
+  useEffect(() => {
+    deletedRef.current = false;
+  }, [slug]);
+
   // Seed / external revision from parent (reader resolved map)
   useEffect(() => {
-    if (dirtyRef.current || timer.current) return;
+    if (deletedRef.current || dirtyRef.current || timer.current) return;
     if (initialBlocks) {
       applyBlocks(initialBlocks.length ? initialBlocks : Local.emptyBlocks());
     }
@@ -102,12 +120,19 @@ export function InlineNoteEditor({
   useEffect(() => {
     return Local.subscribeNoteChanges((ch) => {
       if (ch.slug !== slug) return;
-      // Don't clobber in-progress typing
-      if (dirtyRef.current || timer.current) return;
       if (ch.deleted) {
+        // Always honor local deletes — even mid-type — so zombies cannot re-save
+        clearTimer();
+        dirtyRef.current = false;
+        deletedRef.current = true;
+        saveGen.current += 1;
         applyBlocks(Local.emptyBlocks(), []);
+        onBlocksLiveRef.current?.(Local.emptyBlocks());
         return;
       }
+      // Don't clobber in-progress typing
+      if (dirtyRef.current || timer.current) return;
+      deletedRef.current = false;
       const note = ch.note;
       if (note.encrypted) {
         // Encrypted body not available without passphrase — parent handles lock UI
@@ -115,27 +140,22 @@ export function InlineNoteEditor({
       }
       applyBlocks(hydrateBlocks(note), (note.attachments || []) as Attachment[]);
     });
-  }, [slug, applyBlocks]);
-
-  const clearTimer = useCallback(() => {
-    if (timer.current != null) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-  }, []);
-
-  const saveGen = useRef(0);
+  }, [slug, applyBlocks, clearTimer]);
 
   const save = useCallback(async () => {
     clearTimer();
+    if (deletedRef.current) return null;
     const gen = ++saveGen.current;
     try {
       const res = await Local.putNote(slug, {
         blocks: blocksRef.current,
         attachments: attsRef.current,
       });
-      if (gen !== saveGen.current) return res;
+      if (gen !== saveGen.current || deletedRef.current) return res;
       dirtyRef.current = false;
+      if ("deleted" in res && res.deleted) {
+        deletedRef.current = true;
+      }
       onSavedRef.current?.(res);
       // Mirror put *or* empty-delete so cloud cannot resurrect cleared notes
       mirrorNoteIfCloud(slug).catch(() => {});
@@ -147,6 +167,7 @@ export function InlineNoteEditor({
   }, [slug, clearTimer]);
 
   const scheduleSave = useCallback(() => {
+    if (deletedRef.current) return;
     dirtyRef.current = true;
     clearTimer();
     timer.current = setTimeout(() => {
@@ -156,6 +177,8 @@ export function InlineNoteEditor({
   }, [save, clearTimer]);
 
   const onBlocksChange = useCallback((next: Block[]) => {
+    // User is typing again after a delete — intentional recreate
+    deletedRef.current = false;
     dirtyRef.current = true;
     setBlocks(next);
     onBlocksLiveRef.current?.(next);
@@ -171,21 +194,28 @@ export function InlineNoteEditor({
 
   useEffect(() => {
     return () => {
+      if (deletedRef.current) return;
       if (timer.current == null && !dirtyRef.current) return;
       if (timer.current) {
         clearTimeout(timer.current);
         timer.current = null;
       }
-      Local.putNote(slug, {
-        blocks: blocksRef.current,
-        attachments: attsRef.current,
-      })
-        .then((res) => {
+      // Unmount flush — skip if deleted while tray was open (pending or gone)
+      void (async () => {
+        if (deletedRef.current) return;
+        if (await Local.isPendingDelete(slug)) return;
+        try {
+          const res = await Local.putNote(slug, {
+            blocks: blocksRef.current,
+            attachments: attsRef.current,
+          });
           dirtyRef.current = false;
           onSavedRef.current?.(res);
           mirrorNoteIfCloud(slug).catch(() => {});
-        })
-        .catch(() => {});
+        } catch {
+          /* ignore */
+        }
+      })();
     };
   }, [slug]);
 

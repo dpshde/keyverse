@@ -279,13 +279,19 @@ function emptyBlocks(): Block[] {
 
 function previewFromBlocks(blocks: Block[]): string {
   const parts: string[] = [];
+  let len = 0;
   for (const b of blocks) {
     const t = (b.text || "").trim();
-    if (t) parts.push(t);
-    if (parts.join(" ").length > 160) break;
+    if (!t) continue;
+    // +1 for the newline separator between lines
+    const next = len + t.length + (parts.length ? 1 : 0);
+    if (parts.length && next > 200) break;
+    parts.push(t);
+    len = next;
+    if (len >= 200) break;
   }
-  const s = parts.join(" · ");
-  return s.length > 160 ? s.slice(0, 157) + "…" : s;
+  const s = parts.join("\n");
+  return s.length > 200 ? s.slice(0, 197) + "…" : s;
 }
 
 /** Apply alpha to #rrggbb or return color unchanged for rgba. */
