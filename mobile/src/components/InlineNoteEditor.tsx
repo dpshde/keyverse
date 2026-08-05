@@ -137,9 +137,7 @@ export function InlineNoteEditor({
       if (gen !== saveGen.current) return res;
       dirtyRef.current = false;
       onSavedRef.current?.(res);
-      if ("deleted" in res && res.deleted) {
-        return res;
-      }
+      // Mirror put *or* empty-delete so cloud cannot resurrect cleared notes
       mirrorNoteIfCloud(slug).catch(() => {});
       return res;
     } catch {

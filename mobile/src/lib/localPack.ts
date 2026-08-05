@@ -16,6 +16,8 @@ import { resolveLocal, displayScope } from "./resolveLocal";
 
 const META_KEY = "kv.local.meta.v1";
 const NOTES_INDEX = "kv.local.notesIndex.v1";
+/** Slugs deleted locally but not yet confirmed cleared on the cloud mirror. */
+const PENDING_DELETES_KEY = "kv.local.pendingDeletes.v1";
 /** Parallel FileSystem reads — sequential await-per-note was the cold-start bottleneck. */
 const READ_CONCURRENCY = 24;
 const WRITE_CONCURRENCY = 12;
@@ -27,12 +29,19 @@ let notesListCache: Note[] | null = null;
 let notesBySlugCache: Map<string, Note> | null = null;
 /** Bumps on any write/delete/import so UIs can skip redundant reloads. */
 let notesCacheEpoch = 0;
+/**
+ * Generation for disk revalidate — write/delete bumps so a stale background
+ * revalidate cannot repaint a note that was just removed.
+ */
+let packGen = 0;
 /** In-memory slug index — avoids AsyncStorage round-trips on every put. */
 let indexCache: string[] | null = null;
 /** Coalesce concurrent cold listNotes into one load. */
 let listNotesInflight: Promise<Note[]> | null = null;
 let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
 let revalidateInflight: Promise<void> | null = null;
+/** Pending cloud deletes (memory; AsyncStorage is source across launches). */
+let pendingDeletesCache: Set<string> | null = null;
 
 /** Live note updates for reader ↔ full note (and multi-surface) sync. */
 export type NoteChange =
@@ -290,18 +299,23 @@ async function loadNotesFromDisk(): Promise<Note[]> {
 /**
  * Background revalidate: individual files win over the list snapshot.
  * Only notifies when the pack fingerprint actually changed.
+ * Aborts if a write/delete bumped packGen while we were reading (stale scan).
  */
 function revalidateNotesFromDisk(): Promise<void> {
   if (revalidateInflight) return revalidateInflight;
+  const genAtStart = packGen;
   revalidateInflight = (async () => {
     try {
       const notes = await loadNotesFromDisk();
+      // A put/delete landed during the scan — drop this result; caller can revalidate later
+      if (genAtStart !== packGen) return;
       const nextFp = notesFingerprint(notes);
       const prevFp = notesListCache ? notesFingerprint(notesListCache) : "";
       if (nextFp === prevFp && notesListCache) {
         // Snapshot was fresh — still refresh snapshot timestamp/order if needed
         return;
       }
+      if (genAtStart !== packGen) return;
       // Diff by slug so open editors only react to their note
       const prevMap = notesBySlugCache;
       setNotesCache(notes);
@@ -341,6 +355,62 @@ function revalidateNotesFromDisk(): Promise<void> {
     }
   })();
   return revalidateInflight;
+}
+
+function normalizeSlug(slug: string): string {
+  return (slug || "").trim().toLowerCase();
+}
+
+async function getPendingDeletes(): Promise<Set<string>> {
+  if (pendingDeletesCache) return new Set(pendingDeletesCache);
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_DELETES_KEY);
+    const arr = raw ? (JSON.parse(raw) as string[]) : [];
+    pendingDeletesCache = new Set(
+      (Array.isArray(arr) ? arr : []).map(normalizeSlug).filter(Boolean)
+    );
+  } catch {
+    pendingDeletesCache = new Set();
+  }
+  return new Set(pendingDeletesCache);
+}
+
+async function setPendingDeletes(set: Set<string>): Promise<void> {
+  pendingDeletesCache = new Set([...set].map(normalizeSlug).filter(Boolean));
+  await AsyncStorage.setItem(
+    PENDING_DELETES_KEY,
+    JSON.stringify([...pendingDeletesCache])
+  );
+}
+
+/** Mark slug as deleted until cloud mirror confirms (quietSync must not resurrect). */
+export async function markPendingDelete(slug: string): Promise<void> {
+  const s = normalizeSlug(slug);
+  if (!s) return;
+  const set = await getPendingDeletes();
+  set.add(s);
+  await setPendingDeletes(set);
+}
+
+/** Clear pending-delete flag after successful cloud empty PUT (or local-only). */
+export async function clearPendingDelete(slug: string): Promise<void> {
+  const s = normalizeSlug(slug);
+  if (!s) return;
+  const set = await getPendingDeletes();
+  if (!set.has(s)) return;
+  set.delete(s);
+  await setPendingDeletes(set);
+}
+
+/** All slugs waiting for cloud delete confirmation. */
+export async function listPendingDeletes(): Promise<string[]> {
+  return [...(await getPendingDeletes())];
+}
+
+/** True when this slug must not be re-imported from cloud. */
+export async function isPendingDelete(slug: string): Promise<boolean> {
+  const set = await getPendingDeletes();
+  return set.has(normalizeSlug(slug));
 }
 
 export async function getMeta(): Promise<LocalMeta> {
@@ -437,17 +507,21 @@ export async function getNote(slug: string): Promise<Note | null> {
 export async function bulkUpsertNotes(notes: Note[]): Promise<number> {
   if (!notes.length) return 0;
   await ensureDirs();
+  const pending = await getPendingDeletes();
   const idx = new Set(await getIndex());
   let wrote = 0;
 
   await mapPool(notes, WRITE_CONCURRENCY, async (note) => {
     const slug = note.scope?.slug;
     if (!slug) return;
+    // Local delete must win over a cloud pull until the door is cleared
+    if (pending.has(normalizeSlug(slug))) return;
     await writeJson(notePath(slug), note);
     idx.add(slug);
     wrote += 1;
   });
 
+  packGen += 1;
   await setIndex([...idx]);
   // Drop stale list snapshot, then rebuild from per-note files (parallel)
   invalidateNotesCacheDeep();
@@ -501,12 +575,12 @@ export async function putNote(
   const encrypted = !!payload.encrypted && !!payload.cipher;
 
   if (!encrypted && blankBlocks && blankAtts) {
-    await FileSystem.deleteAsync(notePath(slug), { idempotent: true }).catch(() => {});
-    const idx = (await getIndex()).filter((s) => s !== slug);
-    await setIndex(idx);
-    cacheRemove(slug);
+    await deleteNote(slug);
     return { deleted: true, slug };
   }
+
+  // Recreating / editing clears any pending cloud-delete tombstone
+  await clearPendingDelete(slug);
 
   const now = new Date().toISOString();
   const note: Note = {
@@ -534,6 +608,7 @@ export async function putNote(
     delete note.cipher;
   }
 
+  packGen += 1;
   await writeJson(notePath(slug), note);
   const idx = await getIndex();
   if (!idx.includes(slug)) {
@@ -545,20 +620,45 @@ export async function putNote(
   return note;
 }
 
-/** Remove a note from the local pack (file + index + memory cache). */
+/**
+ * Remove a note from the local pack (file + index + memory cache).
+ * Marks a pending cloud delete so quietSync cannot resurrect it until the
+ * door is cleared (see mirrorNoteIfCloud / flushPendingCloudDeletes).
+ */
 export async function deleteNote(slug: string): Promise<void> {
+  const s = normalizeSlug(slug) || slug;
   await ensureDirs();
-  await FileSystem.deleteAsync(notePath(slug), { idempotent: true }).catch(() => {});
-  const idx = (await getIndex()).filter((s) => s !== slug);
+  packGen += 1;
+  await markPendingDelete(s);
+  // Delete primary path + any case-variant filename that might linger
+  await FileSystem.deleteAsync(notePath(s), { idempotent: true }).catch(() => {});
+  if (s !== slug) {
+    await FileSystem.deleteAsync(notePath(slug), { idempotent: true }).catch(() => {});
+  }
+  const idx = (await getIndex()).filter(
+    (x) => normalizeSlug(x) !== normalizeSlug(s)
+  );
   await setIndex(idx);
   await setMeta({}); // touch updated_at
-  cacheRemove(slug);
+  cacheRemove(s);
+  // Also drop alternate casing from memory if present
+  if (notesBySlugCache && s !== slug) {
+    notesBySlugCache.delete(slug);
+    if (notesListCache) {
+      notesListCache = notesListCache.filter(
+        (n) => normalizeSlug(n.scope?.slug || "") !== normalizeSlug(s)
+      );
+    }
+  }
 }
 
 export async function upsertNoteRecord(note: Note): Promise<void> {
   const slug = note.scope?.slug;
   if (!slug) return;
+  if (await isPendingDelete(slug)) return;
   await ensureDirs();
+  packGen += 1;
+  await clearPendingDelete(slug);
   await writeJson(notePath(slug), note);
   const idx = await getIndex();
   if (!idx.includes(slug)) {

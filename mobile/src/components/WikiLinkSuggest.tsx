@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { WikiSuggestItem } from "../lib/wikiLink";
 import { useTheme } from "../context/ThemeContext";
 import { radius, space } from "../theme";
@@ -10,9 +10,12 @@ type Props = {
   onPick: (item: WikiSuggestItem) => void;
 };
 
+/** Cap height so the active outliner line stays on screen; scroll for the rest. */
+const MAX_LIST_HEIGHT = 3.5 * 44 + space[1];
+
 /**
  * Compact list for [[ autocomplete inside an outline row.
- * Visual cousin of home PassageSelector suggestions.
+ * Renders *below* the active line (parent places it); scrollable under keyboard.
  */
 export function WikiLinkSuggest({ items, onPick }: Props) {
   const { colors: c } = useTheme();
@@ -22,42 +25,55 @@ export function WikiLinkSuggest({ items, onPick }: Props) {
       style={[
         styles.wrap,
         {
-          backgroundColor: c.glass?.sugBg || c.fill,
-          borderColor: c.glass?.sugBorder || c.hairline,
+          backgroundColor: c.fill,
+          borderColor: c.hairline,
+          maxHeight: MAX_LIST_HEIGHT,
         },
       ]}
       accessibilityRole="list"
     >
-      {items.map((item, i) => (
-        <Pressable
-          key={`${item.kind}:${item.slug}:${i}`}
-          onPress={() => {
-            hapticSelect();
-            onPick(item);
-          }}
-          style={({ pressed }) => [
-            styles.row,
-            i > 0 && { borderTopColor: c.glass?.sugRowBorder || c.hairline, borderTopWidth: StyleSheet.hairlineWidth },
-            pressed && { backgroundColor: c.pressFill },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={`${item.label}${item.kind === "note" ? ", note" : ", passage"}`}
-        >
-          <View style={styles.main}>
-            <Text style={[styles.label, { color: c.ink }]} numberOfLines={1}>
-              {item.label}
-            </Text>
-            {item.detail ? (
-              <Text style={[styles.detail, { color: c.muted }]} numberOfLines={1}>
-                {item.detail}
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
+        nestedScrollEnabled
+        bounces={items.length > 3}
+        showsVerticalScrollIndicator={items.length > 3}
+        style={styles.scroll}
+      >
+        {items.map((item, i) => (
+          <Pressable
+            key={`${item.kind}:${item.slug}:${i}`}
+            onPress={() => {
+              hapticSelect();
+              onPick(item);
+            }}
+            style={({ pressed }) => [
+              styles.row,
+              i > 0 && {
+                borderTopColor: c.hairline,
+                borderTopWidth: StyleSheet.hairlineWidth,
+              },
+              pressed && { backgroundColor: c.pressFill },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.label}${item.kind === "note" ? ", note" : ", passage"}`}
+          >
+            <View style={styles.main}>
+              <Text style={[styles.label, { color: c.ink }]} numberOfLines={1}>
+                {item.label}
               </Text>
-            ) : null}
-          </View>
-          <Text style={[styles.kind, { color: c.faint }]}>
-            {item.kind === "note" ? "note" : "ref"}
-          </Text>
-        </Pressable>
-      ))}
+              {item.detail ? (
+                <Text style={[styles.detail, { color: c.muted }]} numberOfLines={1}>
+                  {item.detail}
+                </Text>
+              ) : null}
+            </View>
+            <Text style={[styles.kind, { color: c.faint }]}>
+              {item.kind === "note" ? "note" : "ref"}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -67,7 +83,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
+    // Below the active line — small gap from the caret row
+    marginTop: space[1],
     marginBottom: space[1],
+  },
+  scroll: {
+    maxHeight: MAX_LIST_HEIGHT,
   },
   row: {
     flexDirection: "row",

@@ -29,6 +29,7 @@ import {
   type TreeNode,
 } from "@/src/lib/noteTree";
 import * as Local from "@/src/lib/localPack";
+import { mirrorNoteIfCloud } from "@/src/lib/cloudSync";
 import { resolveLocal, suggestLocal } from "@/src/lib/resolveLocal";
 import { resolveWikiNav, wikiReaderHref } from "@/src/lib/wikiLink";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -130,13 +131,20 @@ export default function HomeScreen() {
               try {
                 closeOpenSwipe();
                 await Local.deleteNote(leaf.slug);
+                // Clear door copy when sync is on — otherwise quietSync re-pulls the note
+                mirrorNoteIfCloud(leaf.slug).catch(() => {});
                 // subscribeNoteChanges also applies; keep local filter snappy
                 const list = Local.peekNotes();
                 if (list) applyNotes(list);
                 else {
                   notesEpochRef.current = Local.getNotesCacheEpoch();
                   notesFpRef.current = "";
-                  setNotes((prev) => prev.filter((n) => n.scope?.slug !== leaf.slug));
+                  setNotes((prev) =>
+                    prev.filter(
+                      (n) =>
+                        (n.scope?.slug || "").toLowerCase() !== leaf.slug.toLowerCase()
+                    )
+                  );
                 }
                 hapticSuccess();
               } catch (e) {
@@ -569,6 +577,11 @@ export default function HomeScreen() {
             const isBook = f.level === "book";
             const a11y = f.accessibilityLabel || f.label;
             const noteWord = f.noteCount === 1 ? "note" : "notes";
+            // Tree ids: `ch:{book}.{n}` → open projected reader for that chapter
+            const chapterSlug =
+              f.level === "chapter" && f.id.startsWith("ch:")
+                ? f.id.slice(3).toLowerCase()
+                : null;
             return (
               <Pressable
                 style={({ pressed }) => [
@@ -581,12 +594,29 @@ export default function HomeScreen() {
                   !isBook && pressed && styles.folderChapterPressed,
                 ]}
                 onPress={() => toggle(f.id)}
+                delayLongPress={380}
+                onLongPress={
+                  chapterSlug
+                    ? () => {
+                        hapticSelect();
+                        pushOnce(router, `/read/${encodeURIComponent(chapterSlug)}`);
+                      }
+                    : undefined
+                }
                 accessibilityRole="button"
                 accessibilityState={{ expanded: !isCol }}
                 accessibilityLabel={`${a11y}, ${f.noteCount} ${noteWord}, ${
                   isCol ? "collapsed" : "expanded"
                 }`}
-                accessibilityHint={isCol ? "Expands section" : "Collapses section"}
+                accessibilityHint={
+                  chapterSlug
+                    ? isCol
+                      ? "Expands section. Long press opens this chapter in the reader."
+                      : "Collapses section. Long press opens this chapter in the reader."
+                    : isCol
+                      ? "Expands section"
+                      : "Collapses section"
+                }
               >
                 <Text
                   style={isBook ? styles.folderTitleBook : styles.folderTitleChapter}

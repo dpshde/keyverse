@@ -129,6 +129,10 @@ export async function enableCloudAndSync(
 
   const client = new KeyverseClient({ host: hostN, door });
   await client.protocol(); // verify
+
+  // Flush local deletes to the door FIRST so a subsequent pull cannot resurrect them
+  await flushPendingCloudDeletes(client);
+
   // Push local → cloud
   const localNotes = await Local.listNotes();
   let pushed = 0;
@@ -170,13 +174,15 @@ export async function enableCloudAndSync(
     pushed++;
   }
 
-  // Pull cloud → local (union): fetch notes in parallel, bulk-write once
+  // Pull cloud → local (union): fetch notes in parallel, bulk-write once.
+  // bulkUpsertNotes skips pending-delete slugs as a second line of defense.
   const remote = await client.listNotes();
   const fullNotes: Note[] = (
     await Promise.all(
       remote.map(async (rn) => {
         const slug = rn.scope?.slug;
         if (!slug) return null;
+        if (await Local.isPendingDelete(slug)) return null;
         return client.getNote(slug).catch(() => rn);
       })
     )
@@ -233,16 +239,51 @@ export async function syncNow(): Promise<SyncResult> {
 }
 
 /**
- * After local note save, optionally mirror to cloud immediately.
+ * Empty PUT clears a note on the door (PROTOCOL: blank blocks + no attachments).
+ */
+async function cloudDeleteNote(client: KeyverseClient, slug: string): Promise<void> {
+  await client.putNote(slug, { blocks: [], attachments: [] });
+  await Local.clearPendingDelete(slug);
+}
+
+/** Push every pending local delete to the door; keep tombstones for failures. */
+async function flushPendingCloudDeletes(client: KeyverseClient): Promise<void> {
+  const pending = await Local.listPendingDeletes();
+  for (const slug of pending) {
+    try {
+      await cloudDeleteNote(client, slug);
+    } catch {
+      /* stay pending — next sync retries */
+    }
+  }
+}
+
+/**
+ * After local note save/delete, optionally mirror to cloud immediately.
+ * Missing local note → empty PUT (delete on door) so quietSync cannot resurrect it.
  */
 export async function mirrorNoteIfCloud(slug: string): Promise<void> {
   const meta = await Local.getMeta();
-  if (!meta.cloud?.enabled || !meta.cloud.door) return;
-  const note = await Local.getNote(slug);
-  if (!note) return;
+  if (!meta.cloud?.enabled || !meta.cloud.door) {
+    // Local-only: no door to clear — drop pending tombstone so it doesn't stick forever
+    if (!(await Local.getNote(slug))) {
+      await Local.clearPendingDelete(slug);
+    }
+    return;
+  }
   const client = new KeyverseClient({ host: meta.cloud.host, door: meta.cloud.door });
+  const note = await Local.getNote(slug);
+  if (!note) {
+    try {
+      await cloudDeleteNote(client, slug);
+    } catch {
+      /* pending delete kept for next quietSync */
+    }
+    return;
+  }
   if (note.encrypted && note.cipher) {
     await client.putNote(slug, { encrypted: true, cipher: note.cipher });
+    await Local.clearPendingDelete(slug);
     return;
   }
   const atts = (note.attachments || []) as Attachment[];
@@ -264,4 +305,5 @@ export async function mirrorNoteIfCloud(slug: string): Promise<void> {
     }
   }
   await client.putNote(slug, { blocks: note.blocks, attachments: atts });
+  await Local.clearPendingDelete(slug);
 }

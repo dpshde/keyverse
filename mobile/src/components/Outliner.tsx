@@ -467,18 +467,15 @@ export const Outliner = React.memo(function Outliner({
   // Empty-state hint only — not on every blank row after Enter ("Write Write Write…").
   const soloEmpty =
     blocks.length === 1 && !(blocks[0]?.text || "").trim();
-  const wikiBlockId = wikiOpenRef.current?.blockId ?? null;
+  // State mirror of open row so list placement re-renders with wikiItems
+  const wikiBlockId =
+    wikiItems.length > 0 ? wikiOpenRef.current?.blockId ?? null : null;
   const showWiki = editable && wikiItems.length > 0 && wikiBlockId != null;
 
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
       {blocks.map((b) => (
         <View key={b.id}>
-          {showWiki && wikiBlockId === b.id ? (
-            <View style={{ marginLeft: (b.indent | 0) * indentStep + 14 }}>
-              <WikiLinkSuggest items={wikiItems} onPick={pickWiki} />
-            </View>
-          ) : null}
           <BlockRow
             id={b.id}
             text={b.text || ""}
@@ -494,6 +491,15 @@ export const Outliner = React.memo(function Outliner({
             onSubmitEditing={onRowSubmit}
             setRowRef={setRowRef}
           />
+          {/*
+            Suggestions sit *below* the active line so typing stays visible
+            above the keyboard. List scrolls if it extends under the keys.
+          */}
+          {showWiki && wikiBlockId === b.id ? (
+            <View style={{ marginLeft: (b.indent | 0) * indentStep + 14 }}>
+              <WikiLinkSuggest items={wikiItems} onPick={pickWiki} />
+            </View>
+          ) : null}
         </View>
       ))}
       {editable ? (
