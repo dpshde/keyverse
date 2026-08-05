@@ -1,14 +1,15 @@
 /**
  * Scripture strip above the note outliner (web `.passage-strip`).
  * Verse / range scopes only — chapter notes omit the strip (full chapter is the reader).
- * Styled as a quote/block so it reads as scripture, not as another note card.
+ * Bare on paper: no chip, rail, kicker, italic, or heavy fontWeight.
+ * Presence = display scale + full ink + open leading (reader vocabulary, turned up).
  */
 import { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { useSession } from "../context/SessionContext";
 import { useTheme } from "../context/ThemeContext";
 import { getChapter, peekChapter } from "../lib/textBundle";
-import { fontRead, fontUi, radius, space, type ThemeColors } from "../theme";
+import { fontRead, fontUi, space, type ThemeColors } from "../theme";
 
 export type PassageVerse = { v: number; text: string };
 
@@ -78,28 +79,18 @@ export function PassageStrip({ slug, label }: Props) {
   const showVerseNums = !(win.v0 === win.v1 && verses.length === 1);
 
   return (
-    <View
-      style={styles.strip}
-      accessibilityRole="text"
-      accessibilityLabel={a11y}
-    >
-      <View style={styles.rail} accessibilityElementsHidden />
-      <View style={styles.body}>
-        <Text style={styles.kicker}>
-          Scripture · {translation}
+    <View style={styles.strip} accessibilityRole="text" accessibilityLabel={a11y}>
+      {verses.map((row) => (
+        <Text key={row.v} style={styles.line}>
+          {showVerseNums ? (
+            <Text style={styles.vn}>
+              {row.v}
+              {"\u00A0"}
+            </Text>
+          ) : null}
+          <Text style={styles.vt}>{row.text}</Text>
         </Text>
-        {verses.map((row) => (
-          <Text key={row.v} style={styles.line}>
-            {showVerseNums ? (
-              <Text style={styles.vn}>
-                {row.v}
-                {"\u00A0"}
-              </Text>
-            ) : null}
-            <Text style={styles.vt}>{row.text}</Text>
-          </Text>
-        ))}
-      </View>
+      ))}
     </View>
   );
 }
@@ -124,59 +115,38 @@ function sliceVerses(
 function makeStyles(color: ThemeColors) {
   return StyleSheet.create({
     /**
-     * Quote block: soft field + left rail marks “this is scripture,”
-     * distinct from the raised note card below.
+     * Bare on paper. “Bolder” = larger regular serif + full ink + open leading —
+     * not fontWeight 600 (Georgia bold looks muddy at body sizes).
+     * Note card below stays 16 UI; this peaks above it as reading, not chrome.
      */
     strip: {
-      flexDirection: "row",
-      alignItems: "stretch",
-      backgroundColor: color.fill,
-      borderRadius: radius.md,
-      overflow: "hidden",
-      marginBottom: space[1],
-    },
-    rail: {
-      width: 3,
-      backgroundColor: color.ink,
-      opacity: 0.12,
-    },
-    body: {
-      flex: 1,
-      minWidth: 0,
-      paddingVertical: space[3],
-      paddingHorizontal: space[3],
+      paddingTop: space[1],
+      // Tight into NOTE — capture surface sits close under the verse
+      paddingBottom: space[1],
+      marginBottom: 0,
       gap: space[2],
     },
-    kicker: {
-      fontSize: 11,
-      fontWeight: "700",
-      letterSpacing: 0.6,
-      textTransform: "uppercase",
-      color: color.muted,
-      fontFamily: fontUi,
-      marginBottom: 2,
-    },
     line: {
-      fontSize: 18,
-      lineHeight: 28,
-      color: color.inkSoft,
+      fontSize: 22,
+      lineHeight: 34,
+      color: color.ink,
       fontFamily: fontRead,
     },
     vn: {
-      fontSize: 12,
-      fontWeight: "600",
+      fontSize: 13,
+      fontWeight: "500",
       color: color.verseNum,
       fontFamily: fontUi,
-      // Slight raise so the number reads as a verse mark, not body weight
-      lineHeight: 28,
+      lineHeight: 34,
     },
     vt: {
-      fontSize: 18,
-      lineHeight: 28,
-      color: color.inkSoft,
+      fontSize: 22,
+      lineHeight: 34,
+      // Regular — scale does the bold job
+      fontWeight: "400",
+      color: color.ink,
       fontFamily: fontRead,
-      // Quiet italic cues “quoted text” without fighting the note UI font
-      fontStyle: "italic",
+      letterSpacing: -0.35,
     },
   });
 }

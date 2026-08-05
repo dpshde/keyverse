@@ -610,7 +610,7 @@ export const Outliner = React.memo(function Outliner({
               onPress={() => indent(fi, 1)}
             />
             <ToolIcon
-              symbol="keyboard.chevron.down"
+              symbol="keyboard.chevron.compact.down"
               fallback="↓"
               label="Hide keyboard"
               compact
@@ -621,36 +621,40 @@ export const Outliner = React.memo(function Outliner({
         </View>
       ) : (
         <View style={[styles.tools, { borderTopColor: c.hairline }]}>
-          <View style={styles.toolsCluster}>
-            <ToolIcon
-              symbol="decrease.indent"
-              fallback="⇤"
-              label="Unnest"
-              onPress={() => indent(fi, -1)}
-            />
-            <ToolIcon
-              symbol="increase.indent"
-              fallback="⇥"
-              label="Nest"
-              onPress={() => indent(fi, 1)}
-            />
-            <ToolIcon
-              symbol="plus"
-              fallback="+"
-              label="Add line"
-              onPress={() => addAfter(fi)}
-            />
-            <ToolIcon
-              symbol="trash"
-              fallback="⌫"
-              label="Delete line"
-              onPress={() => removeAt(fi)}
-            />
-          </View>
           <ToolIcon
-            symbol="keyboard.chevron.down"
+            symbol="decrease.indent"
+            fallback="⇤"
+            label="Unnest"
+            fill
+            onPress={() => indent(fi, -1)}
+          />
+          <ToolIcon
+            symbol="increase.indent"
+            fallback="⇥"
+            label="Nest"
+            fill
+            onPress={() => indent(fi, 1)}
+          />
+          <ToolIcon
+            symbol="plus"
+            fallback="+"
+            label="Add line"
+            fill
+            onPress={() => addAfter(fi)}
+          />
+          <ToolIcon
+            symbol="trash"
+            fallback="⌫"
+            label="Delete line"
+            fill
+            onPress={() => removeAt(fi)}
+          />
+          <ToolIcon
+            // SF Symbol is keyboard.chevron.compact.down (not .chevron.down)
+            symbol="keyboard.chevron.compact.down"
             fallback="↓"
             label="Hide keyboard"
+            fill
             onPress={dismissKeyboard}
           />
         </View>
@@ -808,12 +812,15 @@ function ToolIcon({
   label,
   onPress,
   compact = false,
+  /** Equal-width flex cell — full-note toolbar spans card edge-to-edge. */
+  fill = false,
 }: {
   symbol: string;
   fallback: string;
   label: string;
   onPress: () => void;
   compact?: boolean;
+  fill?: boolean;
 }) {
   const { colors: c } = useTheme();
   return (
@@ -823,13 +830,13 @@ function ToolIcon({
         onPress();
       }}
       style={({ pressed }) => [
-        styles.toolIcon,
+        fill ? styles.toolIconFill : styles.toolIcon,
         compact && styles.toolIconCompact,
         pressed && { backgroundColor: c.pressFill },
       ]}
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={4}
+      hitSlop={fill ? 0 : 4}
     >
       <SymbolView
         name={symbol as any}
@@ -851,6 +858,8 @@ const styles = StyleSheet.create({
   wrapFill: {
     flex: 1,
     minHeight: 0,
+    width: "100%",
+    alignSelf: "stretch",
     gap: 0,
   },
   fillScroll: {
@@ -859,6 +868,7 @@ const styles = StyleSheet.create({
   },
   fillScrollContent: {
     flexGrow: 1,
+    paddingHorizontal: 12, // space[3] — keep lines inset while toolbar is full-bleed
     paddingBottom: 4,
     gap: 2,
   },
@@ -909,13 +919,13 @@ const styles = StyleSheet.create({
   viewTxt: { flex: 1, fontSize: 15, lineHeight: 22 },
   tools: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 8,
-    paddingTop: 6,
-    paddingBottom: 0,
+    alignItems: "stretch",
+    alignSelf: "stretch",
+    width: "100%",
+    flexShrink: 0,
+    margin: 0,
+    padding: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
-    gap: 4,
   },
   /** Compact tray: nest/unnest + trailing action on ONE row */
   toolsCompactRow: {
@@ -942,15 +952,29 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   toolIcon: {
-    width: 40,
-    height: 40,
+    height: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 10,
+    borderRadius: 0,
+  },
+  /**
+   * Equal share of the tools row (5 cells → full card width).
+   * flexBasis:0 is required so Pressable actually participates in the row.
+   */
+  toolIconFill: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 0,
   },
   toolIconCompact: {
     width: 40,
     height: 40,
+    borderRadius: 10,
   },
   toolGlyph: {
     transform: [{ translateY: -1 }],

@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   Share,
@@ -12,9 +11,16 @@ import {
   Text,
   TouchableWithoutFeedback,
   View,
+  type KeyboardEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "expo-symbols";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSession } from "@/src/context/SessionContext";
 import type { Attachment, Block, Note } from "@/src/api/types";
 import { hydrateBlocks } from "@/src/api/client";
@@ -31,6 +37,7 @@ import { mirrorNoteIfCloud } from "@/src/lib/cloudSync";
 import { displayScope, resolveLocal } from "@/src/lib/resolveLocal";
 import { passageShareUrls } from "@/src/lib/shareUrl";
 import { hapticError, hapticLight, hapticSelect } from "@/src/lib/haptics";
+import { keyboardMotionMs } from "@/src/lib/motion";
 import { useTheme } from "@/src/context/ThemeContext";
 import { pushOnce } from "@/src/lib/nav";
 import { radius, space, tapComfy, type ThemeColors } from "@/src/theme";
@@ -61,6 +68,44 @@ export default function NoteScreen() {
   const { passphrase, hasPassphrase, cloudEnabled, cloudHost, cloudDoor } = useSession();
   const router = useRouter();
   const navigation = useNavigation();
+
+  /**
+   * Keyboard lift — Reanimated bottom pad so the flex outliner compresses/expands
+   * with the system keyboard (not KeyboardAvoidingView’s abrupt jump).
+   * restPad stays on the home indicator; kbLift is keyboard height above it.
+   */
+  // Tight above home indicator — attach/globe sit close to the bottom.
+  const restPad = Math.max(insets.bottom, space[2]) + space[1];
+  const kbLift = useSharedValue(0);
+  const bodyKbStyle = useAnimatedStyle(() => ({
+    paddingBottom: restPad + kbLift.value,
+  }));
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const run = (kb: number, e?: KeyboardEvent) => {
+      const sysMs =
+        Platform.OS === "ios" && e?.duration != null && e.duration > 0 ? e.duration : null;
+      const duration = keyboardMotionMs(sysMs, kb > 0);
+      // Keyboard frame is from screen bottom; restPad already covers home indicator.
+      const lift = kb > 0 ? Math.max(0, kb - insets.bottom) : 0;
+      kbLift.value = withTiming(lift, {
+        duration,
+        easing: kb > 0 ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      });
+    };
+
+    const onShow = (e: KeyboardEvent) => run(e.endCoordinates?.height ?? 0, e);
+    const onHide = (e: KeyboardEvent) => run(0, e);
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      subShow.remove();
+      subHide.remove();
+    };
+  }, [insets.bottom, kbLift]);
   // Cache-first: paint from memory so reader → full note never blanks
   const seedNote = Local.peekNote(slug);
   const [busy, setBusy] = useState(() => seedNote == null);
@@ -416,22 +461,11 @@ export default function NoteScreen() {
       : "Public on your door. Anyone with your sync key can read this. Double tap to lock private.";
 
   return (
-    <KeyboardAvoidingView
-      style={ui.screen}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={88}
-    >
+    <View style={ui.screen}>
       <HeaderContentFade />
       {/* Non-interactive taps (verse, paper, labels) dismiss keyboard; controls keep focus. */}
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View
-          style={[
-            styles.body,
-            {
-              paddingBottom: Math.max(insets.bottom, space[3]) + space[4],
-            },
-          ]}
-        >
+        <Animated.View style={[styles.body, bodyKbStyle]}>
           {/* Scripture first — ref lives in the nav title; strip is the reading layer */}
           <PassageStrip slug={slug} label={pageTitle} />
 
@@ -446,7 +480,7 @@ export default function NoteScreen() {
               <Text style={styles.noteLabel} accessibilityRole="header">
                 Note
               </Text>
-              {/* Capture surface under scripture — fills leftover Y, tools at card foot */}
+              {/* Capture surface — flex shrinks/grows as kbLift animates body padding */}
               <View style={styles.editorCard}>
                 <Outliner
                   fill
@@ -502,9 +536,9 @@ export default function NoteScreen() {
               </View>
             </>
           )}
-        </View>
+        </Animated.View>
       </TouchableWithoutFeedback>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -530,7 +564,7 @@ function makeNoteStyles(color: ThemeColors) {
       letterSpacing: 0.4,
       textTransform: "uppercase",
       color: color.muted,
-      marginTop: space[1],
+      marginTop: 0,
       marginBottom: 2,
     },
     /**
@@ -540,13 +574,16 @@ function makeNoteStyles(color: ThemeColors) {
     editorCard: {
       flex: 1,
       minHeight: 160,
+      alignSelf: "stretch",
+      width: "100%",
       backgroundColor: color.paperRaised,
       borderRadius: radius.lg,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: color.line,
-      paddingHorizontal: space[3],
-      paddingTop: space[3],
-      paddingBottom: space[2],
+      // No horizontal pad — Outliner pads lines; toolbar bleeds full card width
+      paddingHorizontal: 0,
+      paddingTop: space[2],
+      paddingBottom: 0,
       overflow: "hidden",
       // Slight lift so the note field is clearly “on” the paper field
       shadowColor: "#000",
@@ -555,14 +592,14 @@ function makeNoteStyles(color: ThemeColors) {
       shadowOffset: { width: 0, height: 2 },
       elevation: 1,
     },
-    /** Attach (left) + privacy icon (right) — roomy strip above home indicator. */
+    /** Attach (left) + privacy icon (right) — tight above home indicator. */
     footer: {
       flexShrink: 0,
       flexDirection: "row",
       alignItems: "center",
       gap: space[2],
-      paddingTop: space[2],
-      minHeight: tapComfy + space[2],
+      paddingTop: space[1],
+      minHeight: tapComfy,
     },
     footerMain: {
       flex: 1,
