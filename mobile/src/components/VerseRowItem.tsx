@@ -1,9 +1,13 @@
 import React, { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 import type { Attachment, Block, Note } from "../api/types";
 import { hydrateBlocks } from "../api/client";
 import { useTheme } from "../context/ThemeContext";
 import { InlineMarkdown } from "../lib/inlineMarkdown";
+import { resolveWikiNav, wikiReaderHref } from "../lib/wikiLink";
+import { pushOnce } from "../lib/nav";
+import { hapticSelect } from "../lib/haptics";
 import { InlineNoteEditor } from "./InlineNoteEditor";
 import { radius, space } from "../theme";
 
@@ -75,6 +79,7 @@ export const VerseRowItem = React.memo(function VerseRowItem({
   setVerseRef,
 }: Props) {
   const { colors: c, type } = useTheme();
+  const router = useRouter();
   const verseLocked = !!(note?.encrypted && !blocks?.length);
 
   const onPress = useCallback(() => onPressVerse(item.v), [onPressVerse, item.v]);
@@ -82,6 +87,15 @@ export const VerseRowItem = React.memo(function VerseRowItem({
   const setRef = useCallback(
     (n: View | null) => setVerseRef(item.v, n),
     [setVerseRef, item.v]
+  );
+  const onWikiPress = useCallback(
+    (target: string) => {
+      const nav = resolveWikiNav(target);
+      if (!nav.ok || !nav.slug) return;
+      hapticSelect();
+      pushOnce(router, wikiReaderHref(nav.slug));
+    },
+    [router]
   );
 
   const previewText = expandPreview
@@ -146,6 +160,7 @@ export const VerseRowItem = React.memo(function VerseRowItem({
                 <InlineMarkdown
                   text={previewText}
                   style={[styles.previewTxt, { color: c.inkSoft }]}
+                  onWikiPress={onWikiPress}
                 />
               ) : note?.encrypted ? (
                 <Text style={[styles.previewMuted, { color: c.muted }]}>Encrypted note</Text>

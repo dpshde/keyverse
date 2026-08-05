@@ -44,6 +44,7 @@ import {
 import { Chevron } from "@/src/components/Chevron";
 import { CountPill } from "@/src/components/CountPill";
 import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
+import { resolveWikiNav, wikiReaderHref } from "@/src/lib/wikiLink";
 import { radius, space, type ThemeColors } from "@/src/theme";
 import { hapticLight, hapticSelect } from "@/src/lib/haptics";
 import { pushOnce } from "@/src/lib/nav";
@@ -906,6 +907,7 @@ function OutlinePreviewRow({
   styles: ReturnType<typeof makeStyles>;
   color: ThemeColors;
 }) {
+  const router = useRouter();
   const isAdd = row.type === "add";
   const isDel = row.type === "del";
   const { addInk, delInk } = diffInks(color);
@@ -940,6 +942,12 @@ function OutlinePreviewRow({
                 : null),
             },
           ]}
+          onWikiPress={(target) => {
+            const nav = resolveWikiNav(target);
+            if (!nav.ok || !nav.slug) return;
+            hapticSelect();
+            pushOnce(router, wikiReaderHref(nav.slug));
+          }}
         />
       </View>
     </View>

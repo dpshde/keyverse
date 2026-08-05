@@ -9,7 +9,7 @@ function escHtml(s) {
   });
 }
 
-/** Client twin of formatBlockText (wiki via /go; no attachment embeds in editor). */
+/** Client twin of formatBlockText (wiki → /go → /read; optional |label). */
 function formatBlockHtml(text) {
   var s = String(text == null ? "" : text);
   var i = 0, out = "";
@@ -45,9 +45,10 @@ function formatBlockHtml(text) {
         var winner = s.slice(i + 2, we);
         var wpipe = winner.indexOf("|");
         var wt = (wpipe < 0 ? winner : winner.slice(0, wpipe)).trim();
+        // Prefer explicit |label; else author target (often natural language)
         var wlab = wpipe < 0 ? wt : (winner.slice(wpipe + 1).trim() || wt);
-        out += '<a class="wikilink" href="' + base + "/go?q=" + encodeURIComponent(wt) + '">' +
-          escHtml(wlab) + "</a>";
+        out += '<a class="wikilink" href="' + base + "/go?q=" + encodeURIComponent(wt) +
+          '" data-wiki="' + escHtml(wt) + '">' + escHtml(wlab) + "</a>";
         i = we + 2; continue;
       }
     }
@@ -152,68 +153,241 @@ function mountOutliner(host, opts) {
   let blurTimer = null;
   let alive = true;
 
+  // [[ wiki autocomplete: passage suggest + pack notes (body scan)
+  let wikiNotesCache = null;
+  let wikiNotesInflight = null;
+  let wikiTimer = null;
+  let wikiOpen = null; // { blockId, start, end, query }
+  let wikiItems = [];
+  let wikiHi = -1;
+  const wikiPop = document.createElement("ul");
+  wikiPop.className = "wiki-suggest";
+  wikiPop.setAttribute("role", "listbox");
+  wikiPop.hidden = true;
+  document.body.appendChild(wikiPop);
+
+  function ensureWikiNotes() {
+    if (wikiNotesCache) return Promise.resolve(wikiNotesCache);
+    if (wikiNotesInflight) return wikiNotesInflight;
+    var base = typeof BASE === "string" ? BASE : "";
+    wikiNotesInflight = fetch(base + "/api/notes", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (list) {
+        wikiNotesCache = Array.isArray(list) ? list : [];
+        wikiNotesInflight = null;
+        return wikiNotesCache;
+      })
+      .catch(function () {
+        wikiNotesCache = [];
+        wikiNotesInflight = null;
+        return wikiNotesCache;
+      });
+    return wikiNotesInflight;
+  }
+
+  function findOpenWiki(text, caret) {
+    var t = String(text || "");
+    var c = Math.max(0, Math.min(caret | 0, t.length));
+    var i = c - 1;
+    var openAt = -1;
+    while (i >= 0) {
+      if (t[i] === "]" && i > 0 && t[i - 1] === "]") break;
+      if (t[i] === "[" && i > 0 && t[i - 1] === "[") {
+        if (i >= 2 && t[i - 2] === "!") { i -= 2; continue; }
+        openAt = i - 1;
+        break;
+      }
+      if (t[i] === "\n") break;
+      i--;
+    }
+    if (openAt < 0) return null;
+    var between = t.slice(openAt + 2, c);
+    if (between.indexOf("]]") >= 0 || between.indexOf("\n") >= 0) return null;
+    var pipe = between.indexOf("|");
+    if (pipe >= 0) return null; // label half — no target suggest
+    return { start: openAt, end: c, query: between };
+  }
+
+  function notePreviewBlob(n) {
+    if (!n || n.encrypted) return "";
+    var parts = [];
+    var blocksN = n.blocks || [];
+    for (var bi = 0; bi < blocksN.length; bi++) {
+      var tx = (blocksN[bi].text || "").trim();
+      if (tx) parts.push(tx);
+      if (parts.join(" ").length > 2000) break;
+    }
+    return parts.join(" ");
+  }
+
+  function hideWikiSuggest() {
+    wikiOpen = null;
+    wikiItems = [];
+    wikiHi = -1;
+    wikiPop.hidden = true;
+    wikiPop.innerHTML = "";
+  }
+
+  function positionWikiPop(el) {
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    wikiPop.style.position = "fixed";
+    wikiPop.style.left = Math.max(8, r.left) + "px";
+    wikiPop.style.width = Math.min(360, Math.max(220, r.width)) + "px";
+    wikiPop.style.top = (r.bottom + 4) + "px";
+    wikiPop.style.zIndex = "80";
+  }
+
+  function renderWikiPop() {
+    if (!wikiItems.length || !wikiOpen) {
+      wikiPop.hidden = true;
+      wikiPop.innerHTML = "";
+      return;
+    }
+    wikiPop.innerHTML = wikiItems.map(function (it, idx) {
+      return '<li role="option" aria-selected="' + (idx === wikiHi ? "true" : "false") +
+        '" data-i="' + idx + '"><button type="button" class="wiki-sug-btn">' +
+        '<span class="wiki-sug-label">' + escHtml(it.label) + '</span>' +
+        (it.detail ? '<span class="wiki-sug-detail">' + escHtml(it.detail) + '</span>' : '') +
+        '<span class="wiki-sug-kind">' + escHtml(it.kind) + '</span></button></li>';
+    }).join("");
+    wikiPop.hidden = false;
+  }
+
+  function applyWikiItem(item) {
+    if (!wikiOpen || !item) return;
+    var bi = indexOfId(wikiOpen.blockId);
+    if (bi < 0) return;
+    var text = blocks[bi].text || "";
+    var open = findOpenWiki(text, wikiOpen.end) || wikiOpen;
+    var before = text.slice(0, open.start);
+    var after = text.slice(open.end);
+    var close = after.indexOf("]]");
+    if (close >= 0 && after.slice(0, close).indexOf("\n") < 0) after = after.slice(close + 2);
+    var insert = item.insertText;
+    blocks[bi].text = before + insert + after;
+    hideWikiSuggest();
+    render(blocks[bi].id, before.length + insert.length);
+    scheduleSave();
+  }
+
+  function scheduleWikiSuggest(el) {
+    if (wikiTimer) clearTimeout(wikiTimer);
+    if (!el || !el.isContentEditable) { hideWikiSuggest(); return; }
+    var row = el.closest(".oblock");
+    if (!row) { hideWikiSuggest(); return; }
+    var text = (el.textContent || "").replace(/\u00a0/g, " ");
+    var caret = caretOffset(el);
+    var open = findOpenWiki(text, caret);
+    if (!open) { hideWikiSuggest(); return; }
+    wikiOpen = { blockId: row.dataset.id, start: open.start, end: open.end, query: open.query };
+    positionWikiPop(el);
+    wikiTimer = setTimeout(function () {
+      var q = (wikiOpen && wikiOpen.query) || "";
+      var base = typeof BASE === "string" ? BASE : "";
+      var passageP = q.trim().length
+        ? fetch(base + "/api/suggest?q=" + encodeURIComponent(q.trim()) + "&limit=6", { credentials: "same-origin" })
+            .then(function (r) { return r.ok ? r.json() : { suggestions: [] }; })
+            .then(function (d) { return (d && d.suggestions) || []; })
+            .catch(function () { return []; })
+        : Promise.resolve([]);
+      Promise.all([passageP, ensureWikiNotes()]).then(function (pair) {
+        if (!wikiOpen) return;
+        var pass = pair[0] || [];
+        var notes = pair[1] || [];
+        var seen = {};
+        var items = [];
+        function push(it) {
+          var k = (it.slug || it.label || "").toLowerCase();
+          if (!k || seen[k]) return;
+          seen[k] = 1;
+          items.push(it);
+        }
+        for (var pi = 0; pi < pass.length; pi++) {
+          var s = pass[pi];
+          var lab = s.label || s.insertText || s.canonical;
+          push({
+            kind: "ref",
+            label: lab,
+            detail: s.kind || "passage",
+            insertText: "[[" + lab + "]]",
+            slug: s.canonical || ""
+          });
+        }
+        var ql = q.trim().toLowerCase();
+        var ranked = [];
+        for (var ni = 0; ni < notes.length; ni++) {
+          var n = notes[ni];
+          var slug = (n.scope && n.scope.slug) || "";
+          if (!slug) continue;
+          var blob = notePreviewBlob(n);
+          if (!blob && !n.encrypted) continue;
+          var label = slug;
+          try {
+            // Prefer human label from OSIS when possible
+            if (typeof formatPassageForDisplay === "function" && n.scope) {
+              /* server-side only — skip in browser */
+            }
+          } catch (e) {}
+          // Client: use slug as label fallback; suggest API already covers friendly refs
+          var score = 0;
+          var slugL = slug.toLowerCase();
+          var bodyL = blob.toLowerCase();
+          if (!ql) score = 10;
+          else if (slugL === ql) score = 100;
+          else if (slugL.indexOf(ql) === 0) score = 80;
+          else if (slugL.indexOf(ql) >= 0) score = 60;
+          else if (bodyL.indexOf(ql) >= 0) score = 40;
+          else continue;
+          var prev = blob.replace(/\s+/g, " ").trim();
+          if (prev.length > 72) prev = prev.slice(0, 71) + "\u2026";
+          ranked.push({
+            score: score,
+            updated: Date.parse(n.updated_at || "") || 0,
+            item: {
+              kind: "note",
+              label: slug,
+              detail: n.encrypted ? "Encrypted" : (prev || "Note"),
+              insertText: "[[" + slug + "]]",
+              slug: slug
+            }
+          });
+        }
+        ranked.sort(function (a, b) { return b.score - a.score || b.updated - a.updated; });
+        for (var ri = 0; ri < ranked.length && items.length < 8; ri++) {
+          var it = ranked[ri].item;
+          if (seen[it.slug.toLowerCase()]) {
+            // upgrade passage → note
+            for (var ui = 0; ui < items.length; ui++) {
+              if ((items[ui].slug || "").toLowerCase() === it.slug.toLowerCase()) {
+                items[ui] = it;
+                break;
+              }
+            }
+          } else push(it);
+        }
+        wikiItems = items.slice(0, 8);
+        wikiHi = wikiItems.length ? 0 : -1;
+        renderWikiPop();
+      });
+    }, 100);
+  }
+
   const shell = document.createElement("div");
   shell.className = "outliner-shell" + (compact ? " compact" : "");
   host.replaceWith(shell);
   shell.appendChild(host);
 
   const toolbar = document.createElement("div");
-  toolbar.className = "otoolbar outline-dock" + (compact ? " is-reader-dock" : "");
-  toolbar.setAttribute("role", "toolbar");
-  toolbar.setAttribute("aria-label", compact ? "Note outline tools" : "Outline tools");
-  // Compact (reader tray): Nav swaps back to the chapter dock — never stack both bars.
-  const navBtn = compact
-    ? '<button type="button" class="otool-btn" data-act="nav" aria-label="Chapter navigation">' +
-        '<span class="otool-ico" aria-hidden="true"><i class="ph ph-compass"></i></span>' +
-        '<span class="otool-lbl">Nav</span></button>'
-    : "";
+  toolbar.className = "otoolbar";
   toolbar.innerHTML =
-    navBtn +
     '<button type="button" class="otool-btn" data-act="outdent" aria-label="Unnest">' +
-      '<span class="otool-ico" aria-hidden="true"><i class="ph ph-text-outdent"></i></span>' +
-      '<span class="otool-lbl">Unnest</span></button>' +
+      '<span class="otool-ico" aria-hidden="true">⇤</span>unnest</button>' +
     '<button type="button" class="otool-btn" data-act="indent" aria-label="Nest">' +
-      '<span class="otool-ico" aria-hidden="true"><i class="ph ph-text-indent"></i></span>' +
-      '<span class="otool-lbl">Nest</span></button>' +
+      '<span class="otool-ico" aria-hidden="true">⇥</span>nest</button>' +
     '<button type="button" class="otool-btn" data-act="collapse" aria-label="Collapse or expand">' +
-      '<span class="otool-ico" aria-hidden="true"><i class="ph ph-caret-circle-down"></i></span>' +
-      '<span class="otool-lbl">Fold</span></button>';
-  // Compact reader dock MUST live on <body>. Nesting position:fixed under
-  // .verse.sel (isolation) / note chrome makes iOS park the bar mid-scroll.
-  if (compact) {
-    toolbar.setAttribute("data-kv-dock", "outline");
-    document.body.appendChild(toolbar);
-  } else {
-    shell.appendChild(toolbar);
-  }
-
-  /** Exclusive bottom dock: outline vs reader — only one visible. */
-  function claimOutlineDock() {
-    if (!compact || !alive) return;
-    document.querySelectorAll(".outliner-shell.compact.is-dock-active").forEach((el) => {
-      if (el !== shell) el.classList.remove("is-dock-active");
-    });
-    document.querySelectorAll(".otoolbar.outline-dock.is-reader-dock.is-dock-active").forEach((el) => {
-      if (el !== toolbar) el.classList.remove("is-dock-active");
-    });
-    shell.classList.add("is-dock-active");
-    toolbar.classList.add("is-dock-active");
-    document.body.dataset.dock = "outline";
-    try {
-      document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "outline" } }));
-    } catch (e) { /* ignore */ }
-  }
-  function releaseOutlineDock() {
-    if (!compact) return;
-    shell.classList.remove("is-dock-active");
-    toolbar.classList.remove("is-dock-active");
-    if (!document.querySelector(".outliner-shell.compact.is-dock-active")) {
-      document.body.dataset.dock = "reader";
-      try {
-        document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "reader" } }));
-      } catch (e) { /* ignore */ }
-    }
-  }
+      '<span class="otool-ico" aria-hidden="true">▾</span>fold</button>';
+  shell.appendChild(toolbar);
 
   const dropLine = document.createElement("div");
   dropLine.className = "odrop";
@@ -286,9 +460,9 @@ function mountOutliner(host, opts) {
   }
   /** Direct child count for fold pill (not ▸/▾). */
   function directChildCount(i) {
-    var base = blocks[i].indent;
-    var n = 0;
-    for (var j = i + 1; j < blocks.length; j++) {
+    const base = blocks[i].indent;
+    let n = 0;
+    for (let j = i + 1; j < blocks.length; j++) {
       if (blocks[j].indent <= base) break;
       if (blocks[j].indent === base + 1) n++;
     }
@@ -430,7 +604,7 @@ function mountOutliner(host, opts) {
       chev.tabIndex = -1;
       chev.setAttribute("aria-label", b.collapsed ? "Expand nested lines" : "Collapse nested lines");
       if (kids) {
-        var nKids = directChildCount(i);
+        const nKids = directChildCount(i);
         chev.textContent = String(nKids);
         chev.dataset.count = String(nKids);
       } else {
@@ -645,15 +819,6 @@ function mountOutliner(host, opts) {
 
   function applyIndent(delta) {
     syncFromDom();
-    // Prefer the focused row; fall back to last activeId
-    const ae = document.activeElement;
-    if (ae && host.contains(ae)) {
-      const row = ae.closest && ae.closest(".oblock");
-      if (row && row.dataset.id) activeId = row.dataset.id;
-    }
-    if (!selected && indexOfId(activeId) < 0 && blocks.length) {
-      activeId = blocks[0].id;
-    }
     pushHistory();
     if (selected) {
       const roots = selectionRoots();
@@ -668,11 +833,6 @@ function mountOutliner(host, opts) {
       return;
     }
     const i = activeIndex();
-    if (i < 0 || !blocks[i]) {
-      undoStack.pop();
-      refreshToolbar();
-      return;
-    }
     const focusEl = document.activeElement;
     const caret = (focusEl && focusEl.classList && focusEl.classList.contains("otext"))
       ? caretOffset(focusEl) : endOf({ textContent: blocks[i] ? blocks[i].text : "" });
@@ -854,57 +1014,25 @@ function mountOutliner(host, opts) {
     setNodeSelection(blocks[vis[0]].id, blocks[vis[vis.length - 1]].id);
   }
 
-  // toolbar — act on pointerdown. iOS Safari often suppresses the subsequent
-  // click when we preventDefault (needed to keep the caret / keyboard).
-  let toolbarArmed = false;
-  function runToolbarAct(act) {
-    if (!act) return;
-    if (act === "nav") {
-      releaseOutlineDock();
-      return;
-    }
-    // Capture row before any focus thrash
-    const ae = document.activeElement;
-    if (ae && host.contains(ae)) {
-      const row = ae.closest && ae.closest(".oblock");
-      if (row && row.dataset.id) activeId = row.dataset.id;
-    }
+  // toolbar
+  toolbar.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".otool-btn")) e.preventDefault();
+  });
+  toolbar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    const act = btn.dataset.act;
     if (act === "indent") applyIndent(1);
     else if (act === "outdent") applyIndent(-1);
     else if (act === "collapse") {
       syncFromDom();
       const i = activeIndex();
-      if (i >= 0 && toggleCollapsed(i)) {
+      if (toggleCollapsed(i)) {
         render(blocks[i].id, null);
         scheduleSave();
-      } else {
-        refreshToolbar();
       }
     }
-  }
-  toolbar.addEventListener("pointerdown", (e) => {
-    const btn = e.target.closest("[data-act]");
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    e.stopPropagation();
-    toolbarArmed = true;
-    runToolbarAct(btn.dataset.act);
-  });
-  toolbar.addEventListener("pointerup", () => {
-    // leave a tick so focusout blurTimer sees toolbar interaction
-    setTimeout(() => { toolbarArmed = false; }, 80);
-  });
-  toolbar.addEventListener("pointercancel", () => {
-    toolbarArmed = false;
-  });
-  toolbar.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-act]");
-    if (!btn) return;
-    e.preventDefault();
-    // Already handled on pointerdown (mobile + most desktop)
-    if (toolbarArmed) return;
-    if (btn.disabled) return;
-    runToolbarAct(btn.dataset.act);
   });
 
   host.addEventListener("click", (e) => {
@@ -936,7 +1064,6 @@ function mountOutliner(host, opts) {
     if (selected) {
       clearSelection();
     }
-    claimOutlineDock();
     const el = row.querySelector(".otext");
     if (el && !el.isContentEditable) {
       const id = row.dataset.id;
@@ -956,17 +1083,13 @@ function mountOutliner(host, opts) {
     if (next && (host.contains(next) || toolbar.contains(next))) return;
     // Defer: Enter/Tab destroy the node then focus a new one in the same turn.
     // relatedTarget is often null even when we are about to focus another row.
-    // Also skip while pressing nest/unnest (buttons don't take focus on iOS).
     if (blurTimer) clearTimeout(blurTimer);
     blurTimer = setTimeout(function () {
       blurTimer = null;
       if (rebuilding || !alive) return;
-      if (toolbarArmed) return;
       if (host.contains(document.activeElement)) return;
       if (toolbar.contains(document.activeElement)) return;
       syncFromDom();
-      // Keep last-focused id for toolbar, but leave edit chrome (view mode)
-      // when the keyboard is dismissed without an open toolbar press.
       const id = activeId;
       activeId = null;
       render(null);
@@ -1144,7 +1267,41 @@ function mountOutliner(host, opts) {
     if (b) b.text = e.target.textContent.replace(/ /g, " ");
     if (row) activeId = row.dataset.id;
     scheduleSave();
+    scheduleWikiSuggest(e.target);
   });
+
+  wikiPop.addEventListener("mousedown", (e) => {
+    // Prevent blur before click applies
+    e.preventDefault();
+  });
+  wikiPop.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-i]");
+    if (!li) return;
+    const idx = Number(li.dataset.i);
+    if (wikiItems[idx]) applyWikiItem(wikiItems[idx]);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!wikiOpen || !wikiItems.length || wikiPop.hidden) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      wikiHi = (wikiHi + 1) % wikiItems.length;
+      renderWikiPop();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      wikiHi = (wikiHi - 1 + wikiItems.length) % wikiItems.length;
+      renderWikiPop();
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      if (wikiHi >= 0 && wikiItems[wikiHi]) {
+        e.preventDefault();
+        e.stopPropagation();
+        applyWikiItem(wikiItems[wikiHi]);
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      hideWikiSuggest();
+    }
+  }, true);
 
   function enterNodeSelect(id) {
     setNodeSelection(id, id);
@@ -1487,14 +1644,10 @@ function mountOutliner(host, opts) {
     render(last.id, endOf({ textContent: last.text }));
   }
 
-  // Reader tray: take the bottom dock slot immediately (autofocus path).
-  if (compact) claimOutlineDock();
-
   return {
     focus() {
       const last = blocks[blocks.length - 1];
       render(last.id, endOf({ textContent: last.text }));
-      claimOutlineDock();
     },
     isEmpty() {
       syncFromDom();
@@ -1518,8 +1671,6 @@ function mountOutliner(host, opts) {
       clearTimeout(timer);
       clearTimeout(histTimer);
       if (blurTimer) clearTimeout(blurTimer);
-      releaseOutlineDock();
-      if (toolbar && toolbar.parentNode) toolbar.remove();
       host.innerHTML = "";
       host.classList.remove("outliner", "compact", "page", "selecting");
       if (shell.parentNode) {
@@ -1529,5 +1680,6 @@ function mountOutliner(host, opts) {
     },
   };
 }
+
 
 if (typeof mountOutliner === 'function') window.mountOutliner = mountOutliner;

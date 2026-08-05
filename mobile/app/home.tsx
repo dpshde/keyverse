@@ -30,6 +30,7 @@ import {
 } from "@/src/lib/noteTree";
 import * as Local from "@/src/lib/localPack";
 import { resolveLocal, suggestLocal } from "@/src/lib/resolveLocal";
+import { resolveWikiNav, wikiReaderHref } from "@/src/lib/wikiLink";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SymbolView } from "expo-symbols";
 import { NoteSwipeRow } from "@/src/components/NoteSwipeRow";
@@ -353,6 +354,16 @@ export default function HomeScreen() {
   );
   const homeKeyExtractor = useCallback((item: HomeRow) => item.key, []);
 
+  const onWikiPress = useCallback(
+    (target: string) => {
+      const nav = resolveWikiNav(target);
+      if (!nav.ok || !nav.slug) return;
+      hapticSelect();
+      pushOnce(router, wikiReaderHref(nav.slug));
+    },
+    [router]
+  );
+
   const renderNoteCard = useCallback(
     (leaf: TreeLeaf, depth: number) => (
       <NoteSwipeRow
@@ -389,7 +400,11 @@ export default function HomeScreen() {
             ) : null}
           </View>
           {leaf.preview ? (
-            <InlineMarkdown text={leaf.preview} style={styles.cardBody} />
+            <InlineMarkdown
+              text={leaf.preview}
+              style={styles.cardBody}
+              onWikiPress={onWikiPress}
+            />
           ) : leaf.encrypted ? (
             <Text style={styles.cardBodyMuted}>Encrypted — open with passphrase</Text>
           ) : (
@@ -398,7 +413,7 @@ export default function HomeScreen() {
         </Pressable>
       </NoteSwipeRow>
     ),
-    [closeOpenSwipe, deleteNote, onSwipeWillOpen, router, styles]
+    [closeOpenSwipe, deleteNote, onSwipeWillOpen, onWikiPress, router, styles]
   );
 
   return (

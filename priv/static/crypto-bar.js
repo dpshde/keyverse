@@ -9,8 +9,8 @@
     function refresh() {
       const on = VP_CRYPTO.hasPassphrase();
       status.textContent = on
-        ? "Encryption on — passphrase stays in this browser"
-        : "Optional encryption — set a passphrase to seal notes";
+        ? "Encryption on — notes save encrypted (passphrase never leaves this browser)"
+        : "Optional encryption off — set a passphrase to encrypt notes like cowyo";
       btnUnlock.hidden = on;
       btnSet.hidden = on;
       btnClear.hidden = !on;

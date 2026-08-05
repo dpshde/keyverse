@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -11,10 +11,19 @@ import {
   type TextInputSelectionChangeEventData,
 } from "react-native";
 import { SymbolView } from "expo-symbols";
-import type { Block } from "../api/types";
+import type { Block, Note } from "../api/types";
 import { newBlockId } from "../api/client";
 import { hapticLight, hapticSelect } from "../lib/haptics";
 import { useTheme } from "../context/ThemeContext";
+import * as Local from "../lib/localPack";
+import {
+  applyWikiSuggestion,
+  findOpenWikiLink,
+  suggestWikiTargets,
+  type OpenWiki,
+  type WikiSuggestItem,
+} from "../lib/wikiLink";
+import { WikiLinkSuggest } from "./WikiLinkSuggest";
 
 type Props = {
   blocks: Block[];
@@ -33,6 +42,10 @@ type Props = {
    * nest/unnest, not stacked below.
    */
   footerEnd?: ReactNode;
+  /**
+   * Pack notes for [[ note search. When omitted, Outliner warms local pack.
+   */
+  notes?: Note[] | null;
 };
 
 type Selection = { start: number; end: number };
@@ -53,6 +66,7 @@ export const Outliner = React.memo(function Outliner({
   onDirty,
   compact = false,
   footerEnd,
+  notes: notesProp,
 }: Props) {
   const { colors: c } = useTheme();
   const [focusId, setFocusId] = useState<string | null>(blocks[0]?.id ?? null);
@@ -73,6 +87,53 @@ export const Outliner = React.memo(function Outliner({
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
 
+  /** Notes for wiki FTS — prop wins; else warm local pack once. */
+  const [notesLocal, setNotesLocal] = useState<Note[] | null>(() =>
+    notesProp !== undefined ? notesProp : Local.peekNotes()
+  );
+  useEffect(() => {
+    if (notesProp !== undefined) {
+      setNotesLocal(notesProp);
+      return;
+    }
+    let cancelled = false;
+    if (!Local.peekNotes()) {
+      Local.listNotes().then((list) => {
+        if (!cancelled) setNotesLocal(list);
+      });
+    } else {
+      setNotesLocal(Local.peekNotes());
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [notesProp]);
+
+  const [wikiItems, setWikiItems] = useState<WikiSuggestItem[]>([]);
+  const wikiOpenRef = useRef<{ blockId: string; open: OpenWiki } | null>(null);
+  const wikiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const refreshWikiSuggest = useCallback(
+    (blockId: string, text: string, caret: number) => {
+      if (wikiTimer.current) clearTimeout(wikiTimer.current);
+      const open = findOpenWikiLink(text, caret);
+      if (!open || open.inLabel) {
+        wikiOpenRef.current = null;
+        setWikiItems([]);
+        return;
+      }
+      wikiOpenRef.current = { blockId, open };
+      wikiTimer.current = setTimeout(() => {
+        const items = suggestWikiTargets(open.query, notesLocal, 6);
+        // Re-check still open on same block
+        const cur = wikiOpenRef.current;
+        if (!cur || cur.blockId !== blockId) return;
+        setWikiItems(items);
+      }, 100);
+    },
+    [notesLocal]
+  );
+
   const commit = useCallback((next: Block[], opts?: { dirty?: boolean }) => {
     const clamped = clampIndents(next);
     blocksRef.current = clamped;
@@ -82,6 +143,35 @@ export const Outliner = React.memo(function Outliner({
       queueMicrotask(() => onDirtyRef.current?.());
     }
   }, []);
+
+  const pickWiki = useCallback(
+    (item: WikiSuggestItem) => {
+      const cur = wikiOpenRef.current;
+      if (!cur) return;
+      const list = blocksRef.current;
+      const i = list.findIndex((b) => b.id === cur.blockId);
+      if (i < 0) return;
+      const text = list[i].text || "";
+      // Re-detect open at last known caret for freshness
+      const caret = selectionById.current.get(cur.blockId)?.start ?? cur.open.end;
+      const open = findOpenWikiLink(text, caret) || cur.open;
+      if (open.inLabel) return;
+      const { text: nextText, caret: nextCaret } = applyWikiSuggestion(text, open, item);
+      const next = list.map((b, idx) => (idx === i ? { ...b, text: nextText } : b));
+      commit(next);
+      selectionById.current.set(cur.blockId, { start: nextCaret, end: nextCaret });
+      inputRefs.current.get(cur.blockId)?.setNativeProps?.({
+        text: nextText,
+        selection: { start: nextCaret, end: nextCaret },
+      });
+      wikiOpenRef.current = null;
+      setWikiItems([]);
+      requestAnimationFrame(() => {
+        inputRefs.current.get(cur.blockId)?.focus();
+      });
+    },
+    [commit]
+  );
 
   /** Focus a not-yet-mounted row after React commits it (new line only). */
   const requestFocusNew = useCallback((id: string, selection?: Selection) => {
@@ -317,18 +407,17 @@ export const Outliner = React.memo(function Outliner({
 
   const onSelectionChange = useCallback(
     (id: string, e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
-      selectionById.current.set(id, e.nativeEvent.selection);
+      const sel = e.nativeEvent.selection;
+      selectionById.current.set(id, sel);
+      const text = blocksRef.current.find((b) => b.id === id)?.text || "";
+      refreshWikiSuggest(id, text, sel.start);
     },
-    []
+    [refreshWikiSuggest]
   );
 
   const setRowRef = useCallback((id: string, r: TextInput | null) => {
     if (r) inputRefs.current.set(id, r);
     else inputRefs.current.delete(id);
-  }, []);
-
-  const onRowFocus = useCallback((id: string) => {
-    setFocusId(id);
   }, []);
 
   const onRowChangeText = useCallback(
@@ -343,16 +432,31 @@ export const Outliner = React.memo(function Outliner({
         }
         // Soft path that only injected "\n" (no key event).
         splitRow(id, t);
+        wikiOpenRef.current = null;
+        setWikiItems([]);
         return;
       }
       updateText(id, t);
+      const caret = selectionById.current.get(id)?.start ?? t.length;
+      refreshWikiSuggest(id, t, caret);
     },
-    [splitRow, updateText]
+    [splitRow, updateText, refreshWikiSuggest]
   );
+
+  const onRowFocus = useCallback((id: string) => {
+    setFocusId(id);
+    // Dismiss wiki list when focusing a different row without open token
+    if (wikiOpenRef.current && wikiOpenRef.current.blockId !== id) {
+      wikiOpenRef.current = null;
+      setWikiItems([]);
+    }
+  }, []);
 
   /** Primary Enter path when submitBehavior="submit" — no "\n" ever lands. */
   const onRowSubmit = useCallback(
     (id: string) => {
+      wikiOpenRef.current = null;
+      setWikiItems([]);
       splitRow(id);
     },
     [splitRow]
@@ -363,26 +467,34 @@ export const Outliner = React.memo(function Outliner({
   // Empty-state hint only — not on every blank row after Enter ("Write Write Write…").
   const soloEmpty =
     blocks.length === 1 && !(blocks[0]?.text || "").trim();
+  const wikiBlockId = wikiOpenRef.current?.blockId ?? null;
+  const showWiki = editable && wikiItems.length > 0 && wikiBlockId != null;
 
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
       {blocks.map((b) => (
-        <BlockRow
-          key={b.id}
-          id={b.id}
-          text={b.text || ""}
-          indent={b.indent | 0}
-          indentStep={indentStep}
-          compact={compact}
-          editable={editable}
-          placeholder={soloEmpty ? "Write…" : ""}
-          onChangeText={onRowChangeText}
-          onFocus={onRowFocus}
-          onSelectionChange={onSelectionChange}
-          onKeyPress={onKeyPress}
-          onSubmitEditing={onRowSubmit}
-          setRowRef={setRowRef}
-        />
+        <View key={b.id}>
+          {showWiki && wikiBlockId === b.id ? (
+            <View style={{ marginLeft: (b.indent | 0) * indentStep + 14 }}>
+              <WikiLinkSuggest items={wikiItems} onPick={pickWiki} />
+            </View>
+          ) : null}
+          <BlockRow
+            id={b.id}
+            text={b.text || ""}
+            indent={b.indent | 0}
+            indentStep={indentStep}
+            compact={compact}
+            editable={editable}
+            placeholder={soloEmpty ? "Write…" : ""}
+            onChangeText={onRowChangeText}
+            onFocus={onRowFocus}
+            onSelectionChange={onSelectionChange}
+            onKeyPress={onKeyPress}
+            onSubmitEditing={onRowSubmit}
+            setRowRef={setRowRef}
+          />
+        </View>
       ))}
       {editable ? (
         compact ? (

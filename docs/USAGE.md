@@ -206,11 +206,25 @@ Chapter note (if any) sits above the chapter text; click to edit.
 
 | Syntax | Meaning |
 |--------|---------|
-| `[[John 3:16]]` | Link to that note address |
+| `[[John 3:16]]` | Link to that passage address |
 | `[[jhn.3.16]]` | Same via slug |
-| `[[John 3:16\|label]]` | Custom label |
+| `[[John 3:16\|label]]` | Custom display label (useful when linking notes by meaning) |
 | `![[att:att_…]]` | Embed/link a file attachment on this note |
 | `![[https://example.com]]` | External URL |
+
+**Typing `[[` in the outliner** (mobile + web) opens a suggester:
+
+- **Passages / books** — same autocomplete style as the home search field
+- **Other notes** — matches slug, display name, and note body text (local pack scan)
+
+Accept inserts a complete `[[…]]` (natural-language target by default). Optional `|label` still works if you type it.
+
+**Clicking a wiki link** always opens the **reader** (not the bare note editor):
+
+| Target | Behavior |
+|--------|----------|
+| Passage only (no note file yet) | Reader scrolled / highlighted to that ref |
+| Note exists at that address | Reader scrolled there **with that note tray expanded** |
 
 Full rules: [PROTOCOL.md §4.1 and §5](../PROTOCOL.md).
 

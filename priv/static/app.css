@@ -936,6 +936,62 @@
   a.wikilink:hover, a.attlink:hover, a.md-link:hover {
     background: color-mix(in srgb, currentColor 6%, transparent);
   }
+  /* [[ autocomplete popup (outliner) */
+  .wiki-suggest {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 14rem;
+    overflow: auto;
+    background: var(--paper, #f7f6f2);
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: .55rem;
+    box-shadow: 0 8px 28px color-mix(in srgb, #000 12%, transparent);
+  }
+  .wiki-suggest[hidden] { display: none; }
+  .wiki-suggest li { margin: 0; }
+  .wiki-sug-btn {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: .1rem .65rem;
+    width: 100%;
+    text-align: left;
+    padding: .55rem .75rem;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .wiki-suggest li[aria-selected="true"] .wiki-sug-btn,
+  .wiki-sug-btn:hover {
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .wiki-sug-label {
+    grid-column: 1;
+    grid-row: 1;
+    font-weight: 600;
+    font-size: .92rem;
+  }
+  .wiki-sug-detail {
+    grid-column: 1;
+    grid-row: 2;
+    font-size: .78rem;
+    opacity: .62;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wiki-sug-kind {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-size: .68rem;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    opacity: .45;
+  }
   /* attachments — one quiet list + one add row */
   .att-board {
     margin: 1rem 0 0;

@@ -10,16 +10,6 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       let pickRangeEnd = false; // long-press started; next verse tap completes range
       // Ignore dismiss/click noise right after opening a passage note (drag/shift tail events).
       let suppressDismissUntil = 0;
-      let chapterNavBusy = false;
-      const textPrefetch = new Map(); // slug -> promise
-      // Exclusive bottom dock: "reader" (chapter tools) | "outline" (nest/unnest)
-      if (!document.body.dataset.dock) document.body.dataset.dock = "reader";
-      document.addEventListener("kv:dock-mode", (e) => {
-        const mode = e && e.detail && e.detail.mode;
-        if (mode === "outline" || mode === "reader") {
-          document.body.dataset.dock = mode;
-        }
-      });
       document.querySelector(".verse.hl")?.scrollIntoView({ block: "center" });
 
       function verseNum(el) {
@@ -33,20 +23,75 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       }
 
       function outlineHtml(blocks) {
-        // Reader trays: always show the full outline. Collapse is editor-only;
-        // the verse tray itself is the open/closed control.
         const items = blocks || [];
         if (!items.length) return "";
-        return '<div class="outline">' + items.map((b) => {
+        const hidden = new Set();
+        for (let i = 0; i < items.length; i++) {
+          if (!items[i].collapsed) continue;
+          const base = Math.max(0, items[i].indent|0);
+          for (let j = i + 1; j < items.length; j++) {
+            const d = Math.max(0, items[j].indent|0);
+            if (d <= base) break;
+            hidden.add(j);
+          }
+        }
+        return '<div class="outline">' + items.map((b, i) => {
+          if (hidden.has(i)) return "";
           const depth = Math.max(0, b.indent|0);
           const empty = !(b.text && b.text.trim());
+          const hasKids = i + 1 < items.length && (Math.max(0, items[i + 1].indent|0) > depth);
+          const collapsed = !!(b.collapsed && hasKids);
           let cls = "oline";
           if (empty) cls += " blank";
+          if (hasKids) cls += " has-kids";
+          if (collapsed) cls += " collapsed";
           const id = String(b.id || "").replace(/"/g, "");
+          const aria = collapsed ? "Expand" : "Collapse";
           return '<div class="' + cls + '" style="--depth:' + depth + '" data-id="' + id + '" title="' + id + '">' +
+            '<span class="ochev" role="button" tabindex="-1" aria-label="' + aria + '"></span>' +
             '<span class="odot" aria-hidden="true"></span>' +
             '<span class="otxt">' + (empty ? "" : formatBlockHtml(b.text)) + '</span></div>';
         }).join("") + '</div>';
+      }
+
+      /** Fold/unfold a read-only outline row. Does not open editor or close the verse tray. */
+      function toggleReaderOutlineFold(ochev) {
+        const line = ochev.closest(".oline");
+        const noteEl = ochev.closest(".note");
+        if (!line || !noteEl || noteEl.classList.contains("editing")) return false;
+        if (noteEl.dataset.encrypted === "1") return false;
+        if (!line.classList.contains("has-kids")) return false;
+        const slug = noteEl.dataset.slug;
+        if (!slug || !seeds[slug]) return false;
+        const blocks = seeds[slug].map((b) => ({
+          id: b.id,
+          indent: b.indent|0,
+          text: b.text || "",
+          collapsed: !!b.collapsed,
+        }));
+        const id = line.dataset.id || line.getAttribute("title") || "";
+        const i = blocks.findIndex((b) => b.id === id);
+        if (i < 0) return false;
+        const base = blocks[i].indent|0;
+        if (!(i + 1 < blocks.length && (blocks[i + 1].indent|0) > base)) return false;
+        blocks[i].collapsed = !blocks[i].collapsed;
+        seeds[slug] = blocks;
+        const body = noteEl.querySelector(".note-body");
+        if (body) body.innerHTML = outlineHtml(blocks);
+        // Persist collapse; omit attachments so the server keeps existing ones.
+        const payload = {
+          blocks: blocks.map((b) => {
+            const row = { id: b.id, indent: b.indent|0, text: b.text || "" };
+            if (b.collapsed) row.collapsed = true;
+            return row;
+          }),
+        };
+        fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch(() => {});
+        return true;
       }
 
       function statusElFor(noteEl) {
@@ -210,12 +255,6 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         syncAllHasNotes();
         if (!editors.size && kind === "range") clearSelection();
-        if (!editors.size) {
-          document.body.dataset.dock = "reader";
-          try {
-            document.dispatchEvent(new CustomEvent("kv:dock-mode", { detail: { mode: "reader" } }));
-          } catch (e) { /* ignore */ }
-        }
         syncExpandNotesBtn();
       }
 
@@ -224,27 +263,6 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
           .filter(([, ed]) => ed.noteEl.closest(".verse") === verse)
           .map(([slug]) => slug);
         for (const slug of slugs) await closeNoteEditor(slug);
-      }
-
-      /** RN InlineNoteEditor “Open full note” — quiet link under tray body. */
-      function ensureFullNoteLink(noteEl) {
-        if (!noteEl) return;
-        const slug = noteEl.dataset.slug;
-        if (!slug) return;
-        let a = noteEl.querySelector(":scope > .note-full-link");
-        if (!a) {
-          a = document.createElement("a");
-          a.className = "note-full-link";
-          a.textContent = "Open full note";
-          noteEl.appendChild(a);
-        }
-        const base = typeof BASE === "string" ? BASE : "";
-        a.href = base + "/note/" + encodeURIComponent(slug);
-      }
-
-      function ensureFullNoteLinksIn(root) {
-        const scope = root || document;
-        scope.querySelectorAll(".vnotes .note[data-slug], .chapter-note .note[data-slug]").forEach(ensureFullNoteLink);
       }
 
       function openNoteEditor(noteEl) {
@@ -256,11 +274,8 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         if (editors.has(slug)) { editors.get(slug).api.focus(); return; }
         const verse = noteEl.closest(".verse");
-        // RN: tray open = no multi-verse selection wash on the verse
-        clearSelection();
         if (verse) verse.classList.add("notes-open", "editing");
         noteEl.classList.add("editing");
-        ensureFullNoteLink(noteEl);
         const host = noteEl.querySelector(".note-edit");
         host.hidden = false;
         host.innerHTML = "";
@@ -532,12 +547,10 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const localVerseNote = verse.querySelector('.note[data-kind="verse"]');
         const hasLocalVerse = localVerseNote && noteHasContent(localVerseNote);
         if (hasLocalVerse || verse.querySelector('.note[data-kind="verse"] .oline, .note[data-kind="verse"] .otxt')) {
-          clearSelection();
           verse.classList.add("notes-open");
           const only = verse.querySelectorAll(".vnotes .note");
           // Single local note → edit-ready; multiple (passage host + verse) → show tray.
           if (only.length === 1) openNoteEditor(only[0]);
-          else ensureFullNoteLinksIn(verse);
           syncExpandNotesBtn();
           return;
         }
@@ -553,11 +566,9 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         }
         // Other local content (e.g. only a hosted range on this end verse) or empty.
         if (verse.classList.contains("has-notes") || verse.querySelector(".note .oline, .note .otxt")) {
-          clearSelection();
           verse.classList.add("notes-open");
           const only = verse.querySelectorAll(".vnotes .note");
           if (only.length === 1) openNoteEditor(only[0]);
-          else ensureFullNoteLinksIn(verse);
           syncExpandNotesBtn();
           return;
         }
@@ -692,6 +703,15 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         if (e.target.closest("a")) return;
         if (e.target.closest(".otext, .obullet, .outliner, .note-edit")) return;
 
+        // Read-only outline chevron: fold subnests only (never open editor / close tray).
+        const foldChev = e.target.closest(".outline .ochev, .oline.has-kids .ochev");
+        if (foldChev) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleReaderOutlineFold(foldChev);
+          return;
+        }
+
         // click any note outline (verse / range / chapter) → edit that note inline
         const body = e.target.closest(".note .note-body");
         if (body) {
@@ -764,7 +784,7 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       // --- expand / collapse all verse notes (VBV analysis) ---
       function versesWithNoteEls() {
         return [...document.querySelectorAll(".verse")].filter((v) =>
-          [...v.querySelectorAll(".vnotes .note")].some((n) => noteHasContent(n))
+          v.querySelector(".vnotes .note")
         );
       }
 
@@ -777,35 +797,24 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         const btn = document.getElementById("expand-notes");
         if (!btn) return;
         const vs = versesWithNoteEls();
-        const has = vs.length > 0;
-        // Always visible; disabled when this page has no verse/range notes yet
-        btn.hidden = false;
-        btn.disabled = !has;
-        btn.setAttribute("aria-disabled", has ? "false" : "true");
-        if (!has) {
-          btn.setAttribute("aria-pressed", "false");
-          btn.classList.remove("is-active");
-          btn.setAttribute("aria-label", "Expand note previews (no notes yet)");
-          btn.title = "No notes on this page yet";
+        if (!vs.length) {
+          btn.hidden = true;
           return;
         }
+        btn.hidden = false;
         const open = allNotesExpanded();
+        btn.textContent = open ? "collapse notes" : "expand notes";
         btn.setAttribute("aria-pressed", open ? "true" : "false");
-        btn.classList.toggle("is-active", open);
         btn.setAttribute(
           "aria-label",
-          open ? "Fold note previews" : "Expand note previews"
+          open ? "Collapse all verse notes" : "Expand all verse notes"
         );
-        btn.title = open ? "Fold note previews" : "Expand note previews";
       }
 
       function expandAllNotes() {
         clearSelection();
         // View only — do not open editors. Show every note tray that has content.
-        versesWithNoteEls().forEach((v) => {
-          v.classList.add("notes-open");
-          ensureFullNoteLinksIn(v);
-        });
+        versesWithNoteEls().forEach((v) => v.classList.add("notes-open"));
         syncExpandNotesBtn();
       }
 
@@ -823,8 +832,6 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       document.getElementById("expand-notes")?.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const btn = e.currentTarget;
-        if (btn && btn.disabled) return;
         if (allNotesExpanded()) collapseAllNotes();
         else expandAllNotes();
       });
@@ -832,527 +839,13 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
       // deep-link: same selection chrome for single- and multi-verse; open notes
       // only on verses that actually host note nodes (not empty range-cover mids —
       // those empty trays painted border/padding seams between stitched verses).
-      function applyHighlightFromDom() {
-        const hlVerses = [...document.querySelectorAll(".verse.hl")];
-        if (hlVerses.length) {
-          const nums = hlVerses.map(verseNum).filter((n) => n != null);
-          // Multi-verse deep link only — single verse with a note opens tray without sel wash
-          if (nums.length > 1) paintSelection(Math.min(...nums), Math.max(...nums));
-        }
-        document.querySelectorAll(".verse.hl").forEach((v) => {
-          if (v.querySelector(".vnotes .note")) {
-            v.classList.add("notes-open");
-            ensureFullNoteLinksIn(v);
-          }
-        });
-        syncExpandNotesBtn();
+      const hlVerses = [...document.querySelectorAll(".verse.hl")];
+      if (hlVerses.length) {
+        const nums = hlVerses.map(verseNum).filter((n) => n != null);
+        if (nums.length) paintSelection(Math.min(...nums), Math.max(...nums));
       }
-      applyHighlightFromDom();
-
-      // --- chapter navigation (no full reload) ---
-      function apiBase() {
-        return typeof BASE === "string" ? BASE : "";
-      }
-
-      function prefetchText(book, chapter) {
-        if (!book || !chapter) return;
-        const key = String(book).toUpperCase() + "/" + chapter;
-        if (textPrefetch.has(key)) return textPrefetch.get(key);
-        const url = apiBase() + "/api/text/bsb/" + encodeURIComponent(book) + "/" + encodeURIComponent(chapter);
-        const p = fetch(url, { credentials: "same-origin" })
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null);
-        textPrefetch.set(key, p);
-        return p;
-      }
-
-      function prefetchNeighbors(meta) {
-        if (!meta) return;
-        const book = meta.book;
-        const ch = Number(meta.chapter);
-        if (!book || !ch) return;
-        prefetchText(book, ch + 1);
-        if (ch > 1) prefetchText(book, ch - 1);
-      }
-
-      function updateNavButtons(meta) {
-        const dock = document.getElementById("reader-dock") || document.querySelector(".reader-dock");
-        if (!dock) return;
-        function navItem(id, slug, label, aria) {
-          if (slug) {
-            return (
-              '<button type="button" class="reader-dock-item reader-nav" id="' +
-              id +
-              '" data-slug="' +
-              String(slug).replace(/"/g, "") +
-              '" aria-label="' +
-              aria +
-              '"><span class="reader-dock-lbl">' +
-              label +
-              "</span></button>"
-            );
-          }
-          return (
-            '<span class="reader-dock-item is-disabled" aria-hidden="true"><span class="reader-dock-lbl">' +
-            label +
-            "</span></span>"
-          );
-        }
-        // RN FAB: Prev | Home | Next — tools live in the sticky header
-        const home = document.getElementById("reader-home");
-        const homeHtml = home
-          ? home.outerHTML
-          : '<a class="reader-dock-item reader-dock-home" id="reader-home" href="' +
-            apiBase() +
-            '/" aria-label="Home"><span class="reader-dock-lbl">Home</span></a>';
-        dock.innerHTML =
-          navItem("reader-prev", meta.prev_slug, "Prev", "Previous chapter") +
-          homeHtml +
-          navItem("reader-next", meta.next_slug, "Next", "Next chapter");
-        wireNavButtons();
-
-        // Header tools that track the current chapter
-        const noteSlug = meta.chapter_note_slug || meta.slug;
-        const chapterLink = document.getElementById("chapter-note-link");
-        if (chapterLink) {
-          chapterLink.href = apiBase() + "/note/" + encodeURIComponent(noteSlug);
-        }
-        const shareBtn = document.querySelector(".reader-head [data-passage-share]");
-        if (shareBtn) {
-          shareBtn.setAttribute("data-slug", meta.slug || "");
-          if (meta.display) shareBtn.setAttribute("data-label", meta.display);
-        }
-        syncExpandNotesBtn();
-      }
-
-      function wireNavButtons() {
-        document.getElementById("reader-prev")?.addEventListener("click", (e) => {
-          e.preventDefault();
-          const slug = e.currentTarget.getAttribute("data-slug");
-          if (slug) navigateChapter(slug, { push: true });
-        });
-        document.getElementById("reader-next")?.addEventListener("click", (e) => {
-          e.preventDefault();
-          const slug = e.currentTarget.getAttribute("data-slug");
-          if (slug) navigateChapter(slug, { push: true });
-        });
-      }
-
-      async function navigateChapter(slug, { push } = { push: true }) {
-        if (!slug || chapterNavBusy) return;
-        if (editors.size) {
-          for (const s of [...editors.keys()]) await closeNoteEditor(s);
-        }
-        clearSelection();
-        chapterNavBusy = true;
-        const root = document.getElementById("reader-root");
-        if (root) root.setAttribute("aria-busy", "true");
-        try {
-          const r = await fetch(apiBase() + "/api/read/" + encodeURIComponent(slug), {
-            credentials: "same-origin",
-            headers: { accept: "application/json" },
-          });
-          if (!r.ok) throw new Error("load failed");
-          const data = await r.json();
-          if (!data.ok || !data.meta) throw new Error(data.error || "bad payload");
-
-          META = data.meta;
-          seeds = data.seed || {};
-          chapterDisplay = META.display;
-
-          const title = document.getElementById("reader-title");
-          if (title) title.textContent = META.display;
-          document.title = META.display;
-          document.getElementById("reader-dock")?.classList.remove("is-hidden");
-
-          const noteEl = document.getElementById("chapter-note");
-          const versesEl = document.getElementById("reader-verses");
-          if (versesEl) versesEl.innerHTML = (data.html && data.html.verses) || "";
-          if (noteEl) {
-            // replace chapter-note node contents via temp
-            const wrap = document.createElement("div");
-            wrap.innerHTML = (data.html && data.html.chapter_note) || "";
-            const next = wrap.firstElementChild;
-            if (next && noteEl.parentNode) noteEl.replaceWith(next);
-          }
-
-          if (root) root.dataset.slug = META.slug;
-          const metaTag = document.getElementById("page-meta");
-          const seedTag = document.getElementById("verse-seeds");
-          if (metaTag) metaTag.textContent = JSON.stringify(META);
-          if (seedTag) seedTag.textContent = JSON.stringify(seeds);
-
-          updateNavButtons(META);
-          applyHighlightFromDom();
-          prefetchNeighbors(META);
-
-          const url = apiBase() + "/read/" + (data.canonical_slug || META.slug);
-          if (push) history.pushState({ readerSlug: META.slug }, META.display, url);
-          else history.replaceState({ readerSlug: META.slug }, META.display, url);
-
-          // warm pure text endpoint for cache/CDN
-          if (META.book && META.chapter) prefetchText(META.book, META.chapter);
-
-          window.scrollTo(0, 0);
-        } catch (err) {
-          // fallback: full navigation
-          location.href = apiBase() + "/read/" + encodeURIComponent(slug);
-          return;
-        } finally {
-          chapterNavBusy = false;
-          if (root) root.removeAttribute("aria-busy");
-        }
-      }
-
-      wireNavButtons();
-      prefetchNeighbors(META);
-      if (META.book && META.chapter) prefetchText(META.book, META.chapter);
-      wireReaderDockAutoHide();
-
-      window.addEventListener("popstate", () => {
-        const m = location.pathname.match(/\/read\/([a-z0-9.\-]+)/i);
-        if (m) navigateChapter(m[1], { push: false });
+      document.querySelectorAll(".verse.hl").forEach((v) => {
+        if (v.querySelector(".vnotes .note")) v.classList.add("notes-open");
       });
-
-      document.addEventListener("keydown", (e) => {
-        if (chapterNavBusy) return;
-        if (e.target && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) return;
-        if (editors.size) return;
-        if (e.key === "ArrowLeft" && META.prev_slug) {
-          e.preventDefault();
-          navigateChapter(META.prev_slug, { push: true });
-        } else if (e.key === "ArrowRight" && META.next_slug) {
-          e.preventDefault();
-          navigateChapter(META.next_slug, { push: true });
-        }
-      });
-
-      function wireReaderDockAutoHide() {
-        const dock = document.getElementById("reader-dock");
-        if (!dock) return;
-
-        // FAB is fixed on all viewports (RN LiquidGlassBar parity).
-        let hidden = false;
-        let dirAcc = 0;
-        let ticking = false;
-        let touchLastY = null;
-        let touchAcc = 0;
-        let lastContentTop = null;
-        const HIDE_AFTER = 16;
-        const SHOW_AFTER = 10;
-        const TOP_Y = 48; // scrollY lock — always show at/near top
-        const GAP = 10;
-
-        function mobile() {
-          // Always-on FAB; keep name for pin/keyboard helpers.
-          return true;
-        }
-
-        function contentEl() {
-          return (
-            document.getElementById("reader-verses") ||
-            document.getElementById("reader-root") ||
-            document.body
-          );
-        }
-
-        function readScrollY() {
-          const vv = window.visualViewport;
-          if (vv && typeof vv.pageTop === "number") {
-            return Math.max(0, vv.pageTop);
-          }
-          return Math.max(
-            0,
-            window.scrollY ||
-              window.pageYOffset ||
-              document.documentElement.scrollTop ||
-              document.body.scrollTop ||
-              0
-          );
-        }
-
-        /** True when the user is at (or rubber-banding at) the top of the chapter. */
-        function atTop() {
-          if (readScrollY() <= TOP_Y) return true;
-          // Sticky .reader-head is always on-screen — use content position instead
-          const root = document.getElementById("reader-root") || document.getElementById("reader-verses");
-          if (root) {
-            const head = document.querySelector(".reader-head");
-            const headH = head ? head.getBoundingClientRect().height : 0;
-            // Content still under / just below sticky header → treat as top
-            if (root.getBoundingClientRect().top > headH + 12) return true;
-          }
-          return false;
-        }
-
-        /** How far the chapter content has moved (positive = scrolled down / reading further). */
-        function contentDelta() {
-          const el = contentEl();
-          if (!el) return 0;
-          const top = el.getBoundingClientRect().top;
-          if (lastContentTop == null) {
-            lastContentTop = top;
-            return 0;
-          }
-          const dy = lastContentTop - top; // content moved up by dy → page scrolled down
-          lastContentTop = top;
-          return dy;
-        }
-
-        function editing() {
-          return !!(editors.size || document.querySelector(".note.editing"));
-        }
-
-        function outlineDockEl() {
-          return document.querySelector(
-            ".otoolbar.outline-dock.is-reader-dock.is-dock-active"
-          );
-        }
-
-        function allOutlineDocks() {
-          return document.querySelectorAll(".otoolbar.outline-dock.is-reader-dock");
-        }
-
-        function clearPinnedBottoms() {
-          dock.style.bottom = "";
-          allOutlineDocks().forEach((el) => {
-            el.style.bottom = "";
-          });
-        }
-
-        function pinToVisualBottom() {
-          if (!mobile()) {
-            clearPinnedBottoms();
-            return;
-          }
-          const outlineMode = document.body.dataset.dock === "outline";
-          if (!outlineMode && hidden) return;
-          const vv = window.visualViewport;
-          if (!vv) {
-            clearPinnedBottoms();
-            return;
-          }
-          // Keyboard / browser chrome inset. Ignore absurd gaps (iOS scroll
-          // glitches) so the dock never parks mid-page.
-          const layoutBottomGap = Math.max(
-            0,
-            window.innerHeight - (vv.height + vv.offsetTop)
-          );
-          const maxGap = Math.min(window.innerHeight * 0.55, 420);
-          const usePin = layoutBottomGap >= 2 && layoutBottomGap <= maxGap;
-          const bottom = usePin ? Math.round(layoutBottomGap + GAP) + "px" : "";
-          if (outlineMode) {
-            dock.style.bottom = "";
-            const ot = outlineDockEl();
-            allOutlineDocks().forEach((el) => {
-              el.style.bottom = el === ot ? bottom : "";
-            });
-          } else {
-            allOutlineDocks().forEach((el) => {
-              el.style.bottom = "";
-            });
-            dock.style.bottom = bottom;
-          }
-        }
-
-        function setHidden(next) {
-          if (!mobile()) next = false;
-          // Hard lock: never hide at top (even if a bounce delta says hide)
-          if (next && atTop()) next = false;
-          // Nest dock owns the slot — don't fight it with reader hide/show chrome
-          if (document.body.dataset.dock === "outline") next = false;
-          if (hidden === next) {
-            if (!next) pinToVisualBottom();
-            return;
-          }
-          hidden = next;
-          dock.classList.toggle("is-hidden", hidden);
-          dock.setAttribute("aria-hidden", hidden ? "true" : "false");
-          dock.style.bottom = "";
-          if (!hidden) pinToVisualBottom();
-        }
-
-        function show() {
-          setHidden(false);
-        }
-        function hide() {
-          if (!mobile() || editing() || atTop()) return;
-          if (document.body.dataset.dock === "outline") return;
-          setHidden(true);
-        }
-
-        function applyDelta(dy) {
-          if (!mobile()) {
-            show();
-            dirAcc = 0;
-            return;
-          }
-          if (editing()) {
-            show();
-            dirAcc = 0;
-            return;
-          }
-          // Always visible at top — ignore hide-direction deltas here
-          if (atTop()) {
-            show();
-            dirAcc = 0;
-            return;
-          }
-          if (Math.abs(dy) < 0.5) return;
-
-          if (dy > 0) {
-            // reading further
-            if (dirAcc < 0) dirAcc = 0;
-            dirAcc += dy;
-            if (dirAcc >= HIDE_AFTER) hide();
-          } else {
-            if (dirAcc > 0) dirAcc = 0;
-            dirAcc += dy;
-            if (dirAcc <= -SHOW_AFTER) show();
-          }
-        }
-
-        function tick() {
-          ticking = false;
-          // Re-assert top lock every frame (momentum / rubber-band)
-          if (atTop()) {
-            show();
-            dirAcc = 0;
-            touchAcc = 0;
-          } else {
-            applyDelta(contentDelta());
-          }
-          pinToVisualBottom();
-        }
-
-        function requestTick() {
-          if (ticking) return;
-          ticking = true;
-          requestAnimationFrame(tick);
-        }
-
-        window.addEventListener("scroll", requestTick, { passive: true, capture: true });
-        document.addEventListener("scroll", requestTick, { passive: true, capture: true });
-        if (document.body) {
-          document.body.addEventListener("scroll", requestTick, { passive: true });
-        }
-
-        if (window.visualViewport) {
-          window.visualViewport.addEventListener("scroll", requestTick, { passive: true });
-          window.visualViewport.addEventListener("resize", requestTick, { passive: true });
-        }
-
-        window.addEventListener(
-          "touchstart",
-          (e) => {
-            if (!e.touches || !e.touches[0]) return;
-            touchLastY = e.touches[0].clientY;
-            touchAcc = 0;
-            const el = contentEl();
-            lastContentTop = el ? el.getBoundingClientRect().top : null;
-            if (atTop()) show();
-          },
-          { passive: true, capture: true }
-        );
-
-        window.addEventListener(
-          "touchmove",
-          (e) => {
-            if (!mobile() || !e.touches || !e.touches[0]) return;
-            if (editing()) {
-              show();
-              touchLastY = e.touches[0].clientY;
-              return;
-            }
-
-            // Top lock first — bounce / overscroll must not hide
-            if (atTop()) {
-              show();
-              touchAcc = 0;
-              dirAcc = 0;
-              if (touchLastY != null) touchLastY = e.touches[0].clientY;
-              const el = contentEl();
-              lastContentTop = el ? el.getBoundingClientRect().top : lastContentTop;
-              pinToVisualBottom();
-              return;
-            }
-
-            // 1) Finger direction
-            if (touchLastY != null) {
-              const fingerDy = e.touches[0].clientY - touchLastY;
-              touchLastY = e.touches[0].clientY;
-              // finger up (negative) = reading further
-              if (fingerDy < -0.5) {
-                if (touchAcc > 0) touchAcc = 0;
-                touchAcc += fingerDy;
-                if (touchAcc <= -HIDE_AFTER) hide();
-              } else if (fingerDy > 0.5) {
-                if (touchAcc < 0) touchAcc = 0;
-                touchAcc += fingerDy;
-                if (touchAcc >= SHOW_AFTER) show();
-              }
-            }
-
-            // 2) Actual content motion
-            applyDelta(contentDelta());
-            pinToVisualBottom();
-          },
-          { passive: true, capture: true }
-        );
-
-        function endTouch() {
-          touchLastY = null;
-          touchAcc = 0;
-          // Settling after a fling back to top
-          if (atTop()) show();
-          requestTick();
-        }
-
-        window.addEventListener("touchend", endTouch, { passive: true, capture: true });
-        window.addEventListener("touchcancel", endTouch, { passive: true, capture: true });
-
-        window.addEventListener(
-          "wheel",
-          (e) => {
-            if (!mobile()) return;
-            if (atTop() && e.deltaY < 0) {
-              show();
-              return;
-            }
-            applyDelta(e.deltaY);
-          },
-          { passive: true }
-        );
-
-        mq.addEventListener?.("change", () => {
-          if (!mobile()) {
-            show();
-            clearPinnedBottoms();
-          } else {
-            const el = contentEl();
-            lastContentTop = el ? el.getBoundingClientRect().top : null;
-            if (atTop()) show();
-            pinToVisualBottom();
-          }
-        });
-
-        // Nest bar ↔ chapter bar exclusive swap
-        document.addEventListener("kv:dock-mode", () => {
-          if (document.body.dataset.dock === "outline") {
-            // Reader dock yields slot; keep it un-hidden for when Nav returns
-            hidden = false;
-            dock.classList.remove("is-hidden");
-            dock.setAttribute("aria-hidden", "false");
-            dock.style.bottom = "";
-          } else {
-            show();
-          }
-          pinToVisualBottom();
-        });
-
-        const el0 = contentEl();
-        lastContentTop = el0 ? el0.getBoundingClientRect().top : null;
-        if (atTop()) show();
-        pinToVisualBottom();
-      }
+      syncExpandNotesBtn();
     

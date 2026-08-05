@@ -590,14 +590,108 @@ export default function ReaderScreen() {
   // Only re-run when chapter/translation changes — not on every focus (notes cache handles writes).
   const loadedKey = useRef("");
   const notesEpochRef = useRef(Local.getNotesCacheEpoch());
+  /**
+   * Deep-link / wiki focus: when route slug is a verse or range (not bare chapter),
+   * scroll there; expand the note tray only if a note exists at that address.
+   * Re-runs when slug changes or notes load for that target.
+   */
+  const focusAppliedFor = useRef("");
 
   useEffect(() => {
     const key = `${slug}|${translation}`;
     if (loadedKey.current !== key) {
       loadedKey.current = key;
+      focusAppliedFor.current = "";
       load();
     }
   }, [load, slug, translation]);
+
+  useEffect(() => {
+    if (!slug || !bookChapter || busy) return;
+    const r = resolveLocal(slug);
+    if (!r.ok || !r.scope) return;
+    if (r.scope.kind === "chapter") {
+      // Chapter link: open chapter note only if one exists (via header is separate).
+      focusAppliedFor.current = slug;
+      return;
+    }
+
+    // Wait until verses painted
+    if (!verses.length) return;
+
+    const parts = r.scope.slug.split(".");
+    // book.chapter.v or book.chapter.v1-v2
+    const versePart = parts[2] || "";
+    let lo: number;
+    let hi: number;
+    if (versePart.includes("-")) {
+      const [a, b] = versePart.split("-").map(Number);
+      lo = a;
+      hi = b;
+    } else {
+      lo = Number(versePart);
+      hi = lo;
+    }
+    if (!Number.isFinite(lo) || lo < 1) return;
+
+    const targetSlug = r.scope.slug.toLowerCase();
+    const note = notesBySlug[targetSlug] || notesBySlug[r.scope.slug];
+    const hasNote = noteHasContent(note, resolvedBlocks[targetSlug] || resolvedBlocks[r.scope.slug]);
+
+    // Apply once per slug after notes are known enough (or after first paint for pure refs)
+    const applyKey = `${targetSlug}|${hasNote ? "n" : "r"}|${verses.length}`;
+    if (focusAppliedFor.current === applyKey) return;
+    // If notes still loading (empty map, cache cold), wait one tick — but pure refs proceed
+    if (!hasNote && notesBySlug && Object.keys(notesBySlug).length === 0 && Local.peekNotes() == null) {
+      return;
+    }
+    focusAppliedFor.current = applyKey;
+
+    if (lo !== hi) {
+      // Range: highlight span; expand tray only when a note exists at that address
+      if (hasNote) {
+        setSel(null);
+        setPendingRange({
+          slug: r.scope.slug,
+          label: displayScope(r.scope),
+          lo,
+          endV: hi,
+        });
+        setOpen({ ["v" + hi]: true });
+      } else {
+        setPendingRange(null);
+        setOpen({});
+        setSel({ a: lo, b: hi });
+      }
+      focusVerseRef.current = hi;
+      requestAnimationFrame(() => {
+        setTimeout(() => ensureVerseVisible(hi, true), 80);
+      });
+      return;
+    }
+
+    // Single verse: expand only when note exists; otherwise scroll + soft highlight
+    setPendingRange(null);
+    if (hasNote) {
+      setSel(null);
+      setOpen({ ["v" + lo]: true });
+    } else {
+      setOpen({});
+      setSel({ a: lo, b: lo });
+    }
+    focusVerseRef.current = lo;
+    requestAnimationFrame(() => {
+      setTimeout(() => ensureVerseVisible(lo, true), 80);
+    });
+  }, [
+    slug,
+    bookChapter,
+    busy,
+    verses.length,
+    notesBySlug,
+    resolvedBlocks,
+    ensureVerseVisible,
+  ]);
 
   // Soft notes refresh only if local pack epoch advanced while we were away
   useFocusEffect(

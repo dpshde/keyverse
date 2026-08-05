@@ -1,16 +1,20 @@
 import React, { useMemo } from "react";
 import { Linking, StyleSheet, Text, type TextStyle } from "react-native";
+import { wikiDisplayLabel, parseWikiInner } from "./wikiLink";
 
 /**
  * Render base inline markdown (PROTOCOL §4.0) — markers stay in storage.
- * Flat (non-nested) forms only.
+ * Flat (non-nested) forms only. Wiki [[target]] / [[target|label]] supported.
  */
 export const InlineMarkdown = React.memo(function InlineMarkdown({
   text,
   style,
+  onWikiPress,
 }: {
   text: string;
   style?: TextStyle | TextStyle[];
+  /** Wiki cross-ref tap — parent navigates to reader */
+  onWikiPress?: (target: string) => void;
 }) {
   const nodes = useMemo(() => parseInline(text || ""), [text]);
   // Fast path: no markers — single Text (no nested tree)
@@ -45,6 +49,20 @@ export const InlineMarkdown = React.memo(function InlineMarkdown({
               {n.value}
             </Text>
           );
+        if (n.type === "wiki")
+          return (
+            <Text
+              key={i}
+              style={styles.link}
+              onPress={() => {
+                if (onWikiPress) onWikiPress(n.target);
+              }}
+              accessibilityRole="link"
+              accessibilityLabel={`Open ${n.value}`}
+            >
+              {n.value}
+            </Text>
+          );
         if (n.type === "link")
           return (
             <Text
@@ -66,7 +84,8 @@ export const InlineMarkdown = React.memo(function InlineMarkdown({
 type Node =
   | { type: "text"; value: string }
   | { type: "code" | "strong" | "em" | "strike"; value: string }
-  | { type: "link"; value: string; href: string };
+  | { type: "link"; value: string; href: string }
+  | { type: "wiki"; value: string; target: string };
 
 function parseInline(src: string): Node[] {
   const out: Node[] = [];
@@ -83,6 +102,34 @@ function parseInline(src: string): Node[] {
         out.push({ type: "code", value: src.slice(i + 1, j) });
         i = j + 1;
         continue;
+      }
+    }
+    // embeds ![[…]] — leave as text for now (attachment UX is separate)
+    if (src.startsWith("![[", i)) {
+      const j = src.indexOf("]]", i + 3);
+      if (j > i) {
+        pushText(src.slice(i, j + 2));
+        i = j + 2;
+        continue;
+      }
+    }
+    // wiki [[target]] or [[target|label]]
+    if (src.startsWith("[[", i)) {
+      const j = src.indexOf("]]", i + 2);
+      if (j > i) {
+        const inner = src.slice(i + 2, j);
+        if (!inner.includes("\n")) {
+          const { target, label } = parseWikiInner(inner);
+          if (target) {
+            out.push({
+              type: "wiki",
+              target,
+              value: wikiDisplayLabel(target, label),
+            });
+            i = j + 2;
+            continue;
+          }
+        }
       }
     }
     // link [label](https://...)
@@ -131,7 +178,13 @@ function parseInline(src: string): Node[] {
     }
     // plain run until next special
     let j = i + 1;
-    while (j < src.length && !"`*[~_".includes(src[j])) j++;
+    while (j < src.length && !"`*[~_!".includes(src[j])) j++;
+    // also break before `[[` so wiki is found
+    if (src[j] === "[" && src[j + 1] === "[") {
+      /* stop before wiki */
+    } else if (src[j] === "!" && src[j + 1] === "[" && src[j + 2] === "[") {
+      /* stop before embed */
+    }
     pushText(src.slice(i, j));
     i = j;
   }

@@ -529,12 +529,9 @@ defmodule Keyverse.Router do
             html(conn, 200, Html.page("keyverse", "<p>Could not parse that passage. <a href=\"#{base}/\">Back</a></p>", base: base))
 
           scope ->
-            loc =
-              if scope.kind == "chapter",
-                do: "#{base}/read/#{scope.slug}",
-                else: "#{base}/note/#{scope.slug}"
-
-            redirect(conn, loc)
+            # Always projected reader (ADR 0019). Verse/range deep-links highlight
+            # and expand notes when present (reader applyHighlightFromDom).
+            redirect(conn, "#{base}/read/#{scope.slug}")
         end
 
       {method, path} ->
