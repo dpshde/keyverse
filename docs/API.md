@@ -25,6 +25,20 @@ default; notes stay empty until the user opens with a key or mounts a local fold
 | `GET` | `/read/<slug>` | BSB chapter reader (shared `_public` pack, empty notes) |
 | `GET` | `/api/text/bsb/<BOOK>/<chapter>` | Immutable BSB chapter JSON (same as door path) |
 | `GET` | `/api/read/<slug>` | Reader SPA bundle for public base (`BASE=""`) |
+| `GET` | `/api/md/<slug>` | Raw Markdown: full chapter BSB + notes (verse slug expands to chapter) |
+
+### `GET /api/md/<slug>` (also `/{door}/api/md/<slug>`)
+
+Returns a **raw** Markdown document for the **whole chapter** containing `slug`
+(chapter, verse, or range — always expands to book+chapter).
+
+| Status | Body |
+|--------|------|
+| `200` | `text/markdown; charset=utf-8` — stitched chapter |
+| `400` | `text/plain` invalid address |
+| `404` | `text/plain` missing BSB chapter |
+
+Stitch order: title → chapter note → each verse (`**N** text`) → verse note outline → range notes that **end** on that verse. Outline blocks use nested `-` lists (2 spaces per indent). Encrypted notes become `*[Encrypted note — sealed]*`. Optional `.md` suffix: `/api/md/heb.8.md`.
 
 Examples:
 
@@ -99,6 +113,42 @@ Empty `q` → empty `suggestions`. `limit` clamped 1–20 (default 8).
 
 ## Notes
 
+### Optimistic concurrency (anti-stomp)
+
+`PUT /api/note/<slug>` accepts an optional header:
+
+```http
+X-KV-Base-Updated-At: 2026-08-08T01:00:00.000Z
+```
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| Header omitted | (unchanged) | Normal put |
+| No on-disk note, or disk `updated_at` ≤ base | `200` | Written note / `{deleted:true}` |
+| On-disk `updated_at` **>** base | **`409`** | `{ "error": "conflict", "base", "current": <note> }` |
+
+Mobile sync sends base from the pre-sync remote list so a stale push cannot wipe
+a concurrent web edit. On 409 the client **pulls `current`** and does not
+retry-push in the same pass.
+
+#### Anti-stomp shrink guard
+
+Even without a base stamp (old clients), the door **refuses severe content
+shrinks** unless the writer opts in:
+
+```http
+X-KV-Allow-Shrink: 1
+```
+
+| Write | Without allow-shrink | With allow-shrink |
+|-------|----------------------|-------------------|
+| Richer or equal body | `200` | `200` |
+| Full delete (blank blocks + `attachments: []`) | `200` `{deleted:true}` | `200` |
+| Thin/empty body over multi-line note | **`409` `{error:"shrink_rejected", current}`** | `200` |
+
+User editors (web outliner, mobile save) always send `X-KV-Allow-Shrink: 1`.
+Bulk quietSync **must not**. See [ADR 0022](./adr/0022-sync-anti-stomp.md).
+
 ### `GET /api/notes`
 
 Every note in the pack (full records). Sorted by `updated_at` descending.
@@ -125,6 +175,8 @@ No pagination in v0.1.
 Non-canonical slugs are accepted if `parseScope` can normalize them (response scope uses canonical slug).
 
 ### `PUT /api/note/<slug>`
+
+Supports optional `X-KV-Base-Updated-At` (see [Optimistic concurrency](#optimistic-concurrency-anti-stomp) above).
 
 Create, update, seal, or delete.
 

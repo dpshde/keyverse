@@ -1,12 +1,15 @@
 /**
  * Cloud mirror: multiword door on multipack host.
- * Enabling cloud claims a door and doubles local notes onto the server (and pulls remote).
+ *
+ * Sync is pull-first, then push — with content stomp guards and optimistic
+ * concurrency (`X-KV-Base-Updated-At`). See `syncMerge.ts` for the policy.
  */
 import { Asset } from "expo-asset";
 import * as FileSystem from "expo-file-system/legacy";
-import { KeyverseClient } from "../api/client";
+import { ApiError, KeyverseClient } from "../api/client";
 import type { Attachment, Note } from "../api/types";
 import * as Local from "./localPack";
+import { contentScore, planSync } from "./syncMerge";
 
 const DEFAULT_HOST = "https://keyverse-production.up.railway.app";
 
@@ -44,6 +47,8 @@ export type SyncResult = {
   pushed: number;
   pulled: number;
   attachments: number;
+  /** Conflicts where door rejected a push (base stamp mismatch) — those were pulled instead. */
+  conflicts: number;
   /** join = used existing multiword door; claim = created a new one */
   mode: "join" | "claim" | "resume";
 };
@@ -76,7 +81,6 @@ let syncChain: Promise<unknown> = Promise.resolve();
 
 function enqueueSync<T>(fn: () => Promise<T>): Promise<T> {
   const run = syncChain.then(fn, fn);
-  // Keep the chain alive even if this run fails
   syncChain = run.then(
     () => undefined,
     () => undefined
@@ -96,10 +100,17 @@ async function liveNoteForPush(slug: string): Promise<Note | null> {
   return live;
 }
 
+/** Apply door note into local pack (pull / post-PUT echo). */
+async function applyRemoteNote(note: Note): Promise<void> {
+  await Local.bulkUpsertNotes([note]);
+}
+
 /**
  * Enable cloud and sync.
  * - With `opts.door`: join an existing multiword door (pull remote + push local).
  * - Without: claim a fresh door (or resume the previously saved door if re-enabling).
+ *
+ * Order: flush deletes → plan → **pull first** → push with base stamp → flush deletes.
  */
 export async function enableCloudAndSync(
   host = DEFAULT_HOST,
@@ -119,7 +130,6 @@ async function enableCloudAndSyncUnlocked(
 
   const requested = opts.door ? normalizeDoorPhrase(opts.door) : "";
   if (requested) {
-    // Join existing pack (or sync on known door) — verify before writing meta
     const probe = new KeyverseClient({ host: hostN, door: requested });
     try {
       await probe.protocol();
@@ -130,14 +140,12 @@ async function enableCloudAndSyncUnlocked(
     mode =
       meta.cloud?.enabled && meta.cloud?.door === requested ? "resume" : "join";
   } else if (meta.cloud?.door) {
-    // Re-enable or re-sync the previously saved door (do not claim a new one)
     door = meta.cloud.door;
     mode = "resume";
     const probe = new KeyverseClient({ host: hostN, door });
     try {
       await probe.protocol();
     } catch {
-      // Door gone — fall through to claim only if user did not specify a phrase
       door = "";
       mode = "claim";
     }
@@ -163,94 +171,162 @@ async function enableCloudAndSyncUnlocked(
   }
 
   const client = new KeyverseClient({ host: hostN, door });
-  await client.protocol(); // verify
+  await client.protocol();
 
-  // Flush local deletes to the door FIRST so a subsequent pull cannot resurrect them
+  // Tombstones first so a pull cannot resurrect deleted notes
   await flushPendingCloudDeletes(client);
 
-  // Push local → cloud (re-check each slug so mid-sync deletes are not re-uploaded)
   const localNotes = await Local.listNotes();
-  let pushed = 0;
-  let attN = 0;
-  for (const snap of localNotes) {
-    const slug = snap.scope?.slug;
-    if (!slug) continue;
-    const note = await liveNoteForPush(slug);
-    if (!note) continue;
-    if (note.encrypted && note.cipher) {
-      // Final guard immediately before network write
-      if (await Local.isPendingDelete(slug)) continue;
-      await client.putNote(slug, { encrypted: true, cipher: note.cipher });
-      pushed++;
-      continue;
-    }
-    // files first so server CAS has blobs before note meta references them
-    const atts = (note.attachments || []) as Attachment[];
-    for (const a of atts) {
-      if (a.kind === "file" && a.sha256) {
-        const bytes = await Local.readAttachmentBytes(a.sha256);
-        if (bytes) {
-          try {
-            await client.addFileAttachment(slug, bytes, a.name || "file", a.mime || "application/octet-stream");
-            attN++;
-          } catch {
-            /* may already exist */
-          }
-        }
-      } else if (a.kind === "url") {
-        try {
-          await client.addUrlAttachment(slug, a.url, a.title);
-          attN++;
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    if (await Local.isPendingDelete(slug)) continue;
-    if (!(Local.peekNote(slug) ?? (await Local.getNote(slug)))) continue;
-    await client.putNote(slug, {
-      blocks: note.blocks,
-      attachments: atts,
-    });
-    pushed++;
+  const localBySlug = new Map<string, Note>();
+  for (const n of localNotes) {
+    const s = n.scope?.slug;
+    if (s) localBySlug.set(s, n);
   }
 
-  // Deletes that landed during the push loop (or after a stale push raced) win
-  await flushPendingCloudDeletes(client);
+  const remoteList = await client.listNotes();
+  const remoteBySlug = new Map<string, Note>();
+  for (const n of remoteList) {
+    const s = n.scope?.slug;
+    if (s) remoteBySlug.set(s, n);
+  }
 
-  // Pull cloud → local (union): fetch notes in parallel, bulk-write once.
-  // bulkUpsertNotes skips pending-delete slugs as a second line of defense.
-  const remote = await client.listNotes();
-  const fullNotes: Note[] = (
+  const pendingList = await Local.listPendingDeletes();
+  const pendingDeletes = new Set(pendingList);
+
+  const plan = planSync({ localBySlug, remoteBySlug, pendingDeletes });
+
+  let pulled = 0;
+  let pushed = 0;
+  let conflicts = 0;
+  let attN = 0;
+
+  // —— PULL FIRST (remote-newer / remote-richer / anti-stomp) ——
+  const pullNotes: Note[] = (
     await Promise.all(
-      remote.map(async (rn) => {
-        const slug = rn.scope?.slug;
-        if (!slug) return null;
+      plan.pull.map(async (slug) => {
         if (await Local.isPendingDelete(slug)) return null;
-        return client.getNote(slug).catch(() => rn);
+        const listed = remoteBySlug.get(slug);
+        if (listed) return listed;
+        return client.getNote(slug).catch(() => null);
       })
     )
   ).filter((n): n is Note => !!n);
 
-  const pulled = await Local.bulkUpsertNotes(fullNotes);
+  if (pullNotes.length) {
+    pulled = await Local.bulkUpsertNotes(pullNotes);
+    await Promise.all(
+      pullNotes.flatMap((full) =>
+        (full.attachments || []).map(async (a) => {
+          if (a.kind !== "file" || !a.sha256) return;
+          const existing = await Local.readAttachmentBytes(a.sha256);
+          if (existing) return;
+          try {
+            const bytes = await client.getAttachmentBytes(a.sha256);
+            await Local.saveAttachmentBytes(a.sha256, bytes);
+            attN++;
+          } catch {
+            /* skip */
+          }
+        })
+      )
+    );
+  }
 
-  // Attachment blobs — parallel, skip ones already on device
-  await Promise.all(
-    fullNotes.flatMap((full) =>
-      (full.attachments || []).map(async (a) => {
-        if (a.kind !== "file" || !a.sha256) return;
-        const existing = await Local.readAttachmentBytes(a.sha256);
-        if (existing) return;
-        try {
-          const bytes = await client.getAttachmentBytes(a.sha256);
-          await Local.saveAttachmentBytes(a.sha256, bytes);
-          attN++;
-        } catch {
-          /* skip */
+  // —— PUSH (local-newer / local-only), with base stamp from pre-sync remote ——
+  for (const slug of plan.push) {
+    const note = await liveNoteForPush(slug);
+    if (!note) continue;
+    // Re-check stomp against the *listed* remote (pre-pull snapshot is fine for base;
+    // after pull-first, destructive cases should already be on the pull list).
+    const remoteSnap = remoteBySlug.get(slug);
+    if (remoteSnap && contentScore(note).empty && !contentScore(remoteSnap).empty) {
+      // Never empty-stomp; pull remote instead
+      await applyRemoteNote(remoteSnap);
+      pulled++;
+      continue;
+    }
+
+    const baseUpdatedAt = remoteSnap?.updated_at;
+
+    try {
+      if (note.encrypted && note.cipher) {
+        if (await Local.isPendingDelete(slug)) continue;
+        const res = await client.putNote(
+          slug,
+          { encrypted: true, cipher: note.cipher },
+          { baseUpdatedAt }
+        );
+        if (!("deleted" in res) || !res.deleted) {
+          // Echo server stamp so next LWW is coherent
+          if ("updated_at" in res && res.updated_at) {
+            await applyRemoteNote(res as Note);
+          }
         }
-      })
-    )
-  );
+        pushed++;
+        continue;
+      }
+
+      const atts = (note.attachments || []) as Attachment[];
+      for (const a of atts) {
+        if (a.kind === "file" && a.sha256) {
+          const bytes = await Local.readAttachmentBytes(a.sha256);
+          if (bytes) {
+            try {
+              await client.addFileAttachment(
+                slug,
+                bytes,
+                a.name || "file",
+                a.mime || "application/octet-stream"
+              );
+              attN++;
+            } catch {
+              /* may already exist */
+            }
+          }
+        } else if (a.kind === "url") {
+          try {
+            await client.addUrlAttachment(slug, a.url, a.title);
+            attN++;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      if (await Local.isPendingDelete(slug)) continue;
+      if (!(Local.peekNote(slug) ?? (await Local.getNote(slug)))) continue;
+
+      const res = await client.putNote(
+        slug,
+        { blocks: note.blocks, attachments: atts },
+        { baseUpdatedAt }
+      );
+      if ("deleted" in res && res.deleted) {
+        /* ok */
+      } else if ("updated_at" in res) {
+        await applyRemoteNote(res as Note);
+      }
+      pushed++;
+    } catch (e) {
+      // Concurrent edit on door — absorb remote, never retry-push over it this pass
+      if (e instanceof ApiError && e.status === 409) {
+        conflicts++;
+        const body = e.body as { current?: Note } | null;
+        const current =
+          body && typeof body === "object" && body.current
+            ? body.current
+            : await client.getNote(slug).catch(() => null);
+        if (current) {
+          await applyRemoteNote(current);
+          pulled++;
+        }
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  // Deletes that landed during push
+  await flushPendingCloudDeletes(client);
 
   await Local.setMeta({
     cloud: {
@@ -261,7 +337,7 @@ async function enableCloudAndSyncUnlocked(
     },
   });
 
-  return { door, host: hostN, pushed, pulled, attachments: attN, mode };
+  return { door, host: hostN, pushed, pulled, attachments: attN, conflicts, mode };
 }
 
 export async function disableCloudKeepLocal(): Promise<void> {
@@ -278,19 +354,14 @@ export async function syncNow(): Promise<SyncResult> {
   if (!meta.cloud?.enabled || !meta.cloud.door) {
     throw new Error("cloud not enabled");
   }
-  // Resume sync on the already-enabled door (do not claim a new one)
   return enableCloudAndSync(meta.cloud.host || DEFAULT_HOST, { door: meta.cloud.door });
 }
 
-/**
- * Empty PUT clears a note on the door (PROTOCOL: blank blocks + no attachments).
- */
 async function cloudDeleteNote(client: KeyverseClient, slug: string): Promise<void> {
   await client.putNote(slug, { blocks: [], attachments: [] });
   await Local.clearPendingDelete(slug);
 }
 
-/** Push every pending local delete to the door; keep tombstones for failures. */
 async function flushPendingCloudDeletes(client: KeyverseClient): Promise<void> {
   const pending = await Local.listPendingDeletes();
   for (const slug of pending) {
@@ -304,50 +375,122 @@ async function flushPendingCloudDeletes(client: KeyverseClient): Promise<void> {
 
 /**
  * After local note save/delete, optionally mirror to cloud immediately.
- * Missing local note → empty PUT (delete on door) so quietSync cannot resurrect it.
+ * Serialized on the same chain as full sync. Never empty-stomps richer remote
+ * content; never overwrites a newer remote stamp (GET + base header).
  */
 export async function mirrorNoteIfCloud(slug: string): Promise<void> {
+  return enqueueSync(() => mirrorNoteIfCloudUnlocked(slug));
+}
+
+async function mirrorNoteIfCloudUnlocked(slug: string): Promise<void> {
   const meta = await Local.getMeta();
   if (!meta.cloud?.enabled || !meta.cloud.door) {
-    // Local-only: no door to clear — drop pending tombstone so it doesn't stick forever
     if (!(await Local.getNote(slug))) {
       await Local.clearPendingDelete(slug);
     }
     return;
   }
   const client = new KeyverseClient({ host: meta.cloud.host, door: meta.cloud.door });
-  const note = await Local.getNote(slug);
-  if (!note) {
+
+  // Explicit local delete
+  if (await Local.isPendingDelete(slug) || !(await Local.getNote(slug))) {
     try {
       await cloudDeleteNote(client, slug);
     } catch {
-      /* pending delete kept for next quietSync */
+      /* pending kept */
     }
     return;
   }
-  if (note.encrypted && note.cipher) {
-    await client.putNote(slug, { encrypted: true, cipher: note.cipher });
-    await Local.clearPendingDelete(slug);
-    return;
+
+  const note = await Local.getNote(slug);
+  if (!note) return;
+
+  // Fresh remote for LWW + stomp guard
+  let remote: Note | null = null;
+  try {
+    remote = await client.getNote(slug);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) {
+      remote = null;
+    } else {
+      // Network error: leave for quietSync
+      return;
+    }
   }
-  const atts = (note.attachments || []) as Attachment[];
-  for (const a of atts) {
-    if (a.kind === "file" && a.sha256) {
-      const bytes = await Local.readAttachmentBytes(a.sha256);
-      if (bytes) {
-        try {
-          await client.addFileAttachment(
-            slug,
-            bytes,
-            a.name || "file",
-            a.mime || "application/octet-stream"
-          );
-        } catch {
-          /* ok */
+
+  if (remote) {
+    const L = contentScore(note);
+    const R = contentScore(remote);
+    // Remote is newer → absorb, do not stomp
+    if ((remote.updated_at || "") > (note.updated_at || "")) {
+      await applyRemoteNote(remote);
+      await Local.clearPendingDelete(slug);
+      return;
+    }
+    // Empty local over contentful remote → absorb remote (not a delete path)
+    if (L.empty && !R.empty) {
+      await applyRemoteNote(remote);
+      return;
+    }
+  }
+
+  const baseUpdatedAt = remote?.updated_at;
+
+  try {
+    if (note.encrypted && note.cipher) {
+      const res = await client.putNote(
+        slug,
+        { encrypted: true, cipher: note.cipher },
+        { baseUpdatedAt, allowShrink: true }
+      );
+      if (!("deleted" in res) && "updated_at" in res) {
+        await applyRemoteNote(res as Note);
+      }
+      await Local.clearPendingDelete(slug);
+      return;
+    }
+
+    const atts = (note.attachments || []) as Attachment[];
+    for (const a of atts) {
+      if (a.kind === "file" && a.sha256) {
+        const bytes = await Local.readAttachmentBytes(a.sha256);
+        if (bytes) {
+          try {
+            await client.addFileAttachment(
+              slug,
+              bytes,
+              a.name || "file",
+              a.mime || "application/octet-stream"
+            );
+          } catch {
+            /* ok */
+          }
         }
       }
     }
+
+    // User-authored save path: allow intentional shrink; still send base when known.
+    const res = await client.putNote(
+      slug,
+      { blocks: note.blocks, attachments: atts },
+      { baseUpdatedAt, allowShrink: true }
+    );
+    if ("deleted" in res && res.deleted) {
+      /* cleared */
+    } else if ("updated_at" in res) {
+      await applyRemoteNote(res as Note);
+    }
+    await Local.clearPendingDelete(slug);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      const body = e.body as { current?: Note; error?: string } | null;
+      const current =
+        body && typeof body === "object" && body.current
+          ? body.current
+          : await client.getNote(slug).catch(() => null);
+      if (current) await applyRemoteNote(current);
+      return;
+    }
+    // Transient — quietSync retries
   }
-  await client.putNote(slug, { blocks: note.blocks, attachments: atts });
-  await Local.clearPendingDelete(slug);
 }

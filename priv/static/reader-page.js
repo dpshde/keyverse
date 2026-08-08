@@ -88,7 +88,10 @@ const META = JSON.parse(document.getElementById("page-meta").textContent);
         };
         fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
           method: "PUT",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "x-kv-allow-shrink": "1",
+          },
           body: JSON.stringify(payload),
         }).catch(() => {});
         return true;

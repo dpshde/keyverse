@@ -20,7 +20,6 @@ export type TreeLeaf = {
   label: string;
   kind: string;
   note: Note;
-  preview: string;
   encrypted: boolean;
   attCount: number;
 };
@@ -242,14 +241,8 @@ export function formatInboxDayLabel(dateKey: string): string {
 
 function noteToLeaf(n: Note): TreeLeaf {
   const slug = n.scope?.slug || n.id;
-  const blocks = n.blocks || [];
-  const preview = n.encrypted
-    ? ""
-    : blocks
-        .map((b) => (b.text || "").trim())
-        .filter(Boolean)
-        .slice(0, 3)
-        .join("\n");
+  // Preview body is rendered from note.blocks (indent + newlines) via OutlinePreview —
+  // never flatten text and drop indent (that was the old home-card bug).
   const label = n.scope
     ? displayScope(n.scope)
     : (() => {
@@ -272,7 +265,6 @@ function noteToLeaf(n: Note): TreeLeaf {
     label,
     kind: n.scope?.kind || "note",
     note: n,
-    preview,
     encrypted: !!n.encrypted,
     attCount: (n.attachments || []).length,
   };

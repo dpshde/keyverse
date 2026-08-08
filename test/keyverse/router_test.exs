@@ -26,6 +26,139 @@ defmodule Keyverse.RouterTest do
     assert body["protocol"] == "keyverse"
   end
 
+  test "PUT shrink without X-KV-Allow-Shrink is rejected (anti-stomp)" do
+    conn =
+      conn(:post, "/setup", %{"intent" => "claim", "door" => "bold-fir-meadow-lake"})
+      |> Router.call([])
+
+    assert conn.status == 302
+
+    rich =
+      Jason.encode!(%{
+        "blocks" => [
+          %{"id" => "b1", "indent" => 0, "text" => "Remember their sins no more"},
+          %{
+            "id" => "b2",
+            "indent" => 1,
+            "text" => "God has claimed us as HIS. Cleansed our records through Jesus."
+          }
+        ]
+      })
+
+    conn =
+      conn(:put, "/bold-fir-meadow-lake/api/note/heb.8.12", rich)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 200
+
+    thin =
+      Jason.encode!(%{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "Remember their sins no more"}]
+      })
+
+    # QuietSync-style stomp (no allow-shrink)
+    conn =
+      conn(:put, "/bold-fir-meadow-lake/api/note/heb.8.12", thin)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 409
+    body = Jason.decode!(conn.resp_body)
+    assert body["error"] == "shrink_rejected"
+    assert length(body["current"]["blocks"]) == 2
+
+    # User-authored save with allow-shrink
+    conn =
+      conn(:put, "/bold-fir-meadow-lake/api/note/heb.8.12", thin)
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-kv-allow-shrink", "1")
+      |> Router.call([])
+
+    assert conn.status == 200
+    note = Jason.decode!(conn.resp_body)
+    assert length(note["blocks"]) == 1
+  end
+
+  test "PUT note with X-KV-Base-Updated-At rejects stale stomps (409)" do
+    conn =
+      conn(:post, "/setup", %{"intent" => "claim", "door" => "calm-oak-ridge-mint"})
+      |> Router.call([])
+
+    assert conn.status == 302
+
+    body1 =
+      Jason.encode!(%{
+        "blocks" => [
+          %{"id" => "b1", "indent" => 0, "text" => "parent line"},
+          %{"id" => "b2", "indent" => 1, "text" => "nested child that must not be wiped"}
+        ]
+      })
+
+    conn =
+      conn(:put, "/calm-oak-ridge-mint/api/note/heb.8.12", body1)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 200
+    note1 = Jason.decode!(conn.resp_body)
+    stamp1 = note1["updated_at"]
+    assert is_binary(stamp1)
+
+    # Concurrent richer state already on door; stale thin writer still holds stamp1
+    body2 =
+      Jason.encode!(%{
+        "blocks" => [
+          %{"id" => "b1", "indent" => 0, "text" => "parent line"},
+          %{"id" => "b2", "indent" => 1, "text" => "nested child that must not be wiped"},
+          %{"id" => "b3", "indent" => 0, "text" => "web added this"}
+        ]
+      })
+
+    conn =
+      conn(:put, "/calm-oak-ridge-mint/api/note/heb.8.12", body2)
+      |> put_req_header("content-type", "application/json")
+      |> Router.call([])
+
+    assert conn.status == 200
+    note2 = Jason.decode!(conn.resp_body)
+    stamp2 = note2["updated_at"]
+    assert stamp2 > stamp1
+
+    # Stale client based on stamp1 tries to push thin body
+    thin =
+      Jason.encode!(%{
+        "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "parent line only"}]
+      })
+
+    conn =
+      conn(:put, "/calm-oak-ridge-mint/api/note/heb.8.12", thin)
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-kv-base-updated-at", stamp1)
+      |> Router.call([])
+
+    assert conn.status == 409
+    conflict = Jason.decode!(conn.resp_body)
+    assert conflict["error"] == "conflict"
+    assert conflict["base"] == stamp1
+    assert get_in(conflict, ["current", "updated_at"]) == stamp2
+    texts = Enum.map(conflict["current"]["blocks"], & &1["text"])
+    assert "nested child that must not be wiped" in texts
+    assert "web added this" in texts
+
+    # Same thin write with correct base + allow-shrink (user-authored edit)
+    conn =
+      conn(:put, "/calm-oak-ridge-mint/api/note/heb.8.12", thin)
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-kv-base-updated-at", stamp2)
+      |> put_req_header("x-kv-allow-shrink", "1")
+      |> Router.call([])
+
+    assert conn.status == 200
+    note3 = Jason.decode!(conn.resp_body)
+    assert length(note3["blocks"]) == 1
+  end
+
   test "setup creates pack and note APIs isolate" do
     # create A
     conn =

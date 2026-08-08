@@ -526,6 +526,9 @@ export async function bulkUpsertNotes(notes: Note[]): Promise<number> {
   const pending = await getPendingDeletes();
   const idx = new Set(await getIndex());
   let wrote = 0;
+  /** Capture before invalidate so we can emit precise change events after rebuild. */
+  const prevBySlug = notesBySlugCache ? new Map(notesBySlugCache) : null;
+  const writtenSlugs: string[] = [];
 
   await mapPool(notes, WRITE_CONCURRENCY, async (note) => {
     const slug = note.scope?.slug;
@@ -537,13 +540,33 @@ export async function bulkUpsertNotes(notes: Note[]): Promise<number> {
     await writeJson(notePath(slug), note);
     idx.add(slug);
     wrote += 1;
+    writtenSlugs.push(slug);
   });
+
+  if (!wrote) return 0;
 
   packGen += 1;
   await setIndex([...idx]);
   // Drop stale list snapshot, then rebuild from per-note files (parallel)
   invalidateNotesCacheDeep();
   await listNotes();
+
+  // Notify UI (home/reader). QuietSync used to write files without emitting,
+  // so inbox stayed stale until a full remount.
+  const next = notesBySlugCache;
+  if (next && writtenSlugs.length) {
+    for (const slug of writtenSlugs) {
+      const n = next.get(slug);
+      if (!n) continue;
+      const old = prevBySlug?.get(slug);
+      if (!old || (old.updated_at || "") !== (n.updated_at || "")) {
+        emitNoteChange({ slug, note: n });
+      }
+    }
+  } else {
+    emitNoteChange({ slug: "__bulk__", note: null, deleted: true });
+  }
+
   return wrote;
 }
 

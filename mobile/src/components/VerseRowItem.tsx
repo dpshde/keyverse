@@ -1,14 +1,14 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useRef } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import type { Attachment, Block, Note } from "../api/types";
 import { hydrateBlocks } from "../api/client";
 import { useTheme } from "../context/ThemeContext";
-import { InlineMarkdown } from "../lib/inlineMarkdown";
 import { resolveWikiNav, wikiReaderHref } from "../lib/wikiLink";
 import { pushOnce } from "../lib/nav";
 import { hapticSelect } from "../lib/haptics";
 import { InlineNoteEditor } from "./InlineNoteEditor";
+import { hasNonEmptyOutline, OutlinePreview } from "./OutlinePreview";
 import { radius, space } from "../theme";
 
 export type VerseRowData = {
@@ -88,6 +88,18 @@ export const VerseRowItem = React.memo(function VerseRowItem({
     (n: View | null) => setVerseRef(item.v, n),
     [setVerseRef, item.v]
   );
+  /** Wiki/http link taps must not also open the full editor (nested in Pressable). */
+  const absorbCardPress = useRef(false);
+  const onInteractiveInPreview = useCallback(() => {
+    absorbCardPress.current = true;
+  }, []);
+  const onPreviewCardPress = useCallback(() => {
+    if (absorbCardPress.current) {
+      absorbCardPress.current = false;
+      return;
+    }
+    onPress();
+  }, [onPress]);
   const onWikiPress = useCallback(
     (target: string) => {
       const nav = resolveWikiNav(target);
@@ -98,9 +110,14 @@ export const VerseRowItem = React.memo(function VerseRowItem({
     [router]
   );
 
-  const previewText = expandPreview
-    ? previewFromBlocks(blocks || (note && !note.encrypted ? hydrateBlocks(note) : []))
-    : "";
+  const versePreviewBlocks =
+    expandPreview && !verseLocked
+      ? blocks && blocks.length
+        ? blocks
+        : note && !note.encrypted
+          ? hydrateBlocks(note)
+          : []
+      : [];
 
   const railOpacity = railStrong ? 0.55 : 0.22;
 
@@ -151,22 +168,23 @@ export const VerseRowItem = React.memo(function VerseRowItem({
         <View style={[styles.noteTray, selected && styles.noteTrayAfterSel]}>
           {expandPreview ? (
             <Pressable
-              onPress={onPress}
+              onPress={onPreviewCardPress}
               style={[styles.previewCard, { backgroundColor: c.fill }]}
               accessibilityRole="button"
               accessibilityLabel={`Open note for verse ${item.v}`}
             >
-              {previewText ? (
-                <InlineMarkdown
-                  text={previewText}
-                  style={[styles.previewTxt, { color: c.inkSoft }]}
-                  onWikiPress={onWikiPress}
-                />
-              ) : note?.encrypted ? (
-                <Text style={[styles.previewMuted, { color: c.muted }]}>Encrypted note</Text>
-              ) : (
-                <Text style={[styles.previewMuted, { color: c.muted }]}>Empty note</Text>
-              )}
+              <ExpandAllPreview
+                verseBlocks={versePreviewBlocks}
+                verseEncrypted={!!note?.encrypted && !versePreviewBlocks.length}
+                rangeNotes={rangeNotes}
+                resolvedBlocks={resolvedBlocks}
+                inkSoft={c.inkSoft}
+                muted={c.muted}
+                faint={c.faint}
+                verseNum={c.verseNum}
+                onWikiPress={onWikiPress}
+                onInteractivePress={onInteractiveInPreview}
+              />
               <Text style={[styles.previewHint, { color: c.faint }]}>Tap to edit</Text>
             </Pressable>
           ) : (
@@ -245,10 +263,10 @@ function verseRowPropsEqual(a: Props, b: Props): boolean {
   if (a.note?.updated_at !== b.note?.updated_at) return false;
   if (a.note?.encrypted !== b.note?.encrypted) return false;
   if ((a.blocks?.length || 0) !== (b.blocks?.length || 0)) return false;
-  // blocks identity for open editor seed; live typing does not update parent blocks
-  if (a.blocks !== b.blocks && a.opened && !a.expandPreview) {
-    // allow if only this row is open and blocks ref equal content — skip deep compare
+  // Open editor seed + expand-all preview both need live block content
+  if (a.blocks !== b.blocks && a.opened) {
     if (a.blocks && b.blocks && !blocksShallowEqual(a.blocks, b.blocks)) return false;
+    if (!a.blocks || !b.blocks) return false;
   }
   if (a.rangeNotes.length !== b.rangeNotes.length) return false;
   for (let i = 0; i < a.rangeNotes.length; i++) {
@@ -277,21 +295,82 @@ function emptyBlocks(): Block[] {
   return [{ id: "b_new", indent: 0, text: "" }];
 }
 
-function previewFromBlocks(blocks: Block[]): string {
-  const parts: string[] = [];
-  let len = 0;
-  for (const b of blocks) {
-    const t = (b.text || "").trim();
-    if (!t) continue;
-    // +1 for the newline separator between lines
-    const next = len + t.length + (parts.length ? 1 : 0);
-    if (parts.length && next > 200) break;
-    parts.push(t);
-    len = next;
-    if (len >= 200) break;
+function ExpandAllPreview({
+  verseBlocks,
+  verseEncrypted,
+  rangeNotes,
+  resolvedBlocks,
+  inkSoft,
+  muted,
+  faint,
+  verseNum,
+  onWikiPress,
+  onInteractivePress,
+}: {
+  verseBlocks: Block[];
+  verseEncrypted: boolean;
+  rangeNotes: RangeNoteHit[];
+  resolvedBlocks: Record<string, Block[]>;
+  inkSoft: string;
+  muted: string;
+  faint: string;
+  verseNum: string;
+  onWikiPress: (target: string) => void;
+  onInteractivePress?: () => void;
+}) {
+  const verseHas = hasNonEmptyOutline(verseBlocks);
+  const rangePreviews = rangeNotes.map((rn) => {
+    const rBlocks =
+      resolvedBlocks[rn.slug] ||
+      (rn.note.encrypted ? [] : hydrateBlocks(rn.note));
+    return {
+      slug: rn.slug,
+      label: rn.label,
+      blocks: rBlocks,
+      encrypted: !!(rn.note.encrypted && !hasNonEmptyOutline(rBlocks)),
+    };
+  });
+  const anyRange = rangePreviews.some(
+    (r) => r.encrypted || hasNonEmptyOutline(r.blocks)
+  );
+
+  if (!verseHas && !verseEncrypted && !anyRange) {
+    return <Text style={[styles.previewMuted, { color: muted }]}>Empty note</Text>;
   }
-  const s = parts.join("\n");
-  return s.length > 200 ? s.slice(0, 197) + "…" : s;
+
+  return (
+    <View style={styles.previewStack}>
+      {verseEncrypted ? (
+        <Text style={[styles.previewMuted, { color: muted }]}>Encrypted note</Text>
+      ) : verseHas ? (
+        <OutlinePreview
+          blocks={verseBlocks}
+          ink={inkSoft}
+          dotColor={verseNum}
+          onWikiPress={onWikiPress}
+          onInteractivePress={onInteractivePress}
+        />
+      ) : null}
+      {rangePreviews.map((r) => (
+        <View key={r.slug} style={styles.rangePreview}>
+          <Text style={[styles.rangeLabel, { color: faint }]} numberOfLines={1}>
+            {r.label}
+          </Text>
+          {r.encrypted ? (
+            <Text style={[styles.previewMuted, { color: muted }]}>Encrypted note</Text>
+          ) : hasNonEmptyOutline(r.blocks) ? (
+            <OutlinePreview
+              blocks={r.blocks}
+              ink={inkSoft}
+              dotColor={verseNum}
+              onWikiPress={onWikiPress}
+              onInteractivePress={onInteractivePress}
+            />
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
 }
 
 /** Apply alpha to #rrggbb or return color unchanged for rgba. */
@@ -369,11 +448,10 @@ const styles = StyleSheet.create({
     marginTop: space[1],
     padding: space[3],
     borderRadius: radius.md,
-    gap: 4,
+    gap: 6,
   },
-  previewTxt: {
-    fontSize: 15,
-    lineHeight: 22,
+  previewStack: {
+    gap: 8,
   },
   previewMuted: {
     fontSize: 14,
@@ -382,5 +460,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     marginTop: 2,
+  },
+  rangePreview: {
+    gap: 2,
+  },
+  rangeLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+    marginBottom: 2,
   },
 });

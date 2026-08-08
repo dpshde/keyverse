@@ -3419,7 +3419,10 @@ function mountOutliner(host, opts) {
     if (inflight) await inflight;
     inflight = fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-kv-allow-shrink": "1",
+      },
       body: JSON.stringify(payload),
     })
       .then(async (r) => {
@@ -5980,7 +5983,10 @@ async function renderRead(scope) {
         };
         fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
           method: "PUT",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "x-kv-allow-shrink": "1",
+          },
           body: JSON.stringify(payload),
         }).catch(() => {});
         return true;
@@ -6766,7 +6772,10 @@ function applyCors(req, res) {
   }
   res.setHeader("access-control-allow-origin", allow);
   res.setHeader("access-control-allow-methods", "GET, PUT, POST, DELETE, OPTIONS");
-  res.setHeader("access-control-allow-headers", "content-type, x-filename, accept");
+  res.setHeader(
+    "access-control-allow-headers",
+    "content-type, x-filename, accept, x-kv-base-updated-at, x-kv-allow-shrink"
+  );
   res.setHeader("access-control-max-age", "86400");
   res.setHeader("access-control-expose-headers", "content-type, content-disposition, content-length");
 }

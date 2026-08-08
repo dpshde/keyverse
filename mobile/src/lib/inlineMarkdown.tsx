@@ -1,5 +1,12 @@
 import React, { useMemo } from "react";
-import { Linking, StyleSheet, Text, type TextStyle } from "react-native";
+import {
+  Linking,
+  StyleSheet,
+  Text,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
+import { useTheme } from "../context/ThemeContext";
 import { wikiDisplayLabel, parseWikiInner } from "./wikiLink";
 
 /**
@@ -10,13 +17,25 @@ export const InlineMarkdown = React.memo(function InlineMarkdown({
   text,
   style,
   onWikiPress,
+  onInteractivePress,
 }: {
   text: string;
-  style?: TextStyle | TextStyle[];
+  style?: StyleProp<TextStyle>;
   /** Wiki cross-ref tap — parent navigates to reader */
   onWikiPress?: (target: string) => void;
+  /**
+   * Fired when the user taps a wiki or http link (before navigation).
+   * Use to suppress an outer Pressable that would otherwise open the editor.
+   */
+  onInteractivePress?: () => void;
 }) {
+  const { colors: c } = useTheme();
   const nodes = useMemo(() => parseInline(text || ""), [text]);
+  const linkStyle = useMemo(
+    () => [styles.link, { color: c.link, textDecorationColor: c.link }],
+    [c.link]
+  );
+
   // Fast path: no markers — single Text (no nested tree)
   if (nodes.length === 1 && nodes[0].type === "text") {
     return <Text style={style}>{nodes[0].value}</Text>;
@@ -53,8 +72,9 @@ export const InlineMarkdown = React.memo(function InlineMarkdown({
           return (
             <Text
               key={i}
-              style={styles.link}
+              style={linkStyle}
               onPress={() => {
+                onInteractivePress?.();
                 if (onWikiPress) onWikiPress(n.target);
               }}
               accessibilityRole="link"
@@ -67,10 +87,13 @@ export const InlineMarkdown = React.memo(function InlineMarkdown({
           return (
             <Text
               key={i}
-              style={styles.link}
+              style={linkStyle}
               onPress={() => {
+                onInteractivePress?.();
                 if (n.href?.startsWith("http")) Linking.openURL(n.href).catch(() => {});
               }}
+              accessibilityRole="link"
+              accessibilityLabel={n.value}
             >
               {n.value}
             </Text>
@@ -200,5 +223,8 @@ const styles = StyleSheet.create({
   strong: { fontWeight: "700" },
   em: { fontStyle: "italic" },
   strike: { textDecorationLine: "line-through", opacity: 0.85 },
-  link: { textDecorationLine: "underline" },
+  link: {
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
 });

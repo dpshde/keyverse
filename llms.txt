@@ -62,6 +62,7 @@ Single pack (offline / import) is just that inner directory.
 | GET | /api/notes | All notes (updated_at desc) |
 | GET | /api/resolve?q= | Human ref → `{kind,osis,slug}` |
 | GET | /api/suggest?q=&limit= | Passage autocomplete |
+| GET | /api/md/`<slug>` | Raw Markdown: chapter BSB + notes (verse expands to chapter) |
 | GET | /api/note/`<slug>` | Note JSON; `?raw` → text/plain (409 if sealed) |
 | PUT | /api/note/`<slug>` | Create/update/delete/seal |
 | POST | /api/note/`<slug>`/attachments | URL JSON or raw file (`X-Filename`) |

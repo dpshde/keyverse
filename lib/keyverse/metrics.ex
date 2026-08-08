@@ -26,6 +26,7 @@ defmodule Keyverse.Metrics do
     :bsb_disk_hit,
     :http_text,
     :http_read_bundle,
+    :http_chapter_md,
     :rate_limited,
     :quota_reject
   ]

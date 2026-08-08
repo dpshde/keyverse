@@ -174,6 +174,13 @@ export class KeyverseClient {
     return res.text();
   }
 
+  /**
+   * PUT note JSON.
+   * @param opts.baseUpdatedAt When set, sends `X-KV-Base-Updated-At` so the door
+   *   returns **409** if the on-disk note is newer (optimistic concurrency).
+   * @param opts.allowShrink When true, sends `X-KV-Allow-Shrink: 1` so intentional
+   *   line-deletes pass the door anti-stomp guard. **Bulk quietSync must omit this.**
+   */
   async putNote(
     slug: string,
     payload: {
@@ -181,10 +188,18 @@ export class KeyverseClient {
       attachments?: Attachment[];
       encrypted?: boolean;
       cipher?: CipherEnvelope;
-    }
+    },
+    opts?: { baseUpdatedAt?: string; allowShrink?: boolean }
   ): Promise<Note | { deleted: true; slug: string }> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (opts?.baseUpdatedAt) {
+      headers["x-kv-base-updated-at"] = opts.baseUpdatedAt;
+    }
+    if (opts?.allowShrink) {
+      headers["x-kv-allow-shrink"] = "1";
+    }
     const { body } = await this.req("PUT", `/api/note/${encodeURIComponent(slug)}`, {
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
     });
     return body as Note | { deleted: true; slug: string };

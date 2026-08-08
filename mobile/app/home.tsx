@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSession } from "@/src/context/SessionContext";
 import type { Note, SuggestItem } from "@/src/api/types";
-import { InlineMarkdown } from "@/src/lib/inlineMarkdown";
+import { hydrateBlocks } from "@/src/api/client";
 import {
   buildInboxDaySections,
   buildInboxLeaves,
@@ -29,6 +29,10 @@ import { resolveLocal, suggestLocal } from "@/src/lib/resolveLocal";
 import { resolveWikiNav, wikiReaderHref } from "@/src/lib/wikiLink";
 import { SymbolView } from "expo-symbols";
 import { NoteSwipeRow } from "@/src/components/NoteSwipeRow";
+import {
+  hasNonEmptyOutline,
+  OutlinePreview,
+} from "@/src/components/OutlinePreview";
 import { PassageSelector, passageSelectorListPad } from "@/src/components/PassageSelector";
 import { EnterSyncKey } from "@/src/components/EnterSyncKey";
 import { SyncInviteBanner } from "@/src/components/SyncInviteBanner";
@@ -315,55 +319,85 @@ export default function HomeScreen() {
     [router]
   );
 
+  /** Wiki/http taps must not also open the reader (nested in card Pressable). */
+  const absorbCardPress = useRef(false);
+  const onInteractiveInCard = useCallback(() => {
+    absorbCardPress.current = true;
+  }, []);
+
   const renderNoteCard = useCallback(
-    (leaf: TreeLeaf) => (
-      <NoteSwipeRow
-        label={leaf.label}
-        onWillOpen={onSwipeWillOpen}
-        onDelete={() => deleteNote(leaf)}
-        onEdit={() => {
-          hapticLight();
-          pushOnce(router, `/note/${encodeURIComponent(leaf.slug)}`);
-        }}
-      >
-        <Pressable
-          style={styles.card}
-          onPress={() => {
-            closeOpenSwipe();
-            hapticSelect();
-            pushOnce(router, `/read/${encodeURIComponent(leaf.slug)}`);
+    (leaf: TreeLeaf) => {
+      const previewBlocks =
+        leaf.encrypted ? [] : hydrateBlocks(leaf.note);
+      const hasPreview = hasNonEmptyOutline(previewBlocks);
+      return (
+        <NoteSwipeRow
+          label={leaf.label}
+          onWillOpen={onSwipeWillOpen}
+          onDelete={() => deleteNote(leaf)}
+          onEdit={() => {
+            hapticLight();
+            pushOnce(router, `/note/${encodeURIComponent(leaf.slug)}`);
           }}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${leaf.label} in reader. Swipe left for options.`}
-          accessibilityHint="Swipe left for Note and Delete"
         >
-          <View style={styles.cardHead}>
-            <Text style={styles.cardTitle} numberOfLines={1}>
-              {leaf.label}
-            </Text>
-            {leaf.encrypted ? (
-              <Text style={styles.badge}>Sealed</Text>
-            ) : leaf.attCount > 0 ? (
-              <Text style={styles.badge}>
-                {leaf.attCount} file{leaf.attCount === 1 ? "" : "s"}
+          <Pressable
+            style={styles.card}
+            onPress={() => {
+              if (absorbCardPress.current) {
+                absorbCardPress.current = false;
+                return;
+              }
+              closeOpenSwipe();
+              hapticSelect();
+              pushOnce(router, `/read/${encodeURIComponent(leaf.slug)}`);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${leaf.label} in reader. Swipe left for options.`}
+            accessibilityHint="Swipe left for Note and Delete"
+          >
+            <View style={styles.cardHead}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {leaf.label}
               </Text>
-            ) : null}
-          </View>
-          {leaf.preview ? (
-            <InlineMarkdown
-              text={leaf.preview}
-              style={styles.cardBody}
-              onWikiPress={onWikiPress}
-            />
-          ) : leaf.encrypted ? (
-            <Text style={styles.cardBodyMuted}>Encrypted — open with passphrase</Text>
-          ) : (
-            <Text style={styles.cardBodyMuted}>Empty note</Text>
-          )}
-        </Pressable>
-      </NoteSwipeRow>
-    ),
-    [closeOpenSwipe, deleteNote, onSwipeWillOpen, onWikiPress, router, styles]
+              {leaf.encrypted ? (
+                <Text style={styles.badge}>Sealed</Text>
+              ) : leaf.attCount > 0 ? (
+                <Text style={styles.badge}>
+                  {leaf.attCount} file{leaf.attCount === 1 ? "" : "s"}
+                </Text>
+              ) : null}
+            </View>
+            {hasPreview ? (
+              <OutlinePreview
+                blocks={previewBlocks}
+                ink={color.inkSoft}
+                dotColor={color.verseNum}
+                textStyle={styles.cardBody}
+                onWikiPress={onWikiPress}
+                onInteractivePress={onInteractiveInCard}
+              />
+            ) : leaf.encrypted ? (
+              <Text style={styles.cardBodyMuted}>
+                Encrypted — open with passphrase
+              </Text>
+            ) : (
+              <Text style={styles.cardBodyMuted}>Empty note</Text>
+            )}
+          </Pressable>
+        </NoteSwipeRow>
+      );
+    },
+    [
+      closeOpenSwipe,
+      color.inkSoft,
+      color.verseNum,
+      deleteNote,
+      onInteractiveInCard,
+      onSwipeWillOpen,
+      onWikiPress,
+      router,
+      styles,
+    ]
   );
 
   const renderHomeItem = useCallback(
@@ -693,10 +727,10 @@ function makeHomeStyles(color: ThemeColors) {
       paddingVertical: 2,
       borderRadius: radius.pill,
     },
+    /** Applied on top of OutlinePreview body text (size/family only; color via ink). */
     cardBody: {
       fontSize: 15,
       lineHeight: 21,
-      color: color.inkSoft,
       fontFamily: fontRead,
     },
     cardBodyMuted: {

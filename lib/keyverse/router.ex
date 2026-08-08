@@ -129,6 +129,11 @@ defmodule Keyverse.Router do
     handle_api_read(conn, public_pack_dir(), "", "GET", slug)
   end
 
+  # Raw Markdown: full chapter BSB + notes (public pack → notes usually empty)
+  get "/api/md/:slug" do
+    handle_api_md(conn, public_pack_dir(), "GET", slug)
+  end
+
   get "/manifest.webmanifest" do
     send_json(conn, 200, Html.web_manifest("/"))
   end
@@ -440,6 +445,10 @@ defmodule Keyverse.Router do
           read_api = Regex.run(~r|^/api/read/([a-z0-9.\-]+)$|i, path) ->
             handle_api_read(conn, pack_dir, base, method, Enum.at(read_api, 1))
 
+          # Accept heb.8 / heb.8.md / heb.8.12 (verse expands to full chapter)
+          md_api = Regex.run(~r|^/api/md/([a-z0-9.\-]+?)(?:\.md)?$|i, path) ->
+            handle_api_md(conn, pack_dir, method, Enum.at(md_api, 1))
+
           true ->
             serve_pack_rest(conn, pack_dir, door, base, method, path, access)
         end
@@ -639,6 +648,38 @@ defmodule Keyverse.Router do
 
   defp handle_api_read(conn, _, _, _, _), do: send_json(conn, 405, %{error: "method not allowed"})
 
+  defp handle_api_md(conn, pack_dir, "GET", slug) do
+    t0 = System.monotonic_time(:microsecond)
+    slug = slug |> to_string() |> String.trim_trailing(".md")
+
+    result =
+      case Keyverse.ChapterMd.render(pack_dir, slug) do
+        {:ok, md} ->
+          conn
+          |> put_resp_content_type("text/markdown")
+          |> put_resp_header("cache-control", "private, max-age=60")
+          |> put_resp_header("x-keyverse-md", "chapter")
+          |> send_resp(200, md)
+
+        {:error, :invalid_address} ->
+          send_resp_plain(conn, 400, "invalid passage address\n")
+
+        {:error, reason} ->
+          send_resp_plain(conn, 404, "#{reason}\n")
+      end
+
+    Keyverse.Metrics.record(:http_chapter_md, (System.monotonic_time(:microsecond) - t0) / 1000)
+    result
+  end
+
+  defp handle_api_md(conn, _, _, _), do: send_resp_plain(conn, 405, "method not allowed\n")
+
+  defp send_resp_plain(conn, status, body) do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(status, body)
+  end
+
   defp handle_note_page(conn, pack_dir, base, slug) do
     case Scope.parse(slug) do
       nil ->
@@ -730,37 +771,73 @@ defmodule Keyverse.Router do
         send_json(conn, 400, %{error: "invalid passage address"})
 
       scope ->
-        ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
+        # 1) Optimistic concurrency (optional base stamp)
+        # 2) Anti-stomp: refuse severe content shrink unless X-KV-Allow-Shrink: 1
+        #    (protects door from old mobile quietSync that still push-all)
+        case check_note_base_updated_at(conn, pack_dir, slug) do
+          {:conflict, current} ->
+            send_json(conn, 409, %{
+              error: "conflict",
+              message: "note changed on door since base; pull current and retry",
+              base: note_base_header(conn),
+              current: current
+            })
 
-        result =
-          if String.contains?(ct, "application/json") or
-               (is_map(conn.body_params) and conn.body_params != %{}) do
-            parsed =
-              if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
-                conn.body_params
-              else
-                {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+          :ok ->
+            do_handle_api_note_put_body(conn, pack_dir, scope, slug)
+        end
+    end
+  end
 
-                case Jason.decode(body) do
-                  {:ok, p} -> p
-                  _ -> %{}
-                end
-              end
+  defp do_handle_api_note_put_body(conn, pack_dir, scope, slug) do
+    ct = conn |> get_req_header("content-type") |> List.first() |> to_string() |> String.downcase()
 
-            case parsed do
-              %{"encrypted" => true, "cipher" => cipher} ->
-                Note.put_note(pack_dir, scope, %{encrypted: true, cipher: cipher})
-
-              %{} = p when map_size(p) == 0 ->
-                {:error, "invalid json"}
-
-              parsed ->
-                Note.put_note(pack_dir, scope, parsed)
-            end
+    {payload_kind, parsed_or_blocks} =
+      if String.contains?(ct, "application/json") or
+           (is_map(conn.body_params) and conn.body_params != %{}) do
+        parsed =
+          if is_map(conn.body_params) and map_size(conn.body_params) > 0 do
+            conn.body_params
           else
             {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
-            blocks = Note.parse_interchange_text(body)
-            Note.put_note(pack_dir, scope, %{"blocks" => blocks})
+
+            case Jason.decode(body) do
+              {:ok, p} -> p
+              _ -> %{}
+            end
+          end
+
+        {:json, parsed}
+      else
+        {:ok, body, _conn} = Plug.Conn.read_body(conn, length: Config.max_attach_bytes())
+        blocks = Note.parse_interchange_text(body)
+        {:text, blocks}
+      end
+
+    existing = Note.read(pack_dir, slug)
+
+    case maybe_reject_shrink(conn, existing, payload_kind, parsed_or_blocks) do
+      {:reject, current, reason} ->
+        send_json(conn, 409, %{
+          error: "shrink_rejected",
+          message: reason,
+          current: current
+        })
+
+      :ok ->
+        result =
+          case {payload_kind, parsed_or_blocks} do
+            {:json, %{"encrypted" => true, "cipher" => cipher}} ->
+              Note.put_note(pack_dir, scope, %{encrypted: true, cipher: cipher})
+
+            {:json, %{} = p} when map_size(p) == 0 ->
+              {:error, "invalid json"}
+
+            {:json, parsed} ->
+              Note.put_note(pack_dir, scope, parsed)
+
+            {:text, blocks} ->
+              Note.put_note(pack_dir, scope, %{"blocks" => blocks})
           end
 
         case result do
@@ -768,6 +845,85 @@ defmodule Keyverse.Router do
           {:ok, note} -> send_json(conn, 200, note)
           note when is_map(note) -> send_json(conn, 200, note)
           {:error, msg} -> send_json(conn, 400, %{error: msg})
+        end
+    end
+  end
+
+  defp allow_shrink?(conn) do
+    conn
+    |> get_req_header("x-kv-allow-shrink")
+    |> List.first()
+    |> case do
+      v when v in ["1", "true", "yes"] -> true
+      _ -> false
+    end
+  end
+
+  defp maybe_reject_shrink(conn, existing, payload_kind, parsed_or_blocks) do
+    cond do
+      is_nil(existing) ->
+        :ok
+
+      allow_shrink?(conn) ->
+        :ok
+
+      true ->
+        {incoming, explicit_delete?} =
+          case payload_kind do
+            :json ->
+              {Keyverse.NoteGuard.score_payload(parsed_or_blocks),
+               Keyverse.NoteGuard.explicit_delete_payload?(parsed_or_blocks)}
+
+            :text ->
+              {Keyverse.NoteGuard.score_payload(parsed_or_blocks),
+               Keyverse.NoteGuard.score_payload(parsed_or_blocks).empty}
+          end
+
+        if Keyverse.NoteGuard.destructive_shrink?(existing, incoming,
+             explicit_delete?: explicit_delete?
+           ) do
+          {:reject, existing,
+           "refusing to shrink note content; pull current or send X-KV-Allow-Shrink: 1 for intentional edit"}
+        else
+          :ok
+        end
+    end
+  end
+
+  defp note_base_header(conn) do
+    conn
+    |> get_req_header("x-kv-base-updated-at")
+    |> List.first()
+    |> case do
+      nil -> nil
+      "" -> nil
+      v -> String.trim(v)
+    end
+  end
+
+  # When the client sends a base stamp and the on-disk note is *strictly newer*,
+  # reject the write so a stale push cannot wipe concurrent web edits.
+  # Missing header → legacy clients, unconditional put (mobile always sends base when known).
+  # Base matches or is empty and note missing → ok.
+  defp check_note_base_updated_at(conn, pack_dir, slug) do
+    case note_base_header(conn) do
+      nil ->
+        :ok
+
+      base ->
+        case Note.read(pack_dir, slug) do
+          nil ->
+            :ok
+
+          current when is_map(current) ->
+            cur = to_string(current["updated_at"] || "")
+
+            cond do
+              cur == "" -> :ok
+              # Door is ahead of the writer's base → conflict
+              cur > base -> {:conflict, current}
+              true -> :ok
+            end
         end
     end
   end
@@ -1176,6 +1332,7 @@ defmodule Keyverse.Router do
         "GET /api/suggest?q=&limit=",
         "GET /api/text/bsb/<book>/<chapter>",
         "GET /api/read/<slug>",
+        "GET /api/md/<slug>",
         "GET /api/note/<slug>",
         "GET /api/note/<slug>?raw",
         "PUT /api/note/<slug>",
@@ -1430,7 +1587,10 @@ defmodule Keyverse.Router do
       conn
       |> put_resp_header("access-control-allow-origin", allow)
       |> put_resp_header("access-control-allow-methods", "GET, PUT, POST, DELETE, OPTIONS")
-      |> put_resp_header("access-control-allow-headers", "content-type, x-filename, accept")
+      |> put_resp_header(
+        "access-control-allow-headers",
+        "content-type, x-filename, accept, x-kv-base-updated-at, x-kv-allow-shrink"
+      )
       |> put_resp_header("access-control-max-age", "86400")
       |> put_resp_header(
         "access-control-expose-headers",

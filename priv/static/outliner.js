@@ -785,7 +785,11 @@ function mountOutliner(host, opts) {
     if (inflight) await inflight;
     inflight = fetch((typeof BASE === "string" ? BASE : "") + "/api/note/" + slug, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        // User-authored save — door anti-stomp allows intentional shrink
+        "x-kv-allow-shrink": "1",
+      },
       body: JSON.stringify(payload),
     })
       .then(async (r) => {

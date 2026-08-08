@@ -43,12 +43,17 @@ import {
   type RangeNoteHit,
   type VerseRowData,
 } from "@/src/components/VerseRowItem";
+import {
+  hasNonEmptyOutline,
+  OutlinePreview,
+} from "@/src/components/OutlinePreview";
 import * as Local from "@/src/lib/localPack";
 import { hapticLight, hapticMedium, hapticSelect } from "@/src/lib/haptics";
 import { motionDuration, MOTION_MS } from "@/src/lib/motion";
 import { useTheme } from "@/src/context/ThemeContext";
 import { pushOnce } from "@/src/lib/nav";
-import { space, type ThemeColors } from "@/src/theme";
+import { resolveWikiNav, wikiReaderHref } from "@/src/lib/wikiLink";
+import { radius, space, type ThemeColors } from "@/src/theme";
 
 type VerseRow = VerseRowData;
 
@@ -798,16 +803,19 @@ export default function ReaderScreen() {
     setExpandAll((x) => !x);
   }, []);
 
-  /** Expand-all only useful when at least one verse/range note has content. */
+  /**
+   * Expand-all when any note in this chapter has content — verse, range, or
+   * chapter-scope (chapter shows above verse 1; others under their verse).
+   */
   const hasExpandableNotes = useMemo(() => {
     if (!bookChapter) return false;
+    if (hasChapterNote) return true;
     const prefix = `${bookChapter.book}.${bookChapter.chapter}`.toLowerCase();
     const chapterSlugLc = prefix;
     for (const n of Object.values(notesBySlug)) {
       const sl = (n.scope?.slug || "").toLowerCase();
       if (!sl.startsWith(prefix)) continue;
-      // Pure chapter note is opened via the chapter button, not expand-all trays
-      if (sl === chapterSlugLc) continue;
+      if (sl === chapterSlugLc) continue; // already covered by hasChapterNote
       if (noteHasContent(n, resolvedBlocks[n.scope?.slug || ""])) return true;
     }
     for (const [sl, has] of Object.entries(liveText)) {
@@ -818,7 +826,7 @@ export default function ReaderScreen() {
       }
     }
     return false;
-  }, [bookChapter, notesBySlug, resolvedBlocks, liveText]);
+  }, [bookChapter, notesBySlug, resolvedBlocks, liveText, hasChapterNote]);
 
   // Don't leave expand-all stuck on after the last note is removed
   useEffect(() => {
@@ -1094,9 +1102,113 @@ export default function ReaderScreen() {
       pendingRange,
       liveText,
       notesEpoch: Object.keys(notesBySlug).length,
+      hasChapterNote,
+      chapterRev: chapterNote?.updated_at || "",
     }),
-    [open, expandAll, sel, pendingRange, liveText, notesBySlug]
+    [
+      open,
+      expandAll,
+      sel,
+      pendingRange,
+      liveText,
+      notesBySlug,
+      hasChapterNote,
+      chapterNote?.updated_at,
+    ]
   );
+
+  /** Wiki/http in chapter expand preview must not also open the full note. */
+  const absorbChapterPreviewPress = useRef(false);
+  const onChapterPreviewInteractive = useCallback(() => {
+    absorbChapterPreviewPress.current = true;
+  }, []);
+  const onChapterWikiPress = useCallback(
+    (target: string) => {
+      const nav = resolveWikiNav(target);
+      if (!nav.ok || !nav.slug) return;
+      hapticSelect();
+      pushOnce(router, wikiReaderHref(nav.slug));
+    },
+    [router]
+  );
+  const onChapterPreviewPress = useCallback(() => {
+    if (absorbChapterPreviewPress.current) {
+      absorbChapterPreviewPress.current = false;
+      return;
+    }
+    openChapterNote();
+  }, [openChapterNote]);
+
+  /**
+   * Expand-all: chapter note outline sits above verse 1 (web `.chapter-note`).
+   * Tap opens the full chapter note editor.
+   */
+  const listHeader = useMemo(() => {
+    if (!expandAll || !hasChapterNote || !chapterSlug) return null;
+    const blocks =
+      resolvedBlocks[chapterSlug] ||
+      (chapterNote && !chapterNote.encrypted ? hydrateBlocks(chapterNote) : []);
+    const locked = !!(chapterNote?.encrypted && !hasNonEmptyOutline(blocks));
+    const hasBody = hasNonEmptyOutline(blocks);
+    const attCount = chapterNote?.attachments?.length ?? 0;
+    return (
+      <View style={styles.chapterNoteWrap}>
+        <Pressable
+          onPress={onChapterPreviewPress}
+          style={[styles.chapterNoteCard, { backgroundColor: color.fill }]}
+          accessibilityRole="button"
+          accessibilityLabel="Open chapter note"
+        >
+          <Text style={[styles.chapterNoteLabel, { color: color.faint }]}>
+            Chapter note
+          </Text>
+          {locked ? (
+            <Text style={[styles.chapterNoteMuted, { color: color.muted }]}>
+              Encrypted note
+            </Text>
+          ) : hasBody ? (
+            <OutlinePreview
+              blocks={blocks}
+              ink={color.inkSoft}
+              dotColor={color.verseNum}
+              onWikiPress={onChapterWikiPress}
+              onInteractivePress={onChapterPreviewInteractive}
+            />
+          ) : attCount > 0 ? (
+            <Text style={[styles.chapterNoteMuted, { color: color.muted }]}>
+              {attCount} attachment{attCount === 1 ? "" : "s"}
+            </Text>
+          ) : (
+            <Text style={[styles.chapterNoteMuted, { color: color.muted }]}>
+              Empty note
+            </Text>
+          )}
+          <Text style={[styles.chapterNoteHint, { color: color.faint }]}>
+            Tap to edit
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }, [
+    expandAll,
+    hasChapterNote,
+    chapterSlug,
+    chapterNote,
+    resolvedBlocks,
+    color.fill,
+    color.faint,
+    color.muted,
+    color.inkSoft,
+    color.verseNum,
+    onChapterPreviewPress,
+    onChapterWikiPress,
+    onChapterPreviewInteractive,
+    styles.chapterNoteWrap,
+    styles.chapterNoteCard,
+    styles.chapterNoteLabel,
+    styles.chapterNoteMuted,
+    styles.chapterNoteHint,
+  ]);
 
   if (busy) {
     return (
@@ -1138,6 +1250,7 @@ export default function ReaderScreen() {
           data={verses}
           keyExtractor={keyExtractorVerse}
           extraData={listExtraData}
+          ListHeaderComponent={listHeader}
           renderItem={renderItem}
           onScroll={onScroll}
           scrollEventThrottle={16}
@@ -1303,6 +1416,33 @@ function makeReaderStyles(color: ThemeColors) {
     },
     dockIconFbOn: {
       color: color.primaryOn,
+    },
+    /** Expand-all: chapter outline above verse 1 */
+    chapterNoteWrap: {
+      marginBottom: space[3],
+      paddingBottom: space[3],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: color.lineSoft,
+    },
+    chapterNoteCard: {
+      padding: space[3],
+      borderRadius: radius.md,
+      gap: 6,
+    },
+    chapterNoteLabel: {
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 0.3,
+      textTransform: "uppercase",
+      marginBottom: 2,
+    },
+    chapterNoteMuted: {
+      fontSize: 14,
+    },
+    chapterNoteHint: {
+      fontSize: 12,
+      fontWeight: "600",
+      marginTop: 2,
     },
   });
 }
