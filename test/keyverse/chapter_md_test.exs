@@ -27,7 +27,33 @@ defmodule Keyverse.ChapterMdTest do
         %{"id" => "c", "indent" => 0, "text" => ""}
       ])
 
-    assert md == "- parent\n  - child [[Heb 7:28]]"
+    assert md ==
+             "- parent\n  - child [Hebrews 7:28](https://route.bible/heb.7.28)"
+  end
+
+  test "wiki links become route.bible MD links" do
+    assert ChapterMd.wiki_links_to_md("see [[John 3:16]] and [[jhn.3.16|Love]]") ==
+             "see [John 3:16](https://route.bible/jhn.3.16) and [Love](https://route.bible/jhn.3.16)"
+
+    assert ChapterMd.wiki_links_to_md("embed ![[keep]] raw") == "embed ![[keep]] raw"
+    assert ChapterMd.wiki_links_to_md("[[not a real book xyz]]") == "[[not a real book xyz]]"
+  end
+
+  test "single blank line between verse text and its note", %{pack: pack} do
+    now = "2026-01-01T00:00:00Z"
+
+    Note.write!(pack, %{
+      "id" => "v1",
+      "scope" => %{"kind" => "verse", "osis" => "JHN.3.1", "slug" => "jhn.3.1"},
+      "blocks" => [%{"id" => "b1", "indent" => 0, "text" => "my note"}],
+      "created_at" => now,
+      "updated_at" => now
+    })
+
+    assert {:ok, md} = ChapterMd.render(pack, "jhn.3")
+    # Exactly one blank between verse line and first note bullet (not two)
+    assert md =~ ~r/\*\*1\*\* [^\n]+\n\n- my note\n/
+    refute md =~ ~r/\*\*1\*\* [^\n]+\n\n\n- my note/
   end
 
   test "render stitches chapter note, verses, verse notes, range notes", %{pack: pack} do

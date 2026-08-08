@@ -77,36 +77,31 @@ defmodule Keyverse.ChapterMd do
       Enum.flat_map(verses, fn vrow ->
         v = vrow["v"]
         vtext = String.trim(to_string(vrow["text"] || ""))
-        line = if vtext == "", do: ["**#{v}**"], else: ["**#{v}** #{vtext}", ""]
+        verse_line = if vtext == "", do: "**#{v}**", else: "**#{v}** #{vtext}"
 
-        vnote = Map.get(verse_notes, v)
-        note_bits =
-          if vnote do
-            ["", note_body_md(vnote), ""]
-          else
-            []
+        # One blank line between sections — never stack "" + "" (double blank).
+        chunks = [verse_line]
+
+        chunks =
+          case Map.get(verse_notes, v) do
+            nil -> chunks
+            vnote -> chunks ++ ["", note_body_md(vnote)]
           end
 
-        ranges = Map.get(range_by_end, v, [])
-
-        range_bits =
-          Enum.flat_map(ranges, fn %{note: n, scope: sc} ->
+        chunks =
+          Enum.reduce(Map.get(range_by_end, v, []), chunks, fn %{note: n, scope: sc}, acc ->
             label = Scope.display(sc)
-
-            [
-              "",
-              "*Note · #{label}*",
-              "",
-              note_body_md(n),
-              ""
-            ]
+            acc ++ ["", "*Note · #{label}*", "", note_body_md(n)]
           end)
 
-        line ++ note_bits ++ range_bits
+        # Trailing blank separates this verse block from the next
+        chunks ++ [""]
       end)
 
     (parts ++ verse_parts)
     |> Enum.join("\n")
+    # Collapse accidental runs of 3+ newlines to a single blank line
+    |> String.replace(~r/\n{3,}/, "\n\n")
     |> String.trim_trailing()
     |> Kernel.<>("\n")
   end
@@ -173,14 +168,57 @@ defmodule Keyverse.ChapterMd do
       |> Enum.reject(fn {_, t} -> nonempty and String.trim(t) == "" end)
       |> Enum.map(fn {indent, text} ->
         pad = String.duplicate("  ", indent)
-        # List marker; body may already contain inline MD / wiki [[…]]
-        "#{pad}- #{text}"
+        # Wiki [[target]] → MD link on route.bible/<osis-slug>
+        "#{pad}- #{wiki_links_to_md(text)}"
       end)
       |> Enum.join("\n")
     end)
   end
 
   def blocks_to_md(_), do: ""
+
+  @doc """
+  Rewrite closed wiki links to Markdown links on route.bible.
+
+  - `[[John 3:16]]` → `[John 3:16](https://route.bible/jhn.3.16)`
+  - `[[jhn.3.16|Love]]` → `[Love](https://route.bible/jhn.3.16)`
+  - Unresolvable targets keep raw `[[…]]`
+  - Embeds `![[…]]` are left unchanged
+  """
+  def wiki_links_to_md(text) when is_binary(text) do
+    # (?<!!) avoids matching embeds ![[…]]
+    Regex.replace(~r/(?<!!)\[\[([^\]\n]+)\]\]/u, text, fn _full, inner ->
+      {target, explicit} = parse_wiki_inner(inner)
+
+      case Scope.parse(target) do
+        nil ->
+          "[[#{inner}]]"
+
+        scope ->
+          label =
+            cond do
+              is_binary(explicit) and String.trim(explicit) != "" -> String.trim(explicit)
+              true -> Scope.display(scope)
+            end
+
+          href = "https://route.bible/#{scope.slug}"
+          # Escape ] in label so MD link doesn't break
+          safe_label = String.replace(label, "]", "\\]")
+          "[#{safe_label}](#{href})"
+      end
+    end)
+  end
+
+  def wiki_links_to_md(_), do: ""
+
+  defp parse_wiki_inner(inner) do
+    s = to_string(inner || "")
+
+    case String.split(s, "|", parts: 2) do
+      [t] -> {String.trim(t), nil}
+      [t, lab] -> {String.trim(t), String.trim(lab)}
+    end
+  end
 
   defp attachments_to_md(atts) when is_list(atts) do
     atts

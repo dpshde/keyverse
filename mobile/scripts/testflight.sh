@@ -57,14 +57,33 @@ if [[ -f "$INFO_PLIST" ]]; then
 fi
 
 echo "==> Resolve next build number for marketing version $VERSION"
-BUILD_JSON=$(asc builds next-build-number \
-  --app "$APP_ID" \
-  --version "$VERSION" \
-  --platform IOS \
-  --initial-build-number 1 \
-  --output json)
-BUILD_NUMBER=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["nextBuildNumber"])' <<<"$BUILD_JSON")
+# asc ≥0.29 dropped `builds next-build-number`; derive max CFBundleVersion + 1.
+BUILD_NUMBER=$(
+  asc builds list --app "$APP_ID" --output json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(1)
+    raise SystemExit(0)
+builds = d.get("data") or []
+nums = []
+for b in builds:
+    v = (b.get("attributes") or {}).get("version")
+    if v is None:
+        continue
+    try:
+        nums.append(int(str(v).strip()))
+    except ValueError:
+        pass
+print((max(nums) + 1) if nums else 1)
+'
+)
 BUILD_NUMBER="${BUILD_NUMBER//$'\n'/}"
+# Allow override for re-runs
+if [[ -n "${ASC_BUILD_NUMBER:-}" ]]; then
+  BUILD_NUMBER="$ASC_BUILD_NUMBER"
+fi
 echo "    next CFBundleVersion = $BUILD_NUMBER"
 if [[ -z "$BUILD_NUMBER" || "$BUILD_NUMBER" == "null" ]]; then
   echo "Could not resolve next build number" >&2
@@ -73,32 +92,72 @@ fi
 
 ARCHIVE=".asc/artifacts/keyverse-${VERSION}-${BUILD_NUMBER}.xcarchive"
 IPA=".asc/artifacts/keyverse-${VERSION}-${BUILD_NUMBER}.ipa"
+EXPORT_DIR=".asc/artifacts/export-${VERSION}-${BUILD_NUMBER}"
+
+# Prefer full Xcode (not Command Line Tools). Override with DEVELOPER_DIR.
+if [[ -z "${DEVELOPER_DIR:-}" ]]; then
+  for cand in \
+    "/Applications/Xcode.app/Contents/Developer" \
+    "/Users/dps/Downloads/Xcode-beta.app/Contents/Developer" \
+    "/Applications/Xcode-beta.app/Contents/Developer"; do
+    if [[ -d "$cand" ]]; then
+      export DEVELOPER_DIR="$cand"
+      break
+    fi
+  done
+fi
+if ! xcodebuild -version >/dev/null 2>&1; then
+  echo "FATAL: xcodebuild needs a full Xcode install (set DEVELOPER_DIR)." >&2
+  exit 1
+fi
+echo "    DEVELOPER_DIR=${DEVELOPER_DIR:-default} ($(xcodebuild -version | head -1))"
+
+rm -rf "$ARCHIVE" "$EXPORT_DIR"
+mkdir -p "$EXPORT_DIR"
 
 echo "==> Archive ($SCHEME Release, MARKETING_VERSION=$VERSION CURRENT_PROJECT_VERSION=$BUILD_NUMBER)"
-asc xcode archive \
-  --workspace "$WORKSPACE" \
-  --scheme "$SCHEME" \
-  --configuration Release \
-  --archive-path "$ARCHIVE" \
-  --clean \
-  --overwrite \
-  --xcodebuild-flag=-destination \
-  --xcodebuild-flag=generic/platform=iOS \
-  --xcodebuild-flag=-allowProvisioningUpdates \
-  --xcodebuild-flag="DEVELOPMENT_TEAM=$TEAM" \
-  --xcodebuild-flag="MARKETING_VERSION=$VERSION" \
-  --xcodebuild-flag="CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
-  --output json
+xcodebuild archive \
+  -workspace "$WORKSPACE" \
+  -scheme "$SCHEME" \
+  -configuration Release \
+  -destination "generic/platform=iOS" \
+  -archivePath "$ARCHIVE" \
+  -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM="$TEAM" \
+  MARKETING_VERSION="$VERSION" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+  CODE_SIGN_STYLE=Automatic
 
 echo "==> Export IPA"
-asc xcode export \
-  --archive-path "$ARCHIVE" \
-  --export-options "$EXPORT_OPTS" \
-  --ipa-path "$IPA" \
-  --overwrite \
-  --timeout 15m \
-  --xcodebuild-flag=-allowProvisioningUpdates \
-  --output json
+# Prefer ASC API key for provisioning (no interactive Xcode account).
+EXPORT_AUTH=()
+KEY_PATH="${APPLE_API_KEY_PATH:-${ASC_KEY_PATH:-}}"
+KEY_ID="${APPLE_API_KEY_ID:-${ASC_KEY_ID:-}}"
+ISSUER="${APPLE_API_ISSUER:-${ASC_ISSUER_ID:-}}"
+if [[ -n "$KEY_PATH" && -f "$KEY_PATH" && -n "$KEY_ID" && -n "$ISSUER" ]]; then
+  EXPORT_AUTH=(
+    -authenticationKeyPath "$KEY_PATH"
+    -authenticationKeyID "$KEY_ID"
+    -authenticationKeyIssuerID "$ISSUER"
+  )
+  echo "    using ASC API key auth for export"
+fi
+xcodebuild -exportArchive \
+  -archivePath "$ARCHIVE" \
+  -exportOptionsPlist "$EXPORT_OPTS" \
+  -exportPath "$EXPORT_DIR" \
+  -allowProvisioningUpdates \
+  "${EXPORT_AUTH[@]}"
+
+# xcodebuild names the IPA after the product; normalize to our path
+EXPORTED_IPA=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" | head -1)
+if [[ -z "$EXPORTED_IPA" || ! -f "$EXPORTED_IPA" ]]; then
+  echo "FATAL: no IPA in $EXPORT_DIR after export" >&2
+  ls -la "$EXPORT_DIR" >&2 || true
+  exit 1
+fi
+cp -f "$EXPORTED_IPA" "$IPA"
+echo "    IPA ready: $IPA"
 
 # --- Verify binary identity before talking to ASC (prevents ITMS-90345) ---
 echo "==> Verify IPA versions match request"
@@ -129,8 +188,10 @@ fi
 BUILD_NUMBER="$IPA_BUILD"
 VERSION="$IPA_MARKETING"
 
+TEST_NOTES="${ASC_TEST_NOTES:-keyverse internal TestFlight — version $VERSION ($BUILD_NUMBER).}"
 echo "==> Publish TestFlight (group: $GROUP, version $VERSION build $BUILD_NUMBER)"
-asc publish testflight \
+# asc ≥0.29: --locale with --test-notes can fail ASC filter; upload+group first, then notes.
+if ! asc publish testflight \
   --app "$APP_ID" \
   --ipa "$IPA" \
   --version "$VERSION" \
@@ -138,10 +199,46 @@ asc publish testflight \
   --group "$GROUP" \
   --wait \
   --poll-interval 15s \
-  --test-notes "keyverse internal TestFlight — version $VERSION ($BUILD_NUMBER)." \
-  --locale en-US \
   --notify \
   --output json \
-  --pretty
+  --pretty; then
+  echo "WARN: publish testflight returned non-zero; checking if build is already on ASC..." >&2
+fi
+
+# Ensure group membership + What to Test (idempotent-ish)
+BUILD_ID=$(asc builds list --app "$APP_ID" --output json 2>/dev/null | python3 -c '
+import json,sys
+want=sys.argv[1]
+d=json.load(sys.stdin)
+for b in d.get("data") or []:
+  if str((b.get("attributes") or {}).get("version") or "")==want:
+    print(b["id"]); break
+' "$BUILD_NUMBER" || true)
+if [[ -n "${BUILD_ID:-}" ]]; then
+  GROUP_ID=$(asc testflight beta-groups list --app "$APP_ID" --output json 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for g in d.get("data") or []:
+  a=g.get("attributes") or {}
+  if a.get("isInternalGroup") or "Internal" in (a.get("name") or ""):
+    print(g["id"]); break
+' || true)
+  if [[ -n "${GROUP_ID:-}" ]]; then
+    asc builds add-groups --build "$BUILD_ID" --group "$GROUP_ID" --output json 2>/dev/null || true
+  fi
+  LOC_ID=$(asc builds test-notes list --build "$BUILD_ID" --output json 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for x in d.get("data") or []:
+  if (x.get("attributes") or {}).get("locale")=="en-US":
+    print(x["id"]); break
+' || true)
+  if [[ -n "${LOC_ID:-}" ]]; then
+    asc builds test-notes update --id "$LOC_ID" --whats-new "$TEST_NOTES" --output json 2>/dev/null || true
+  else
+    asc builds test-notes create --build "$BUILD_ID" --locale en-US --whats-new "$TEST_NOTES" --output json 2>/dev/null || true
+  fi
+  echo "    build id: $BUILD_ID"
+fi
 
 echo "Done. IPA: $IPA  (version $VERSION build $BUILD_NUMBER)"

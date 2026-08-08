@@ -40,6 +40,12 @@ Returns a **raw** Markdown document for the **whole chapter** containing `slug`
 
 Stitch order: title → chapter note → each verse (`**N** text`) → verse note outline → range notes that **end** on that verse. Outline blocks use nested `-` lists (2 spaces per indent). Encrypted notes become `*[Encrypted note — sealed]*`. Optional `.md` suffix: `/api/md/heb.8.md`.
 
+Wiki cross-refs in note text become Markdown links on **route.bible** OSIS slugs:
+
+- `[[John 3:16]]` → `[John 3:16](https://route.bible/jhn.3.16)`
+- `[[heb.7.28|Appointed]]` → `[Appointed](https://route.bible/heb.7.28)`
+- Unresolvable `[[…]]` and embeds `![[…]]` stay raw.
+
 Examples:
 
 - `https://keyverse-production.up.railway.app/read/jhn.3.16`
